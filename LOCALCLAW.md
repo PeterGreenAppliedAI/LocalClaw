@@ -205,7 +205,7 @@ localclaw/
 │   ├── errors.ts             Error types
 │   ├── config/               JSON5 config + Zod validation
 │   ├── router/               Intent classification
-│   ├── react/                Tool-calling loop engine
+│   ├── tool-loop/            Tool-calling loop engine
 │   ├── ollama/               Ollama HTTP client
 │   ├── channels/             Pluggable adapters (Discord, Telegram, Web)
 │   ├── tools/                13 tool implementations
