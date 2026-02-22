@@ -1,0 +1,129 @@
+{
+  // LocalClaw Configuration
+  // See .env.example for API key environment variables
+
+  ollama: {
+    url: "${OLLAMA_URL}",
+    keepAlive: "30m",
+  },
+
+  router: {
+    model: "phi4-mini",
+    timeout: 2000,
+    defaultCategory: "chat",
+    categories: {
+      chat:       { description: "Simple conversation, greetings, opinions" },
+      web_search: { description: "Questions needing current internet information" },
+      memory:     { description: "Questions about past conversations or stored info" },
+      exec:       { description: "Run commands, edit files, system operations" },
+      cron:       { description: "Schedule, list, or manage recurring tasks" },
+      message:    { description: "Send messages to other channels/users" },
+      website:    { description: "Teaching materials, courses, assignments" },
+      multi:      { description: "Complex requests needing multiple different tools" },
+    },
+  },
+
+  specialists: {
+    chat: {
+      model: "qwen3-coder:30b",
+      systemPrompt: "You are LocalClaw. Refer to TOOLS.md in your workspace context to know your actual capabilities. When asked what you can do, describe your real tools — not generic AI abilities. Respond naturally and concisely.",
+      maxTokens: 4096,
+      temperature: 0.8,
+      maxIterations: 1,
+      tools: [],
+    },
+    web_search: {
+      model: "qwen3-coder:30b",
+      systemPrompt: "You are a web research specialist. ALWAYS use the web_search tool to find information before answering. Use web_fetch to read page content. Use browser for JavaScript-heavy pages that need rendering (open, navigate, snapshot). Never answer from memory alone — search first.",
+      maxTokens: 4096,
+      temperature: 0.3,
+      maxIterations: 8,
+      tools: ["web_search", "web_fetch", "browser"],
+    },
+    memory: {
+      model: "qwen3-coder:30b",
+      systemPrompt: "You are a memory management specialist. When the user asks you to remember something, ALWAYS use memory_save to store it. When the user asks about past conversations or stored info, ALWAYS use memory_search first. Confirm what you saved or found.",
+      maxTokens: 2048,
+      temperature: 0.2,
+      maxIterations: 5,
+      tools: ["memory_search", "memory_get", "memory_save"],
+    },
+    exec: {
+      model: "qwen3-coder:30b",
+      systemPrompt: "You are a command execution specialist. When the user asks you to run a command, ALWAYS use the exec tool. Show the command output in your response. For file operations, use read_file and write_file.",
+      maxTokens: 4096,
+      temperature: 0.3,
+      maxIterations: 8,
+      tools: ["exec", "read_file", "write_file"],
+    },
+    cron: {
+      model: "qwen3-coder:30b",
+      systemPrompt: "You are a cron job scheduler. Use cron_add to create jobs, cron_list to show existing jobs, cron_remove to delete them. For schedules, use standard 5-field cron expressions (minute hour day month weekday). Examples: '0 9 * * *' = daily at 9am, '0 */2 * * *' = every 2 hours, '30 14 * * 1-5' = weekdays at 2:30pm. The timezone is America/New_York (EST/EDT). Use the channel context provided to set the delivery channel and target.",
+      maxTokens: 2048,
+      temperature: 0.2,
+      maxIterations: 3,
+      tools: ["cron_add", "cron_list", "cron_remove"],
+    },
+    message: {
+      model: "qwen3-coder:30b",
+      maxTokens: 2048,
+      temperature: 0.5,
+      maxIterations: 3,
+      tools: ["send_message"],
+    },
+    website: {
+      model: "qwen3-coder:30b",
+      maxTokens: 4096,
+      temperature: 0.3,
+      maxIterations: 5,
+      tools: ["website_query"],
+    },
+    multi: {
+      model: "qwen3-coder:30b",
+      maxTokens: 4096,
+      temperature: 0.3,
+      maxIterations: 8,
+      tools: ["web_search", "memory_search", "exec", "send_message"],
+    },
+  },
+
+  channels: {
+    discord: {
+      enabled: true,
+      token: "${DISCORD_BOT_TOKEN}",
+    },
+    telegram: {
+      enabled: false,
+      token: "${TELEGRAM_BOT_TOKEN}",
+    },
+  },
+
+  agents: {
+    default: "main",
+    list: [
+      { id: "main", name: "LocalClaw Assistant" },
+    ],
+    bindings: [],
+  },
+
+  memory: { backend: "markdown" },
+  cron: { enabled: true, store: "data/cron.json" },
+  session: { transcriptDir: "data/sessions", maxHistoryTurns: 20 },
+
+  tools: {
+    web: {
+      search: { provider: "brave" },
+      fetch: { maxChars: 30000 },
+    },
+    exec: {
+      security: "allowlist",
+      allowlist: ["ls", "cat", "python3", "node", "git"],
+      timeout: 30000,
+    },
+  },
+
+  browser: {
+    enabled: true,
+    headless: true,
+  },
+}

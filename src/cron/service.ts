@@ -1,0 +1,95 @@
+import { Cron } from 'croner';
+import { CronStore } from './store.js';
+import type { CronJob, CronJobCreate } from './types.js';
+
+export interface CronServiceDeps {
+  store: CronStore;
+  onTrigger: (job: CronJob) => Promise<void>;
+}
+
+export class CronService {
+  private store: CronStore;
+  private onTrigger: (job: CronJob) => Promise<void>;
+  private schedulers = new Map<string, Cron>();
+  private running = false;
+
+  constructor(deps: CronServiceDeps) {
+    this.store = deps.store;
+    this.onTrigger = deps.onTrigger;
+  }
+
+  async start(): Promise<void> {
+    this.running = true;
+    this.scheduleAll();
+    console.log(`[Cron] Started with ${this.store.list().length} active job(s)`);
+  }
+
+  stop(): void {
+    this.running = false;
+    for (const cron of this.schedulers.values()) {
+      cron.stop();
+    }
+    this.schedulers.clear();
+  }
+
+  list(includeDisabled = false): CronJob[] {
+    return this.store.list(includeDisabled);
+  }
+
+  add(input: CronJobCreate): CronJob {
+    const job = this.store.add(input);
+    if (this.running && job.enabled) {
+      this.scheduleJob(job);
+    }
+    return job;
+  }
+
+  remove(id: string): boolean {
+    const cron = this.schedulers.get(id);
+    if (cron) {
+      cron.stop();
+      this.schedulers.delete(id);
+    }
+    return this.store.remove(id);
+  }
+
+  async run(id: string): Promise<string> {
+    const job = this.store.get(id);
+    if (!job) return `Job ${id} not found`;
+    await this.executeJob(job);
+    return `Job ${id} executed`;
+  }
+
+  private scheduleAll(): void {
+    for (const job of this.store.list()) {
+      this.scheduleJob(job);
+    }
+  }
+
+  private scheduleJob(job: CronJob): void {
+    try {
+      const cron = new Cron(job.schedule, {
+        timezone: 'America/New_York',
+      }, async () => {
+        if (!this.running) return;
+        await this.executeJob(job);
+      });
+
+      this.schedulers.set(job.id, cron);
+      const next = cron.nextRun();
+      console.log(`[Cron] Scheduled "${job.name}" (${job.schedule}) — next run: ${next?.toISOString() ?? 'unknown'}`);
+    } catch (err) {
+      console.error(`[Cron] Invalid schedule "${job.schedule}" for job ${job.id}:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  private async executeJob(job: CronJob): Promise<void> {
+    console.log(`[Cron] Triggering job: ${job.name} (${job.id})`);
+    try {
+      await this.onTrigger(job);
+      this.store.updateLastRun(job.id);
+    } catch (err) {
+      console.error(`[Cron] Job ${job.id} failed:`, err instanceof Error ? err.message : err);
+    }
+  }
+}

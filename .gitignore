@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+.env
+*.db
+*.db-journal
+*.tsbuildinfo
+
+# Private docs — not for public repo
+code_rubric
+prd
+AI_principles
