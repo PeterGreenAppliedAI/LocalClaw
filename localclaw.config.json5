@@ -20,6 +20,7 @@
       message:    { description: "Send messages to other channels/users" },
       website:    { description: "Teaching materials, courses, assignments" },
       multi:      { description: "Complex requests needing multiple different tools" },
+      config:     { description: "Edit settings, cron jobs, workspace files, agent configuration" },
     },
   },
 
@@ -85,6 +86,14 @@
       maxIterations: 8,
       tools: ["web_search", "memory_search", "exec", "send_message"],
     },
+    config: {
+      model: "qwen3-coder:30b",
+      systemPrompt: "You are a configuration specialist. You can edit cron jobs (cron_edit), read workspace files (workspace_read), write workspace files (workspace_write), and manage scheduled tasks. When asked to modify a cron job, use cron_edit with the job ID. When asked to update workspace files, use workspace_write. Always confirm changes after making them.",
+      maxTokens: 4096,
+      temperature: 0.3,
+      maxIterations: 5,
+      tools: ["cron_edit", "cron_add", "cron_list", "cron_remove", "workspace_read", "workspace_write"],
+    },
   },
 
   channels: {
@@ -109,7 +118,7 @@
       userId: "${MSGRAPH_USER_ID}",
     },
     whatsapp: {
-      enabled: false,
+      enabled: true,
     },
   },
 
@@ -143,7 +152,7 @@
   },
 
   tts: {
-    enabled: false,
+    enabled: true,
     url: "${ORPHEUS_URL}",
     voice: "tara",
     format: "opus",

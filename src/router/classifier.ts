@@ -12,8 +12,9 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(save|write file|read file).*(search|send|remind)/i, category: 'multi' },
   { pattern: /\b(search|find).*(save|send|remind)/i, category: 'multi' },
   // Specific action categories before broad ones
+  { pattern: /\b(config|configure|setting|settings|preference|edit.*cron|modify.*cron|update.*cron|change.*cron|enable|disable|workspace|tools\.md|heartbeat)\b/i, category: 'config' },
   { pattern: /\b(run|execute|compile|build|deploy|install|sudo|npm|pip|git|ls|cat|mkdir|rm)\b/i, category: 'exec' },
-  { pattern: /\b(remind|schedule|every day|at \d+\s*(am|pm)|cron|recurring)\b/i, category: 'cron' },
+  { pattern: /\b(remind|schedule|every day|at \d+\s*(am|pm)|cron|cronjob|cronjobs|cron\s*job|recurring|scheduled task|morning report|daily report)\b/i, category: 'cron' },
   { pattern: /\b(remember|recall|we (discussed|talked)|last time|yesterday)\b/i, category: 'memory' },
   { pattern: /\b(tell|send|notify|message|announce)\b/i, category: 'message' },
   { pattern: /\b(homework|assignment|course|class|syllabus|lecture)\b/i, category: 'website' },
@@ -22,7 +23,7 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
 ];
 
 const VALID_CATEGORIES = new Set([
-  'chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi',
+  'chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi', 'config',
 ]);
 
 export interface ClassifyResult {

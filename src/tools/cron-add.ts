@@ -1,7 +1,7 @@
 import type { LocalClawTool } from './types.js';
 import type { CronService } from '../cron/service.js';
 
-const VALID_CATEGORIES = ['chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi'] as const;
+const VALID_CATEGORIES = ['chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi', 'config'] as const;
 
 export function createCronAddTool(cronService: CronService): LocalClawTool {
   return {

@@ -18,6 +18,9 @@ import { createCronAddTool } from './cron-add.js';
 import { createCronListTool } from './cron-list.js';
 import { createCronRemoveTool } from './cron-remove.js';
 import { createSendMessageTool } from './send-message.js';
+import { createCronEditTool } from './cron-edit.js';
+import { createWorkspaceReadTool } from './workspace-read.js';
+import { createWorkspaceWriteTool } from './workspace-write.js';
 
 export interface RegisterToolsOptions {
   cronService?: CronService;
@@ -64,10 +67,15 @@ export function registerAllTools(
     registry.register(createCronAddTool(options.cronService));
     registry.register(createCronListTool(options.cronService));
     registry.register(createCronRemoveTool(options.cronService));
+    registry.register(createCronEditTool(options.cronService));
   }
 
   // Send message tool (requires channel registry)
   if (options?.channelRegistry) {
     registry.register(createSendMessageTool(options.channelRegistry));
   }
+
+  // Workspace tools (always available)
+  registry.register(createWorkspaceReadTool());
+  registry.register(createWorkspaceWriteTool());
 }

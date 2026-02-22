@@ -1,6 +1,6 @@
 import { Cron } from 'croner';
 import { CronStore } from './store.js';
-import type { CronJob, CronJobCreate } from './types.js';
+import type { CronJob, CronJobCreate, CronJobUpdate } from './types.js';
 
 export interface CronServiceDeps {
   store: CronStore;
@@ -51,6 +51,25 @@ export class CronService {
       this.schedulers.delete(id);
     }
     return this.store.remove(id);
+  }
+
+  edit(id: string, changes: CronJobUpdate): CronJob | null {
+    const updated = this.store.update(id, changes);
+    if (!updated) return null;
+
+    // If schedule changed, reschedule the croner job
+    if (changes.schedule !== undefined || changes.enabled !== undefined) {
+      const existing = this.schedulers.get(id);
+      if (existing) {
+        existing.stop();
+        this.schedulers.delete(id);
+      }
+      if (updated.enabled && this.running) {
+        this.scheduleJob(updated);
+      }
+    }
+
+    return updated;
   }
 
   async run(id: string): Promise<string> {

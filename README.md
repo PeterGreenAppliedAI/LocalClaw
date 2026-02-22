@@ -35,7 +35,8 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 | Web Search | `web_search`, `web_fetch`, `browser` | Brave Search, Readability extraction, headless Chromium |
 | Memory | `memory_save`, `memory_search`, `memory_get` | Vector embeddings + keyword fallback, persisted in SQLite |
 | Execution | `exec`, `read_file`, `write_file` | Allowlisted shell commands, safe file I/O |
-| Scheduling | `cron_add`, `cron_list`, `cron_remove` | Real cron expressions, timezone-aware, persistent |
+| Scheduling | `cron_add`, `cron_list`, `cron_remove`, `cron_edit` | Real cron expressions, timezone-aware, persistent |
+| Config | `cron_edit`, `workspace_read`, `workspace_write` | Self-administration — edit cron jobs, read/write workspace files |
 | Messaging | `send_message` | Cross-channel message delivery |
 | Browsing | `browser` | Playwright headless Chromium — navigate, snapshot, screenshot |
 | Voice | TTS/STT | Orpheus TTS + faster-whisper STT — voice in, voice out |
@@ -103,7 +104,7 @@ localclaw/
 │   ├── ollama/               # Ollama HTTP client (chat, stream, embed)
 │   ├── channels/             # Pluggable adapters (Discord, Telegram, Web, Slack, Gmail, Microsoft Graph, WhatsApp)
 │   ├── services/             # TTS (Orpheus) and STT (Whisper) services
-│   ├── tools/                # 13 tool implementations
+│   ├── tools/                # 16 tool implementations
 │   ├── agents/               # Workspace files + routing
 │   ├── sessions/             # Transcript persistence
 │   ├── cron/                 # Scheduling service
@@ -146,6 +147,31 @@ LocalClaw supports voice input and output through an optional TTS/STT service la
 - **TTS (Text-to-Speech)** — [Orpheus TTS](https://github.com/canopyai/orpheus-tts) server on your inference node. When a user sends a voice message, the response is synthesized back as audio.
 
 Both use OpenAI-compatible HTTP APIs (no extra npm packages). The rule is simple: **voice in → voice out, text in → text out**. Adapters that don't support audio (Gmail, Microsoft Graph) gracefully ignore it.
+
+### WhatsApp
+
+LocalClaw connects to WhatsApp using [Baileys](https://github.com/WhiskeySockets/Baileys), a lightweight WebSocket-based library (no Puppeteer/Chrome required).
+
+**First-time setup:**
+
+1. Enable WhatsApp in `localclaw.config.json5`:
+   ```json5
+   whatsapp: { enabled: true },
+   ```
+2. Start the bot: `npm run dev`
+3. A QR code will appear in the terminal
+4. On your phone, open **WhatsApp > Settings > Linked Devices > Link a Device**
+5. Scan the QR code using WhatsApp's built-in scanner (not your phone camera)
+6. The bot will connect and start receiving messages
+
+**Session persistence:** After the first scan, the session is saved to `.baileys_auth/`. Future restarts reconnect automatically — no re-scanning needed.
+
+**Re-linking:** If you need to re-link (session expired, device removed), delete `.baileys_auth/` and restart:
+```bash
+rm -rf .baileys_auth && npm run dev
+```
+
+**Note:** WhatsApp may disconnect linked devices after ~14 days of inactivity. The bot handles reconnection automatically, but a full logout requires re-scanning.
 
 ### Workspace System
 
@@ -201,7 +227,7 @@ Each agent has persistent markdown files injected into context:
 | Browser | playwright-core |
 | Scheduling | croner |
 | Vector Store | better-sqlite3 |
-| WhatsApp | whatsapp-web.js |
+| WhatsApp | @whiskeysockets/baileys |
 | TTS | Orpheus TTS (HTTP) |
 | STT | faster-whisper (HTTP) |
 | Config | JSON5 + Zod |

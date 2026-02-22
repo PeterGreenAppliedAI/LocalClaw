@@ -20,3 +20,11 @@ export interface CronJobCreate {
   message: string;
   delivery: { channel: string; target: string };
 }
+
+export interface CronJobUpdate {
+  name?: string;
+  schedule?: string;
+  category?: string;
+  message?: string;
+  enabled?: boolean;
+}

@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { CronJob, CronJobCreate } from './types.js';
+import type { CronJob, CronJobCreate, CronJobUpdate } from './types.js';
 
 export class CronStore {
   private jobs: CronJob[] = [];
@@ -39,6 +39,18 @@ export class CronStore {
       return true;
     }
     return false;
+  }
+
+  update(id: string, changes: CronJobUpdate): CronJob | null {
+    const job = this.jobs.find(j => j.id === id);
+    if (!job) return null;
+    if (changes.name !== undefined) job.name = changes.name;
+    if (changes.schedule !== undefined) job.schedule = changes.schedule;
+    if (changes.category !== undefined) job.category = changes.category;
+    if (changes.message !== undefined) job.message = changes.message;
+    if (changes.enabled !== undefined) job.enabled = changes.enabled;
+    this.save();
+    return job;
   }
 
   updateLastRun(id: string): void {
