@@ -211,7 +211,7 @@ export function buildWorkspaceContext(
     BOOTSTRAP_FILES.AGENTS,
   ]);
 
-  const allowed = new Set(always);
+  const allowed: Set<string> = new Set(always);
 
   // USER.md — always but will be truncated more aggressively
   allowed.add(BOOTSTRAP_FILES.USER);

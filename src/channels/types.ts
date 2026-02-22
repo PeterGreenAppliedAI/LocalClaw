@@ -9,6 +9,7 @@ export interface InboundMessage {
   threadId?: string;
   timestamp: Date;
   raw?: unknown;
+  audio?: { data: Buffer; mimeType: string };
 }
 
 export interface MessageTarget {
@@ -22,6 +23,7 @@ export interface MessageTarget {
 export interface MessageContent {
   text: string;
   embeds?: Array<{ title?: string; description?: string; url?: string }>;
+  audio?: { data: Buffer; mimeType: string };
 }
 
 export type ChannelStatus = 'disconnected' | 'connecting' | 'connected' | 'error';

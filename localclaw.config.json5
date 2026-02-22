@@ -96,6 +96,21 @@
       enabled: false,
       token: "${TELEGRAM_BOT_TOKEN}",
     },
+    slack: {
+      enabled: false,
+      token: "${SLACK_BOT_TOKEN}",
+      appToken: "${SLACK_APP_TOKEN}",
+    },
+    gmail: {
+      enabled: false,
+    },
+    msgraph: {
+      enabled: false,
+      userId: "${MSGRAPH_USER_ID}",
+    },
+    whatsapp: {
+      enabled: false,
+    },
   },
 
   agents: {
@@ -125,5 +140,19 @@
   browser: {
     enabled: true,
     headless: true,
+  },
+
+  tts: {
+    enabled: false,
+    url: "${ORPHEUS_URL}",
+    voice: "tara",
+    format: "opus",
+  },
+
+  stt: {
+    enabled: false,
+    url: "${WHISPER_URL}",
+    model: "whisper-large-v3",
+    language: "en",
   },
 }

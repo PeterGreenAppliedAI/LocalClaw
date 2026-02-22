@@ -38,6 +38,7 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 | Scheduling | `cron_add`, `cron_list`, `cron_remove` | Real cron expressions, timezone-aware, persistent |
 | Messaging | `send_message` | Cross-channel message delivery |
 | Browsing | `browser` | Playwright headless Chromium — navigate, snapshot, screenshot |
+| Voice | TTS/STT | Orpheus TTS + faster-whisper STT — voice in, voice out |
 | Multi-task | *(decomposed)* | Complex requests split into sub-tasks across specialists |
 
 ## Quick Start
@@ -100,7 +101,8 @@ localclaw/
 │   ├── router/               # Intent classification (3-tier fallback)
 │   ├── tool-loop/            # Tool-calling loop engine
 │   ├── ollama/               # Ollama HTTP client (chat, stream, embed)
-│   ├── channels/             # Pluggable adapters (Discord, Telegram, Web)
+│   ├── channels/             # Pluggable adapters (Discord, Telegram, Web, Slack, Gmail, Microsoft Graph, WhatsApp)
+│   ├── services/             # TTS (Orpheus) and STT (Whisper) services
 │   ├── tools/                # 13 tool implementations
 │   ├── agents/               # Workspace files + routing
 │   ├── sessions/             # Transcript persistence
@@ -132,9 +134,18 @@ interface ChannelAdapter {
 }
 ```
 
-Currently implemented: **Discord**, **Telegram**, **Web API**.
+Currently implemented: **Discord**, **Telegram**, **Web API**, **Slack**, **Gmail**, **Microsoft Graph**, **WhatsApp**.
 
-Adding a new adapter (e.g., Slack) requires zero core code changes — implement the interface, register it, add config.
+Adding a new adapter requires zero core code changes — implement the interface, register it, add config.
+
+### Voice (TTS/STT)
+
+LocalClaw supports voice input and output through an optional TTS/STT service layer:
+
+- **STT (Speech-to-Text)** — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server on your inference node. Incoming voice messages are automatically transcribed before processing.
+- **TTS (Text-to-Speech)** — [Orpheus TTS](https://github.com/canopyai/orpheus-tts) server on your inference node. When a user sends a voice message, the response is synthesized back as audio.
+
+Both use OpenAI-compatible HTTP APIs (no extra npm packages). The rule is simple: **voice in → voice out, text in → text out**. Adapters that don't support audio (Gmail, Microsoft Graph) gracefully ignore it.
 
 ### Workspace System
 
@@ -190,6 +201,9 @@ Each agent has persistent markdown files injected into context:
 | Browser | playwright-core |
 | Scheduling | croner |
 | Vector Store | better-sqlite3 |
+| WhatsApp | whatsapp-web.js |
+| TTS | Orpheus TTS (HTTP) |
+| STT | faster-whisper (HTTP) |
 | Config | JSON5 + Zod |
 | Testing | Vitest |
 

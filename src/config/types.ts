@@ -18,6 +18,8 @@ import type {
   WebFetchConfigSchema,
   WebsiteConfigSchema,
   BrowserConfigSchema,
+  TTSConfigSchema,
+  STTConfigSchema,
 } from './schema.js';
 
 export type LocalClawConfig = z.infer<typeof LocalClawConfigSchema>;
@@ -38,3 +40,5 @@ export type WebSearchConfig = z.infer<typeof WebSearchConfigSchema>;
 export type WebFetchConfig = z.infer<typeof WebFetchConfigSchema>;
 export type WebsiteConfig = z.infer<typeof WebsiteConfigSchema>;
 export type BrowserConfig = z.infer<typeof BrowserConfigSchema>;
+export type TTSConfig = z.infer<typeof TTSConfigSchema>;
+export type STTConfig = z.infer<typeof STTConfigSchema>;

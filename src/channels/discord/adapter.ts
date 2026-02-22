@@ -62,9 +62,9 @@ export class DiscordAdapter implements ChannelAdapter {
 
       // Show typing indicator while processing
       const typingInterval = setInterval(() => {
-        msg.channel.sendTyping().catch(() => {});
+        if ('sendTyping' in msg.channel) msg.channel.sendTyping().catch(() => {});
       }, 5000);
-      msg.channel.sendTyping().catch(() => {});
+      if ('sendTyping' in msg.channel) msg.channel.sendTyping().catch(() => {});
 
       const inbound: InboundMessage = {
         id: msg.id,
@@ -115,12 +115,19 @@ export class DiscordAdapter implements ChannelAdapter {
       }
 
       const sendable = channel as any;
+
+      // Send audio as file attachment if present
+      const files = content.audio
+        ? [{ attachment: content.audio.data, name: 'response.ogg' }]
+        : undefined;
+
       const chunks = splitMessage(content.text, DISCORD_MAX_LENGTH);
 
-      for (const chunk of chunks) {
+      for (let i = 0; i < chunks.length; i++) {
         await sendable.send({
-          content: chunk,
+          content: chunks[i],
           reply: target.replyToId ? { messageReference: target.replyToId } : undefined,
+          files: i === 0 ? files : undefined, // attach audio to first chunk only
         });
       }
     } catch (err) {

@@ -109,6 +109,20 @@ export const BrowserConfigSchema = z.object({
   executablePath: z.string().optional(),
 });
 
+export const TTSConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  url: z.string().default('http://127.0.0.1:5005'),
+  voice: z.string().default('tara'),
+  format: z.enum(['wav', 'opus', 'mp3']).default('opus'),
+});
+
+export const STTConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  url: z.string().default('http://127.0.0.1:8000'),
+  model: z.string().default('whisper-large-v3'),
+  language: z.string().default('en'),
+});
+
 export const ToolsConfigSchema = z.object({
   web: z.object({
     search: WebSearchConfigSchema.optional(),
@@ -129,4 +143,6 @@ export const LocalClawConfigSchema = z.object({
   session: SessionConfigSchema.default({}),
   tools: ToolsConfigSchema.optional(),
   browser: BrowserConfigSchema.optional(),
+  tts: TTSConfigSchema.default({}),
+  stt: STTConfigSchema.default({}),
 });

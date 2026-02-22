@@ -121,6 +121,13 @@ export class WebApiAdapter implements ChannelAdapter {
 
     const response = await responsePromise;
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ response: response.text }));
+    const responseBody: Record<string, unknown> = { response: response.text };
+    if (response.audio) {
+      responseBody.audio = {
+        data: response.audio.data.toString('base64'),
+        mimeType: response.audio.mimeType,
+      };
+    }
+    res.end(JSON.stringify(responseBody));
   }
 }

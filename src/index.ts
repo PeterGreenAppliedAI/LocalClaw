@@ -55,6 +55,26 @@ async function runOrchestrator(config: ReturnType<typeof loadConfig>) {
           channelRegistry.register(new WebApiAdapter());
           break;
         }
+        case 'slack': {
+          const { SlackAdapter } = await import('./channels/slack/index.js');
+          channelRegistry.register(new SlackAdapter());
+          break;
+        }
+        case 'gmail': {
+          const { GmailAdapter } = await import('./channels/gmail/index.js');
+          channelRegistry.register(new GmailAdapter());
+          break;
+        }
+        case 'msgraph': {
+          const { MsGraphAdapter } = await import('./channels/msgraph/index.js');
+          channelRegistry.register(new MsGraphAdapter());
+          break;
+        }
+        case 'whatsapp': {
+          const { WhatsAppAdapter } = await import('./channels/whatsapp/index.js');
+          channelRegistry.register(new WhatsAppAdapter());
+          break;
+        }
         default:
           console.warn(`[LocalClaw] Unknown channel: ${channelId}`);
       }

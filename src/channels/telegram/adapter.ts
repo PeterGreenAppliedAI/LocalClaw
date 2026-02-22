@@ -76,6 +76,22 @@ export class TelegramAdapter implements ChannelAdapter {
     }
 
     try {
+      // Send voice message if audio is present
+      if (content.audio) {
+        try {
+          const mod = 'grammy';
+          const grammy = await import(/* webpackIgnore: true */ mod);
+          const inputFile = new grammy.InputFile(content.audio.data, 'response.ogg');
+          await this.bot.api.sendVoice(
+            target.channelId,
+            inputFile,
+            { reply_to_message_id: target.replyToId ? Number(target.replyToId) : undefined },
+          );
+        } catch {
+          // Ignore audio send failure, text will still be sent
+        }
+      }
+
       const chunks = splitTelegramMessage(content.text, TELEGRAM_MAX_LENGTH);
       for (const chunk of chunks) {
         await this.bot.api.sendMessage(target.channelId, chunk, {

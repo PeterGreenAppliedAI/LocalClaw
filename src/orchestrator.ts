@@ -11,6 +11,8 @@ import { resolveRoute } from './agents/resolve-route.js';
 import { registerAllTools } from './tools/register-all.js';
 import { bootstrapWorkspace } from './agents/workspace.js';
 import { resolveWorkspacePath } from './agents/scope.js';
+import { TTSService } from './services/tts.js';
+import { STTService } from './services/stt.js';
 
 function splitFinalMessage(text: string, limit: number): string[] {
   if (text.length <= limit) return [text];
@@ -36,6 +38,8 @@ export class Orchestrator {
   private channelRegistry: ChannelRegistry;
   private sessionStore: SessionStore;
   private cronService?: CronService;
+  private ttsService: TTSService;
+  private sttService: STTService;
   private config: LocalClawConfig;
   private rateLimits = new Map<string, number[]>();
 
@@ -45,6 +49,8 @@ export class Orchestrator {
     this.toolRegistry = new ToolRegistry();
     this.channelRegistry = new ChannelRegistry();
     this.sessionStore = new SessionStore(config.session.transcriptDir);
+    this.ttsService = new TTSService(config.tts);
+    this.sttService = new STTService(config.stt);
   }
 
   getToolRegistry(): ToolRegistry {
@@ -163,6 +169,18 @@ export class Orchestrator {
       return;
     }
 
+    // STT pre-processing: transcribe voice messages to text
+    const hadAudio = !!msg.audio;
+    if (msg.audio && this.sttService.enabled) {
+      const transcription = await this.sttService.transcribe(msg.audio.data, msg.audio.mimeType);
+      if (transcription) {
+        console.log(`[Orchestrator] STT transcribed: "${transcription.slice(0, 80)}${transcription.length > 80 ? '...' : ''}"`);
+        msg.content = transcription;
+      } else {
+        console.warn('[Orchestrator] STT transcription failed, using original content');
+      }
+    }
+
     const route = resolveRoute(
       {
         channel: msg.channel,
@@ -229,6 +247,17 @@ export class Orchestrator {
 
       console.log(`[Orchestrator] → ${result.category} (${result.iterations} steps)`);
 
+      // TTS post-processing: voice in → voice out
+      let responseAudio: { data: Buffer; mimeType: string } | undefined;
+      if (hadAudio && this.ttsService.enabled) {
+        const audioBuffer = await this.ttsService.synthesize(result.answer);
+        if (audioBuffer) {
+          const format = this.config.tts.format;
+          const mimeMap: Record<string, string> = { opus: 'audio/ogg', wav: 'audio/wav', mp3: 'audio/mpeg' };
+          responseAudio = { data: audioBuffer, mimeType: mimeMap[format] ?? 'audio/ogg' };
+        }
+      }
+
       // Final update: edit the stream message or send a new one
       if (streamMsg) {
         const chunks = splitFinalMessage(result.answer, 2000);
@@ -253,7 +282,7 @@ export class Orchestrator {
             guildId: msg.guildId,
             replyToId: msg.id,
           },
-          { text: result.answer },
+          { text: result.answer, audio: responseAudio },
         );
       }
     } catch (err) {
