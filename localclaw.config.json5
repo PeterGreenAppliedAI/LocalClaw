@@ -159,7 +159,7 @@
   },
 
   stt: {
-    enabled: false,
+    enabled: true,
     url: "${WHISPER_URL}",
     model: "whisper-large-v3",
     language: "en",

@@ -247,14 +247,17 @@ export class Orchestrator {
 
       console.log(`[Orchestrator] → ${result.category} (${result.iterations} steps)`);
 
-      // TTS post-processing: voice in → voice out
+      // TTS post-processing: voice in → voice out (skip if streaming — audio can't attach to edits)
       let responseAudio: { data: Buffer; mimeType: string } | undefined;
-      if (hadAudio && this.ttsService.enabled) {
+      if (hadAudio && this.ttsService.enabled && !streamMsg) {
         const audioBuffer = await this.ttsService.synthesize(result.answer);
         if (audioBuffer) {
           const format = this.config.tts.format;
           const mimeMap: Record<string, string> = { opus: 'audio/ogg', wav: 'audio/wav', mp3: 'audio/mpeg' };
           responseAudio = { data: audioBuffer, mimeType: mimeMap[format] ?? 'audio/ogg' };
+          console.log(`[Orchestrator] TTS: ${audioBuffer.length} bytes`);
+        } else {
+          console.warn('[Orchestrator] TTS synthesis failed');
         }
       }
 

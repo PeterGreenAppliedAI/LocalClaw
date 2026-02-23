@@ -23,6 +23,7 @@ import { channelConnectError, channelSendError } from '../../errors.js';
 const WHATSAPP_MAX_LENGTH = 4096;
 const AUTH_DIR = '.baileys_auth';
 const MAX_MESSAGE_AGE_MS = 60_000; // Ignore messages older than 60s (history sync)
+const RECONNECT_DELAY_MS = 3_000;
 
 export class WhatsAppAdapter implements ChannelAdapter {
   readonly id = 'whatsapp';
@@ -31,20 +32,59 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private currentStatus: ChannelStatus = 'disconnected';
   private allowFrom?: ChannelAdapterConfig['allowFrom'];
   private startedAt = 0;
+  private config: ChannelAdapterConfig | null = null;
+  private reconnecting = false;
 
   async connect(config: ChannelAdapterConfig): Promise<void> {
     this.currentStatus = 'connecting';
     this.allowFrom = config.allowFrom;
+    this.config = config;
+    this.startedAt = Date.now();
+
+    await this.createSocket();
+
+    // Wait for first connection or QR
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => resolve(), 30_000);
+
+      const handler = (update: any) => {
+        if (update.connection === 'open') {
+          clearTimeout(timeout);
+          this.sock?.ev.off('connection.update', handler);
+          resolve();
+        }
+        if (update.connection === 'close') {
+          const statusCode = (update.lastDisconnect?.error as any)?.output?.statusCode;
+          if (statusCode === DisconnectReason.loggedOut) {
+            clearTimeout(timeout);
+            this.sock?.ev.off('connection.update', handler);
+            reject(channelConnectError('whatsapp', new Error('Logged out — delete .baileys_auth and restart')));
+          }
+        }
+        if (update.qr) {
+          clearTimeout(timeout);
+          this.sock?.ev.off('connection.update', handler);
+          resolve();
+        }
+      };
+
+      this.sock?.ev.on('connection.update', handler);
+    });
+  }
+
+  private async createSocket(): Promise<void> {
+    // Clean up old socket before creating a new one
+    if (this.sock) {
+      try { this.sock.end(undefined); } catch { /* ignore */ }
+      this.sock = null;
+    }
 
     const authDir = join(process.cwd(), AUTH_DIR);
     mkdirSync(authDir, { recursive: true });
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
     const { version } = await fetchLatestBaileysVersion();
-
     const logger = pino({ level: 'silent' });
-
-    this.startedAt = Date.now();
 
     const sock = makeWASocket({
       version,
@@ -77,18 +117,15 @@ export class WhatsAppAdapter implements ChannelAdapter {
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
         if (shouldReconnect) {
-          console.log('[WhatsApp] Connection lost, reconnecting...');
           this.currentStatus = 'connecting';
-          this.connect(config).catch((err) => {
-            console.error('[WhatsApp] Reconnect failed:', err instanceof Error ? err.message : err);
-            this.currentStatus = 'error';
-          });
+          this.scheduleReconnect();
         } else {
           console.log('[WhatsApp] Logged out');
           this.currentStatus = 'disconnected';
         }
       } else if (connection === 'open') {
         this.currentStatus = 'connected';
+        this.reconnecting = false;
         console.log('[WhatsApp] Connected');
       }
     });
@@ -105,30 +142,24 @@ export class WhatsAppAdapter implements ChannelAdapter {
         }
       }
     });
+  }
 
-    // Wait for connection to be established or QR to be shown
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => resolve(), 30_000); // Don't block forever
+  private scheduleReconnect(): void {
+    // Prevent multiple overlapping reconnect attempts
+    if (this.reconnecting) return;
+    this.reconnecting = true;
 
-      sock.ev.on('connection.update', (update) => {
-        if (update.connection === 'open') {
-          clearTimeout(timeout);
-          resolve();
-        }
-        if (update.connection === 'close') {
-          const statusCode = (update.lastDisconnect?.error as any)?.output?.statusCode;
-          if (statusCode === DisconnectReason.loggedOut) {
-            clearTimeout(timeout);
-            reject(channelConnectError('whatsapp', new Error('Logged out — delete .baileys_auth and restart')));
-          }
-        }
-        // If QR is shown, resolve so we don't block startup
-        if (update.qr) {
-          clearTimeout(timeout);
-          resolve();
-        }
-      });
-    });
+    console.log(`[WhatsApp] Connection lost, reconnecting in ${RECONNECT_DELAY_MS / 1000}s...`);
+
+    setTimeout(async () => {
+      try {
+        await this.createSocket();
+      } catch (err) {
+        console.error('[WhatsApp] Reconnect failed:', err instanceof Error ? err.message : err);
+        this.currentStatus = 'error';
+        this.reconnecting = false;
+      }
+    }, RECONNECT_DELAY_MS);
   }
 
   private async handleMessage(msg: WAMessage): Promise<void> {
@@ -210,17 +241,24 @@ export class WhatsAppAdapter implements ChannelAdapter {
     try {
       // Send audio if present
       if (content.audio) {
-        await this.sock.sendMessage(target.channelId, {
-          audio: content.audio.data,
-          mimetype: content.audio.mimeType,
-          ptt: true,
-        });
+        const mimetype = 'audio/ogg; codecs=opus';
+        try {
+          await this.sock.sendMessage(target.channelId, {
+            audio: content.audio.data,
+            mimetype,
+            ptt: true,
+          });
+        } catch (audioErr) {
+          console.error('[WhatsApp] Audio send failed:', audioErr instanceof Error ? audioErr.message : audioErr);
+        }
       }
 
-      // Send text
-      const chunks = splitMessage(content.text, WHATSAPP_MAX_LENGTH);
-      for (const chunk of chunks) {
-        await this.sock.sendMessage(target.channelId, { text: chunk });
+      // Send text (skip if audio was sent — voice in → voice only out)
+      if (!content.audio) {
+        const chunks = splitMessage(content.text, WHATSAPP_MAX_LENGTH);
+        for (const chunk of chunks) {
+          await this.sock.sendMessage(target.channelId, { text: chunk });
+        }
       }
     } catch (err) {
       throw channelSendError('whatsapp', err);
