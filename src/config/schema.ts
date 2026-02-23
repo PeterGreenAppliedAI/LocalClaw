@@ -77,7 +77,9 @@ export const CronConfigSchema = z.object({
 
 export const SessionConfigSchema = z.object({
   transcriptDir: z.string().default('data/sessions'),
-  maxHistoryTurns: z.number().default(20),
+  maxHistoryTurns: z.number().default(100),
+  contextSize: z.number().default(32768),
+  recentTurnsToKeep: z.number().default(6),
 });
 
 export const WebSearchConfigSchema = z.object({

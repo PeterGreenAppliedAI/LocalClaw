@@ -41,6 +41,7 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 | Browsing | `browser` | Playwright headless Chromium — navigate, snapshot, screenshot |
 | Voice | TTS/STT | Orpheus TTS + faster-whisper STT — voice in, voice out |
 | Multi-task | *(decomposed)* | Complex requests split into sub-tasks across specialists |
+| Context Compaction | *(automatic)* | Budget-aware history summarization with memory flush |
 
 ## Quick Start
 
@@ -106,11 +107,12 @@ localclaw/
 │   ├── services/             # TTS (Orpheus) and STT (Whisper) services
 │   ├── tools/                # 16 tool implementations
 │   ├── agents/               # Workspace files + routing
-│   ├── sessions/             # Transcript persistence
+│   ├── context/              # Token estimation, budget calculator, history compaction
+│   ├── sessions/             # Transcript persistence + compaction summaries
 │   ├── cron/                 # Scheduling service
 │   ├── memory/               # Vector + keyword search (SQLite)
 │   └── browser/              # Playwright wrapper
-├── test/                     # 63 tests across 7 suites
+├── test/                     # 80 tests across 8 suites
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens
 ```
@@ -214,6 +216,33 @@ Each agent has persistent markdown files injected into context:
 - **HEARTBEAT.md** — Periodic task instructions
 
 The workspace system supports **channel-aware behavior** — the bot receives the source channel (`discord`, `whatsapp`, etc.) with each message, so SOUL.md can define different rules per platform (e.g., act as the owner's assistant on WhatsApp, act as a community bot on Discord).
+
+### Context Compaction
+
+Long conversations hit context limits quickly. Instead of simply dropping old turns, LocalClaw uses **budget-aware compaction** — a sliding window with summary prefix and memory flush.
+
+**How it works:**
+
+1. **Token budget** — Before loading history, the system calculates how many tokens are available for conversation history (context window minus system prompt, workspace context, current message, and output reserve)
+2. **Short conversations** — If the full transcript fits within budget, it's passed through as-is (zero overhead)
+3. **Long conversations** — When over budget, the transcript is split into two zones:
+   - **Recent zone** — The last N turns (default 6) are kept verbatim for immediate conversational context
+   - **Archive zone** — Everything older gets processed:
+     - **Memory flush** — Key facts (user preferences, names, dates, decisions) are extracted and appended to MEMORY.md for long-term persistence
+     - **Summary** — The archive is condensed into a compact summary that preserves conversational flow
+4. **Tool loop trimming** — During multi-step tool calls, older tool observations are truncated in-place to prevent within-request overflow
+
+**Configuration** (in `localclaw.config.json5`):
+
+```json5
+session: {
+  contextSize: 32768,      // model context window size
+  recentTurnsToKeep: 6,    // turns kept verbatim (3 exchanges)
+  maxHistoryTurns: 100,    // coarse safety net for transcript persistence
+},
+```
+
+**Graceful degradation:** If the compaction model call fails, it falls back to simple turn-count truncation. Raw transcripts are never modified — summaries are stored separately and can be regenerated.
 
 ## Extending LocalClaw
 

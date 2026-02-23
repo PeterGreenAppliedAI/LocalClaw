@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { sessionIoError } from '../errors.js';
-import type { ConversationTurn, SessionMetadata } from './types.js';
+import type { ConversationTurn, SessionMetadata, CompactionSummary } from './types.js';
 
 export class SessionStore {
   constructor(private readonly baseDir: string) {}
@@ -12,6 +12,10 @@ export class SessionStore {
 
   private metaPath(agentId: string, sessionKey: string): string {
     return join(this.baseDir, agentId, `${sanitizeKey(sessionKey)}.meta.json`);
+  }
+
+  private summaryPath(agentId: string, sessionKey: string): string {
+    return join(this.baseDir, agentId, `${sanitizeKey(sessionKey)}.summary.json`);
   }
 
   loadTranscript(agentId: string, sessionKey: string, maxTurns?: number): ConversationTurn[] {
@@ -56,6 +60,27 @@ export class SessionStore {
       writeFileSync(path, '[]');
     } catch {
       // Ignore if file doesn't exist
+    }
+  }
+
+  loadSummary(agentId: string, sessionKey: string): CompactionSummary | null {
+    const path = this.summaryPath(agentId, sessionKey);
+    try {
+      const data = readFileSync(path, 'utf-8');
+      return JSON.parse(data) as CompactionSummary;
+    } catch {
+      return null;
+    }
+  }
+
+  saveSummary(agentId: string, sessionKey: string, summary: CompactionSummary): void {
+    const path = this.summaryPath(agentId, sessionKey);
+    const dir = dirname(path);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(path, JSON.stringify(summary, null, 2));
+    } catch {
+      // Non-critical — don't throw
     }
   }
 

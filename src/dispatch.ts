@@ -10,6 +10,8 @@ import type { ConversationTurn } from './sessions/types.js';
 import { resolveWorkspacePath } from './agents/scope.js';
 import { buildWorkspaceContext } from './agents/workspace.js';
 import { logDispatch, logRouterClassification } from './metrics.js';
+import { computeBudget } from './context/budget.js';
+import { buildCompactedHistory } from './context/compactor.js';
 
 export interface DispatchParams {
   client: OllamaClient;
@@ -49,14 +51,53 @@ export interface DispatchResult {
 export async function dispatchMessage(params: DispatchParams): Promise<DispatchResult> {
   const { client, registry, config, message, agentId = 'main', sessionKey = 'default', sessionStore } = params;
 
-  // 1. Load session history if available
+  // 1. Load session history — budget-aware compaction replaces simple truncation
   let history = params.history;
   if (!history && sessionStore) {
-    const transcript = sessionStore.loadTranscript(agentId, sessionKey, config.session.maxHistoryTurns);
-    history = transcript.map(t => ({
-      role: t.role as 'user' | 'assistant',
-      content: t.content,
-    }));
+    // Resolve workspace path and specialist early for budget calculation
+    const workspacePath = resolveWorkspacePath(agentId, config);
+    const tempClassification = params.overrideCategory
+      ? { category: params.overrideCategory }
+      : null;
+    const tempSpecialist = tempClassification
+      ? config.specialists[tempClassification.category]
+      : null;
+    const outputReserve = tempSpecialist?.maxTokens ?? 4096;
+
+    // Build workspace context for budget estimation
+    const wsCtx = buildWorkspaceContext(workspacePath, { category: 'tool' });
+    const budget = computeBudget({
+      contextSize: config.session.contextSize,
+      systemPrompt: tempSpecialist?.systemPrompt ?? '',
+      workspaceContext: wsCtx,
+      currentMessage: message,
+      outputReserve,
+    });
+
+    try {
+      const compacted = await buildCompactedHistory({
+        store: sessionStore,
+        client,
+        agentId,
+        sessionKey,
+        budgetTokens: budget.historyBudget,
+        recentTurnsToKeep: config.session.recentTurnsToKeep,
+        model: tempSpecialist?.model ?? config.router.model,
+        workspacePath,
+      });
+      history = compacted.messages;
+      if (compacted.compacted) {
+        console.log(`[Dispatch] History compacted (budget: ${budget.historyBudget} tokens)`);
+      }
+    } catch (err) {
+      // Fallback: simple truncation (original behavior)
+      console.warn('[Dispatch] Compaction failed, falling back to turn-count truncation:', err);
+      const transcript = sessionStore.loadTranscript(agentId, sessionKey, config.session.maxHistoryTurns);
+      history = transcript.map(t => ({
+        role: t.role as 'user' | 'assistant',
+        content: t.content,
+      }));
+    }
   }
 
   // 2. Classify (or use override)
@@ -158,6 +199,7 @@ async function runSpecialist(
       temperature: specialist.temperature,
       maxTokens: specialist.maxTokens,
       systemPrompt,
+      contextSize: config.session.contextSize,
     },
     tools: toolDefs,
     executor,

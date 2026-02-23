@@ -14,7 +14,9 @@ describe('loadConfig', () => {
     expect(config.ollama.url).toBe('http://127.0.0.1:11434');
     expect(config.router.model).toBe('phi4-mini');
     expect(config.router.defaultCategory).toBe('chat');
-    expect(config.session.maxHistoryTurns).toBe(20);
+    expect(config.session.maxHistoryTurns).toBe(100);
+    expect(config.session.contextSize).toBe(32768);
+    expect(config.session.recentTurnsToKeep).toBe(6);
   });
 
   it('loads and validates a JSON5 config', () => {

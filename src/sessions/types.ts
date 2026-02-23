@@ -15,3 +15,10 @@ export interface SessionMetadata {
   lastActiveAt: string;
   turnCount: number;
 }
+
+export interface CompactionSummary {
+  text: string;
+  coversUpToIndex: number;
+  generatedAt: string;
+  model: string;
+}

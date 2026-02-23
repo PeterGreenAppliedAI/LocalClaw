@@ -18,6 +18,7 @@ export interface ReActConfig {
   temperature: number;
   maxTokens: number;
   systemPrompt?: string;
+  contextSize?: number;
 }
 
 export type ParsedReActResponse =

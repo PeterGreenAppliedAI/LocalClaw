@@ -3,6 +3,7 @@ import type { OllamaClient } from '../ollama/client.js';
 import type { OllamaMessage, OllamaTool, OllamaToolCall } from '../ollama/types.js';
 import type { ToolDefinition, ToolExecutor, ToolContext } from '../tools/types.js';
 import type { ReActConfig, ReActResult, ReActStep } from './types.js';
+import { estimateMessagesTokens } from '../context/tokens.js';
 
 export interface RunReActLoopParams {
   client: OllamaClient;
@@ -13,6 +14,43 @@ export interface RunReActLoopParams {
   userMessage: string;
   history?: OllamaMessage[];
   workspaceContext?: string;
+}
+
+/**
+ * Trim older tool observations when the messages array exceeds the token budget.
+ *
+ * Strategy:
+ * 1. Keep system message and current user message untouched
+ * 2. Keep the most recent 2 assistant+tool pairs untouched
+ * 3. Replace older tool observation content with a truncated preview
+ */
+export function trimToolLoopMessages(messages: OllamaMessage[], contextSize: number): void {
+  const budget = Math.floor(contextSize * 0.85); // leave room for output + overhead
+  if (estimateMessagesTokens(messages) <= budget) return;
+
+  // Find tool messages eligible for trimming (not in the last 4 non-system messages)
+  const nonSystemIndices: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role !== 'system') nonSystemIndices.push(i);
+  }
+
+  // Protect last 4 non-system messages (≈ 2 assistant+tool pairs)
+  const protectedSet = new Set(nonSystemIndices.slice(-4));
+
+  for (let i = 0; i < messages.length; i++) {
+    if (protectedSet.has(i)) continue;
+    if (messages[i].role !== 'tool') continue;
+
+    const original = messages[i].content ?? '';
+    if (original.length > 300) {
+      messages[i] = {
+        ...messages[i],
+        content: `[Truncated: ${original.slice(0, 200)}... (${original.length} chars)]`,
+      };
+    }
+
+    if (estimateMessagesTokens(messages) <= budget) return;
+  }
 }
 
 /**
@@ -126,6 +164,11 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
   console.log(`[ReAct] model=${config.model}, tools=[${tools.map(t => t.name).join(', ')}]`);
 
   for (let i = 0; i < config.maxIterations; i++) {
+    // Trim older tool observations if over budget
+    if (config.contextSize) {
+      trimToolLoopMessages(messages, config.contextSize);
+    }
+
     const response = await client.chat({
       model: config.model,
       messages,

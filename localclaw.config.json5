@@ -132,7 +132,12 @@
 
   memory: { backend: "markdown" },
   cron: { enabled: true, store: "data/cron.json" },
-  session: { transcriptDir: "data/sessions", maxHistoryTurns: 20 },
+  session: {
+    transcriptDir: "data/sessions",
+    maxHistoryTurns: 100,       // coarse safety net — compaction handles size now
+    contextSize: 32768,          // model context window
+    recentTurnsToKeep: 6,        // turns kept verbatim (3 exchanges)
+  },
 
   tools: {
     web: {
