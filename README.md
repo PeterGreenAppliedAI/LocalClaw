@@ -144,9 +144,38 @@ Adding a new adapter requires zero core code changes — implement the interface
 LocalClaw supports voice input and output through an optional TTS/STT service layer:
 
 - **STT (Speech-to-Text)** — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server on your inference node. Incoming voice messages are automatically transcribed before processing.
-- **TTS (Text-to-Speech)** — [Orpheus TTS](https://github.com/canopyai/orpheus-tts) server on your inference node. When a user sends a voice message, the response is synthesized back as audio.
+- **TTS (Text-to-Speech)** — [Orpheus TTS](https://github.com/canopyai/orpheus-tts) with [llama.cpp](https://github.com/ggerganov/llama.cpp) backend on your inference node. When a user sends a voice message, the response is synthesized back as audio.
 
 Both use OpenAI-compatible HTTP APIs (no extra npm packages). The rule is simple: **voice in → voice out, text in → text out**. Adapters that don't support audio (Gmail, Microsoft Graph) gracefully ignore it.
+
+**Voice setup requires three services on your inference node:**
+
+1. **llama-server** — Serves the Orpheus-3b model (port 8080)
+   ```bash
+   ./llama-server -m orpheus-3b-0.1-ft-q4_k_m.gguf -c 2048 -ngl 99 --flash-attn --port 8080
+   ```
+2. **Orpheus TTS FastAPI** — Converts LLM tokens to audio via SNAC codec (port 5005)
+   ```bash
+   cd orpheus-tts && python api/app.py
+   ```
+3. **faster-whisper** — OpenAI-compatible STT endpoint (port 8000)
+   ```bash
+   faster-whisper-server --model large-v3 --device cuda
+   ```
+
+**Important:** The Orpheus FastAPI server must convert output to OGG Opus format (required for WhatsApp voice notes). Ensure ffmpeg is installed on the inference node for the WAV→Opus conversion.
+
+Configure in `.env`:
+```env
+ORPHEUS_URL=http://your-gpu-node:5005
+WHISPER_URL=http://your-gpu-node:8000
+```
+
+Enable in `localclaw.config.json5`:
+```json5
+tts: { enabled: true, url: "${ORPHEUS_URL}", voice: "tara", format: "opus" },
+stt: { enabled: true, url: "${WHISPER_URL}", model: "whisper-large-v3", language: "en" },
+```
 
 ### WhatsApp
 
@@ -177,12 +206,14 @@ rm -rf .baileys_auth && npm run dev
 
 Each agent has persistent markdown files injected into context:
 
-- **SOUL.md** — Persona and communication style
+- **SOUL.md** — Persona, communication style, and channel-specific behavior rules
 - **TOOLS.md** — What the bot can do (editable at runtime, no restart)
-- **USER.md** — User profile learned over time
-- **IDENTITY.md** — Agent name and personality
+- **USER.md** — Owner profile and preferences
+- **IDENTITY.md** — Agent name and per-channel identity
 - **MEMORY.md** — Long-term memory
 - **HEARTBEAT.md** — Periodic task instructions
+
+The workspace system supports **channel-aware behavior** — the bot receives the source channel (`discord`, `whatsapp`, etc.) with each message, so SOUL.md can define different rules per platform (e.g., act as the owner's assistant on WhatsApp, act as a community bot on Discord).
 
 ## Extending LocalClaw
 
