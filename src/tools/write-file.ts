@@ -13,12 +13,13 @@ const PROTECTED_FILES = new Set([
   'AGENTS.md',
   'HEARTBEAT.md',
   'BOOTSTRAP.md',
+  'TASKS.md',
 ]);
 
 export function createWriteFileTool(): LocalClawTool {
   return {
     name: 'write_file',
-    description: 'Write or create a file (workspace-only for safety). Cannot overwrite protected files (SOUL.md, TOOLS.md, IDENTITY.md, AGENTS.md, HEARTBEAT.md, BOOTSTRAP.md).',
+    description: 'Write or create a file (workspace-only for safety). Cannot overwrite protected files (SOUL.md, TOOLS.md, IDENTITY.md, AGENTS.md, HEARTBEAT.md, BOOTSTRAP.md, TASKS.md).',
     parameterDescription: 'path (required): File path relative to workspace. content (required): File content to write.',
     parameters: {
       type: 'object',

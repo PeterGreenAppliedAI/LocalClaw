@@ -36,6 +36,8 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 | Memory | `memory_save`, `memory_search`, `memory_get` | Vector embeddings + keyword fallback, persisted in SQLite |
 | Execution | `exec`, `read_file`, `write_file` | Allowlisted shell commands, safe file I/O |
 | Scheduling | `cron_add`, `cron_list`, `cron_remove`, `cron_edit` | Real cron expressions, timezone-aware, persistent |
+| Task Board | `task_add`, `task_list`, `task_update`, `task_done`, `task_remove` | Persistent kanban-style task system with TASKS.md rendering |
+| Reasoning | `reason` | Hand off to a dedicated thinking model for deep analysis and content synthesis |
 | Config | `cron_edit`, `workspace_read`, `workspace_write` | Self-administration — edit cron jobs, read/write workspace files |
 | Messaging | `send_message` | Cross-channel message delivery |
 | Browsing | `browser` | Playwright headless Chromium — navigate, snapshot, screenshot |
@@ -54,6 +56,7 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
   ollama pull phi4-mini
   ollama pull qwen3-coder:30b
   ollama pull qwen3-embedding:8b
+  ollama pull nemotron-3-nano:30b   # optional — for reasoning model
   ```
 
 ### Install
@@ -105,14 +108,15 @@ localclaw/
 │   ├── ollama/               # Ollama HTTP client (chat, stream, embed)
 │   ├── channels/             # Pluggable adapters (Discord, Telegram, Web, Slack, Gmail, Microsoft Graph, WhatsApp)
 │   ├── services/             # TTS (Orpheus) and STT (Whisper) services
-│   ├── tools/                # 16 tool implementations
+│   ├── tasks/                # Task board (types + JSON/Markdown store)
+│   ├── tools/                # 22 tool implementations
 │   ├── agents/               # Workspace files + routing
 │   ├── context/              # Token estimation, budget calculator, history compaction
 │   ├── sessions/             # Transcript persistence + compaction summaries
 │   ├── cron/                 # Scheduling service
 │   ├── memory/               # Vector + keyword search (SQLite)
 │   └── browser/              # Playwright wrapper
-├── test/                     # 80 tests across 8 suites
+├── test/                     # 94 tests across 9 suites
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens
 ```
@@ -214,6 +218,7 @@ Each agent has persistent markdown files injected into context:
 - **IDENTITY.md** — Agent name and per-channel identity
 - **MEMORY.md** — Long-term memory
 - **HEARTBEAT.md** — Periodic task instructions
+- **TASKS.md** — Rendered task board (auto-generated, protected)
 
 The workspace system supports **channel-aware behavior** — the bot receives the source channel (`discord`, `whatsapp`, etc.) with each message, so SOUL.md can define different rules per platform (e.g., act as the owner's assistant on WhatsApp, act as a community bot on Discord).
 
@@ -243,6 +248,42 @@ session: {
 ```
 
 **Graceful degradation:** If the compaction model call fails, it falls back to simple turn-count truncation. Raw transcripts are never modified — summaries are stored separately and can be regenerated.
+
+### Task Board
+
+A persistent kanban-style task system that both users and the bot can use. Tasks are stored in `tasks.json` and rendered to `TASKS.md` with kanban sections (Todo, In Progress, Done, Cancelled).
+
+**Tools:** `task_add`, `task_list`, `task_update`, `task_done`, `task_remove`
+
+**Usage:**
+- "Add a task to buy groceries" → creates a task
+- "Show my tasks" → lists todo + in-progress
+- "Mark a1b2c3d4 done" → completes a task
+
+Tasks support priority levels (low/medium/high), assignees, due dates, and tags. The Done section is capped at 20 items to prevent bloat. `TASKS.md` is a protected file — the bot can only modify it through the TaskStore, not by directly writing to it.
+
+### Reasoning Model
+
+Certain specialists can hand off to a dedicated reasoning model for deep analysis, planning, and content synthesis. The reasoning model (`nemotron-3-nano:30b` by default) never calls tools — it only thinks and returns text.
+
+**How it works:**
+
+1. **Step-back planning** — When the `reason` tool is available, the tool loop asks the specialist to plan its approach before executing. This prevents unstructured outputs.
+2. **Forced reasoning pass** — After the specialist gathers data (2+ tool calls), if it didn't call `reason` itself, the system automatically routes the accumulated observations through the reasoning model for a clean synthesis.
+
+This means research-heavy flows (e.g., "search for AI news and write an article") automatically get a polished output from the reasoning model, even if the specialist forgets to invoke it.
+
+**Configuration:**
+
+```json5
+reasoning: {
+  model: "nemotron-3-nano:30b",
+  maxTokens: 8192,
+  temperature: 0.6,
+},
+```
+
+Add `"reason"` to any specialist's `tools` array to enable the reasoning pass for that category. Specialists without `reason` in their tools are unaffected — zero overhead.
 
 ## Extending LocalClaw
 
@@ -283,6 +324,7 @@ session: {
 | Router Model | phi4-mini |
 | Specialist Model | qwen3-coder:30b |
 | Embedding Model | qwen3-embedding:8b |
+| Reasoning Model | nemotron-3-nano:30b (optional) |
 | Discord | discord.js 14 |
 | Browser | playwright-core |
 | Scheduling | croner |

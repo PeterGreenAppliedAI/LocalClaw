@@ -19,6 +19,7 @@
       cron:       { description: "Schedule, list, or manage recurring tasks" },
       message:    { description: "Send messages to other channels/users" },
       website:    { description: "Teaching materials, courses, assignments" },
+      task:       { description: "Create, list, update, or complete tasks and to-dos" },
       multi:      { description: "Complex requests needing multiple different tools" },
       config:     { description: "Edit settings, cron jobs, workspace files, agent configuration" },
     },
@@ -27,7 +28,7 @@
   specialists: {
     chat: {
       model: "qwen3-coder:30b",
-      systemPrompt: "You are LocalClaw. Refer to TOOLS.md in your workspace context to know your actual capabilities. When asked what you can do, describe your real tools — not generic AI abilities. Respond naturally and concisely.",
+      systemPrompt: "You are Peter Green's AI assistant. Follow SOUL.md rules strictly — your behavior MUST change based on which channel the message came from (check the message context). On Discord, be a full helpful assistant. On WhatsApp, follow the WhatsApp Rules in SOUL.md without exception.",
       maxTokens: 4096,
       temperature: 0.8,
       maxIterations: 1,
@@ -39,7 +40,7 @@
       maxTokens: 4096,
       temperature: 0.3,
       maxIterations: 8,
-      tools: ["web_search", "web_fetch", "browser"],
+      tools: ["web_search", "web_fetch", "browser", "reason"],
     },
     memory: {
       model: "qwen3-coder:30b",
@@ -55,7 +56,7 @@
       maxTokens: 4096,
       temperature: 0.3,
       maxIterations: 8,
-      tools: ["exec", "read_file", "write_file"],
+      tools: ["exec", "read_file", "write_file", "reason"],
     },
     cron: {
       model: "qwen3-coder:30b",
@@ -84,7 +85,7 @@
       maxTokens: 4096,
       temperature: 0.3,
       maxIterations: 8,
-      tools: ["web_search", "memory_search", "exec", "send_message"],
+      tools: ["web_search", "memory_search", "exec", "send_message", "task_add", "task_list", "task_done", "reason"],
     },
     config: {
       model: "qwen3-coder:30b",
@@ -93,6 +94,14 @@
       temperature: 0.3,
       maxIterations: 5,
       tools: ["cron_edit", "cron_add", "cron_list", "cron_remove", "workspace_read", "workspace_write"],
+    },
+    task: {
+      model: "qwen3-coder:30b",
+      systemPrompt: "You are a task management specialist. Use task_add to create tasks, task_list to show them, task_update to modify, task_done to complete, task_remove to delete. Default to showing todo + in_progress. Always confirm changes.",
+      maxTokens: 2048,
+      temperature: 0.2,
+      maxIterations: 5,
+      tools: ["task_add", "task_list", "task_update", "task_done", "task_remove"],
     },
   },
 
@@ -149,6 +158,12 @@
       allowlist: ["ls", "cat", "python3", "node", "git"],
       timeout: 30000,
     },
+  },
+
+  reasoning: {
+    model: "nemotron-3-nano:30b",
+    maxTokens: 8192,
+    temperature: 0.6,
   },
 
   browser: {

@@ -160,8 +160,37 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
   ];
 
   const steps: ReActStep[] = [];
+  const hasReasonTool = availableToolNames.has('reason');
 
   console.log(`[ReAct] model=${config.model}, tools=[${tools.map(t => t.name).join(', ')}]`);
+
+  // Step-back planning: when reason tool is available, have the model plan
+  // its approach before diving in. Prevents unstructured multi-draft outputs.
+  if (hasReasonTool && tools.length > 1) {
+    try {
+      const planResponse = await client.chat({
+        model: config.model,
+        messages: [
+          ...messages,
+          {
+            role: 'user',
+            content: 'Before starting, briefly plan your approach in 2-3 bullet points. What tools will you use, in what order, and what is the expected output format? Be concise — just the plan, then I will say "go" and you can begin.',
+          },
+        ],
+        options: { temperature: 0.2, num_predict: 256 },
+      });
+
+      const plan = planResponse.message?.content ?? '';
+      if (plan) {
+        messages.push({ role: 'assistant', content: plan });
+        messages.push({ role: 'user', content: 'Go.' });
+        console.log(`[ReAct] Step-back plan: ${plan.slice(0, 120)}...`);
+      }
+    } catch {
+      // Planning failed — continue without it
+      console.log('[ReAct] Step-back planning failed, proceeding without plan');
+    }
+  }
 
   for (let i = 0; i < config.maxIterations; i++) {
     // Trim older tool observations if over budget
@@ -244,13 +273,65 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
     }
 
     // No tool calls — this is the final answer
-    const answer = msg.content || '';
+    let answer = msg.content || '';
+
+    // Forced reasoning pass: if reason tool was available but never called,
+    // and the model gathered data (2+ tool calls), run a reasoning pass
+    // to produce a clean, single-draft synthesis.
+    const reasonWasCalled = steps.some(s => s.action?.tool === 'reason');
+    const toolCallSteps = steps.filter(s => s.action);
+
+    if (hasReasonTool && !reasonWasCalled && toolCallSteps.length >= 2) {
+      const observations = toolCallSteps
+        .map(s => `[${s.action!.tool}]: ${s.observation ?? ''}`)
+        .join('\n\n');
+
+      console.log(`[ReAct] Forcing reasoning pass (${toolCallSteps.length} tool calls, reason never invoked)`);
+
+      try {
+        const reasoned = await executor('reason', {
+          prompt: userMessage,
+          context: observations,
+        }, toolContext);
+
+        answer = reasoned;
+        console.log(`[ReAct] Reasoning pass complete (${answer.length} chars)`);
+      } catch (err) {
+        // Reasoning failed — keep the model's original answer
+        console.error(`[ReAct] Reasoning pass failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
     steps.push({ thought: '', finalAnswer: answer });
     return { answer, steps, iterations: i + 1, hitMaxIterations: false };
   }
 
-  // Max iterations reached — ask the model to synthesize a final answer
+  // Max iterations reached — use reasoning pass if available, otherwise ask model to synthesize
   console.log(`[ReAct] Max iterations (${config.maxIterations}) reached, synthesizing final answer`);
+
+  const maxIterToolCalls = steps.filter(s => s.action);
+  const maxIterReasonCalled = steps.some(s => s.action?.tool === 'reason');
+
+  // Prefer reasoning model for synthesis when available
+  if (hasReasonTool && !maxIterReasonCalled && maxIterToolCalls.length >= 2) {
+    try {
+      const observations = maxIterToolCalls
+        .map(s => `[${s.action!.tool}]: ${s.observation ?? ''}`)
+        .join('\n\n');
+
+      console.log(`[ReAct] Max-iter reasoning pass (${maxIterToolCalls.length} tool calls)`);
+      const answer = await executor('reason', {
+        prompt: userMessage,
+        context: observations,
+      }, toolContext);
+
+      steps.push({ thought: '', finalAnswer: answer });
+      return { answer, steps, iterations: config.maxIterations, hitMaxIterations: true };
+    } catch (err) {
+      console.error(`[ReAct] Max-iter reasoning pass failed: ${err instanceof Error ? err.message : err}`);
+      // Fall through to normal synthesis
+    }
+  }
 
   try {
     messages.push({

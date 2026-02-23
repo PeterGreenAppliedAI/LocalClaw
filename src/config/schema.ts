@@ -125,6 +125,12 @@ export const STTConfigSchema = z.object({
   language: z.string().default('en'),
 });
 
+export const ReasoningConfigSchema = z.object({
+  model: z.string().default('nemotron-3-nano:30b'),
+  maxTokens: z.number().default(8192),
+  temperature: z.number().default(0.6),
+});
+
 export const ToolsConfigSchema = z.object({
   web: z.object({
     search: WebSearchConfigSchema.optional(),
@@ -144,6 +150,7 @@ export const LocalClawConfigSchema = z.object({
   cron: CronConfigSchema.default({}),
   session: SessionConfigSchema.default({}),
   tools: ToolsConfigSchema.optional(),
+  reasoning: ReasoningConfigSchema.optional(),
   browser: BrowserConfigSchema.optional(),
   tts: TTSConfigSchema.default({}),
   stt: STTConfigSchema.default({}),

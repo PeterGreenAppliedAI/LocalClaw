@@ -3,6 +3,7 @@ import type { LocalClawConfig } from '../config/types.js';
 import type { CronService } from '../cron/service.js';
 import type { ChannelRegistry } from '../channels/registry.js';
 import type { OllamaClient } from '../ollama/client.js';
+import type { TaskStore } from '../tasks/store.js';
 import { resolveWorkspacePath } from '../agents/scope.js';
 import { createWebSearchTool } from './web-search.js';
 import { createWebFetchTool } from './web-fetch.js';
@@ -21,11 +22,18 @@ import { createSendMessageTool } from './send-message.js';
 import { createCronEditTool } from './cron-edit.js';
 import { createWorkspaceReadTool } from './workspace-read.js';
 import { createWorkspaceWriteTool } from './workspace-write.js';
+import { createTaskAddTool } from './task-add.js';
+import { createTaskListTool } from './task-list.js';
+import { createTaskUpdateTool } from './task-update.js';
+import { createTaskDoneTool } from './task-done.js';
+import { createTaskRemoveTool } from './task-remove.js';
+import { createReasonTool } from './reason.js';
 
 export interface RegisterToolsOptions {
   cronService?: CronService;
   channelRegistry?: ChannelRegistry;
   ollamaClient?: OllamaClient;
+  taskStore?: TaskStore;
 }
 
 /**
@@ -73,6 +81,20 @@ export function registerAllTools(
   // Send message tool (requires channel registry)
   if (options?.channelRegistry) {
     registry.register(createSendMessageTool(options.channelRegistry));
+  }
+
+  // Task tools (require task store)
+  if (options?.taskStore) {
+    registry.register(createTaskAddTool(options.taskStore));
+    registry.register(createTaskListTool(options.taskStore));
+    registry.register(createTaskUpdateTool(options.taskStore));
+    registry.register(createTaskDoneTool(options.taskStore));
+    registry.register(createTaskRemoveTool(options.taskStore));
+  }
+
+  // Reason tool (requires Ollama client + reasoning config)
+  if (options?.ollamaClient && config.reasoning) {
+    registry.register(createReasonTool(options.ollamaClient, config.reasoning));
   }
 
   // Workspace tools (always available)

@@ -17,6 +17,7 @@ import type {
   WebSearchConfigSchema,
   WebFetchConfigSchema,
   WebsiteConfigSchema,
+  ReasoningConfigSchema,
   BrowserConfigSchema,
   TTSConfigSchema,
   STTConfigSchema,
@@ -39,6 +40,7 @@ export type ExecConfig = z.infer<typeof ExecConfigSchema>;
 export type WebSearchConfig = z.infer<typeof WebSearchConfigSchema>;
 export type WebFetchConfig = z.infer<typeof WebFetchConfigSchema>;
 export type WebsiteConfig = z.infer<typeof WebsiteConfigSchema>;
+export type ReasoningConfig = z.infer<typeof ReasoningConfigSchema>;
 export type BrowserConfig = z.infer<typeof BrowserConfigSchema>;
 export type TTSConfig = z.infer<typeof TTSConfigSchema>;
 export type STTConfig = z.infer<typeof STTConfigSchema>;

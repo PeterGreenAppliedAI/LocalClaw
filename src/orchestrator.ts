@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import type { LocalClawConfig } from './config/types.js';
 import type { ChannelAdapterConfig, InboundMessage } from './channels/types.js';
 import { OllamaClient } from './ollama/client.js';
@@ -6,6 +7,7 @@ import { ChannelRegistry } from './channels/registry.js';
 import { SessionStore } from './sessions/store.js';
 import { CronStore } from './cron/store.js';
 import { CronService } from './cron/service.js';
+import { TaskStore } from './tasks/store.js';
 import { dispatchMessage } from './dispatch.js';
 import { resolveRoute } from './agents/resolve-route.js';
 import { registerAllTools } from './tools/register-all.js';
@@ -100,11 +102,19 @@ export class Orchestrator {
       });
     }
 
+    // Set up task store
+    const defaultWorkspace = resolveWorkspacePath(this.config.agents.default, this.config);
+    const taskStore = new TaskStore(
+      join(defaultWorkspace, 'tasks.json'),
+      join(defaultWorkspace, 'TASKS.md'),
+    );
+
     // Register all tools
     registerAllTools(this.toolRegistry, this.config, {
       cronService: this.cronService,
       channelRegistry: this.channelRegistry,
       ollamaClient: this.client,
+      taskStore,
     });
 
     // Set up message handler
