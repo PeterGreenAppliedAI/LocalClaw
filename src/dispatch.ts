@@ -110,12 +110,24 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   }
 
   // 2. Classify (or use override)
+  // Extract previous category from last assistant turn for sticky routing
+  let previousCategory: string | undefined;
+  if (sessionStore) {
+    const recentTurns = sessionStore.loadTranscript(agentId, sessionKey, 4);
+    for (let i = recentTurns.length - 1; i >= 0; i--) {
+      if (recentTurns[i].role === 'assistant' && recentTurns[i].category) {
+        previousCategory = recentTurns[i].category;
+        break;
+      }
+    }
+  }
+
   const classifyStart = Date.now();
   let classification: ClassifyResult;
   if (params.overrideCategory) {
     classification = { category: params.overrideCategory, confidence: 'override' as any };
   } else {
-    classification = await classifyMessage(client, config.router, message);
+    classification = await classifyMessage(client, config.router, message, previousCategory);
   }
   const { category } = classification;
   logRouterClassification({ category, confidence: classification.confidence, durationMs: Date.now() - classifyStart });

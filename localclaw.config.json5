@@ -8,7 +8,7 @@
   },
 
   router: {
-    model: "phi4-mini",
+    model: "phi4:14b",
     timeout: 2000,
     defaultCategory: "chat",
     categories: {

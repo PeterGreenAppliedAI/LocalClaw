@@ -18,7 +18,7 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(remind|schedule|every day|at \d+\s*(am|pm)|cron|cronjob|cronjobs|cron\s*job|recurring|scheduled task|morning report|daily report)\b/i, category: 'cron' },
   { pattern: /\b(remember|recall|we (discussed|talked)|last time|yesterday)\b/i, category: 'memory' },
   { pattern: /\b(tell|send|notify|message|announce)\b/i, category: 'message' },
-  { pattern: /\b(homework|assignment|course|class|syllabus|lecture)\b/i, category: 'website' },
+  { pattern: /\b(homework|assignment|syllabus|lecture)\b/i, category: 'website' },
   // Broad web_search last — "current" removed (false positive on "current directory" etc.)
   { pattern: /\b(search|google|look up|find out|latest|news|what is|who is)\b/i, category: 'web_search' },
 ];
@@ -29,24 +29,72 @@ const VALID_CATEGORIES = new Set([
 
 export interface ClassifyResult {
   category: string;
-  confidence: 'model' | 'keyword' | 'fallback';
+  confidence: 'model' | 'keyword' | 'fallback' | 'sticky';
+}
+
+/**
+ * Strong new-topic signals — these indicate the user is starting a genuinely
+ * different task, not continuing the previous one.
+ */
+const NEW_TOPIC_PATTERNS = [
+  /\b(search|google|look up)\b.*\b(for|about)\b/i,  // "search the web for X"
+  /\b(run|execute|deploy|install|sudo)\b/i,           // explicit exec intent
+  /\b(remind me|schedule|every day|set up a cron)\b/i, // explicit cron intent
+  /\b(send|tell|notify)\b.*\b(message|channel)\b/i,   // explicit messaging intent
+  /\b(remember this|save this|store this)\b/i,         // explicit memory intent
+];
+
+function hasStrongNewTopicSignal(message: string): boolean {
+  return NEW_TOPIC_PATTERNS.some(p => p.test(message));
+}
+
+/**
+ * Heuristic: messages under a reasonable length that don't contain
+ * strong signals for a completely different topic are likely continuations.
+ */
+function isLikelyFollowUp(message: string): boolean {
+  const trimmed = message.trim();
+  // Long, self-contained messages are likely new topics
+  if (trimmed.length > 200) return false;
+  // Strong new-topic signals override stickiness
+  if (hasStrongNewTopicSignal(trimmed)) return false;
+  // Under 150 chars without strong new-topic signals — likely a follow-up
+  return true;
 }
 
 /**
  * Classify a message into a specialist category.
  *
  * Pipeline:
- *   1. Ask router model for classification
- *   2. If model output is a valid category, use it
- *   3. If invalid/timeout, check keyword heuristics
- *   4. Fallback to defaultCategory
+ *   1. Sticky category — if previous category exists and message looks like a follow-up,
+ *      stay on the same category unless keywords strongly indicate otherwise
+ *   2. Ask router model for classification
+ *   3. If model output is a valid category, use it
+ *   4. If invalid/timeout, check keyword heuristics
+ *   5. Fallback to defaultCategory
  */
 export async function classifyMessage(
   client: OllamaClient,
   config: RouterConfig,
   message: string,
+  previousCategory?: string,
 ): Promise<ClassifyResult> {
   const validCategories = getValidCategories(config);
+
+  // Sticky category: follow-ups stay on the previous specialist
+  // Break out if: strong new-topic signal, long message, OR keywords point to a different category
+  if (previousCategory && previousCategory !== 'chat' && validCategories.has(previousCategory)) {
+    if (isLikelyFollowUp(message)) {
+      // Check if keywords point to a DIFFERENT category — if so, don't stick
+      const keywordHit = applyKeywordHeuristics(message, validCategories);
+      if (keywordHit && keywordHit !== previousCategory) {
+        console.log(`[Router] Sticky override: "${message.slice(0, 60)}..." keyword="${keywordHit}" beats sticky="${previousCategory}"`);
+      } else {
+        console.log(`[Router] Sticky: "${message.slice(0, 60)}..." → ${previousCategory} (follow-up)`);
+        return { category: previousCategory, confidence: 'sticky' };
+      }
+    }
+  }
 
   // Try model classification
   try {

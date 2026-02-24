@@ -125,13 +125,32 @@ function parseToolCallsFromText(
 }
 
 /**
+ * Action hallucination detector — catches model claiming "I've updated/created/..."
+ * without actually calling any tools (per ChatGPT analysis §3-4).
+ */
+const ACTION_CLAIM_PATTERNS = [
+  /\b(?:i'?ve|i have|i just|i'?ve just)\s+(?:updated|created|added|removed|deleted|modified|changed|fixed|completed|set|saved|written|executed|ran|scheduled|marked)\b/i,
+  /\b(?:successfully|already)\s+(?:updated|created|added|removed|deleted|modified|changed|fixed|completed|saved|scheduled)\b/i,
+  /\btask\s+(?:has been|was|is now)\s+(?:updated|created|added|removed|deleted|modified|changed|completed|marked)\b/i,
+  /\bhere(?:'s| is)\s+the\s+updated\b/i,
+  /\bthat(?:'s| is)\s+(?:been|now)\s+(?:updated|done|added|saved|fixed|changed)\b/i,
+];
+
+function claimsActionWithoutToolCall(text: string): boolean {
+  return ACTION_CLAIM_PATTERNS.some(p => p.test(text));
+}
+
+/** Max chars for a single tool observation before truncation. */
+const MAX_TOOL_RESULT_CHARS = 2000;
+
+/**
  * Run the tool-calling loop using Ollama's native function calling.
  *
  * Flow:
  *   1. Send messages + tools to Ollama
  *   2. If response has tool_calls → execute tools, append results, loop
  *   3. If content contains narrated tool calls → parse + execute, loop
- *   4. If response has content only → that's the final answer
+ *   4. If response has content only → check for action hallucination, then accept as final answer
  *   5. Safety: max iterations limit
  */
 export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResult> {
@@ -161,8 +180,16 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
   const steps: ReActStep[] = [];
   const hasReasonTool = availableToolNames.has('reason');
+  let repairAttempted = false;
 
-  console.log(`[ReAct] model=${config.model}, tools=[${tools.map(t => t.name).join(', ')}]`);
+  // Temperature lock: ≤0.3 for tool-calling specialists (ChatGPT feedback §6)
+  const effectiveTemperature = ollamaTools.length > 0
+    ? Math.min(config.temperature, 0.3)
+    : config.temperature;
+
+  console.log(`[ReAct] model=${config.model}, tools=[${tools.map(t => t.name).join(', ')}]${
+    effectiveTemperature !== config.temperature ? `, temp clamped ${config.temperature}→${effectiveTemperature}` : ''
+  }`);
 
   // Step-back planning: when reason tool is available, have the model plan
   // its approach before diving in. Prevents unstructured multi-draft outputs.
@@ -203,7 +230,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       messages,
       tools: ollamaTools.length > 0 ? ollamaTools : undefined,
       options: {
-        temperature: config.temperature,
+        temperature: effectiveTemperature,
         num_predict: config.maxTokens,
       },
     });
@@ -257,6 +284,13 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
           console.error(`[ReAct] Tool error: ${toolName} — ${errMsg}`);
         }
 
+        // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5)
+        if (observation.length > MAX_TOOL_RESULT_CHARS) {
+          const original = observation.length;
+          observation = observation.slice(0, MAX_TOOL_RESULT_CHARS) + `\n... [truncated from ${original} chars]`;
+          console.log(`[ReAct] Tool "${toolName}" output truncated: ${original} → ${MAX_TOOL_RESULT_CHARS} chars`);
+        }
+
         steps.push({
           thought: msg.content || '',
           action: { tool: toolName, params: toolParams },
@@ -272,8 +306,23 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       continue;
     }
 
-    // No tool calls — this is the final answer
+    // No tool calls — check for action hallucination before accepting as final answer
     let answer = msg.content || '';
+
+    // Action validator (ChatGPT feedback §3-4): if model claims it performed an action
+    // but never called a tool, send a repair prompt and retry once
+    if (ollamaTools.length > 0 && !repairAttempted && claimsActionWithoutToolCall(answer)) {
+      console.log(`[ReAct] Step ${i + 1}: action hallucination detected — "${answer.slice(0, 80)}..."`);
+      messages.push(msg);
+      messages.push({
+        role: 'user',
+        content: 'You said you performed an action, but you did NOT call any tool. '
+          + 'You MUST use the provided tools to make changes — you cannot modify data by just saying so. '
+          + 'Please call the correct tool now to fulfill the request.',
+      });
+      repairAttempted = true;
+      continue;
+    }
 
     // Forced reasoning pass: if reason tool was available but never called,
     // and the model gathered data (2+ tool calls), run a reasoning pass
