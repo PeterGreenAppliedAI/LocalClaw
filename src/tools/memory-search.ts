@@ -11,13 +11,14 @@ export function createMemorySearchTool(
 
   return {
     name: 'memory_search',
-    description: 'Search through stored memories and notes using semantic similarity',
-    parameterDescription: 'query (required): What to search for in memories. maxResults (optional): Max results to return (default 5).',
+    description: 'Search through stored memories and knowledge using semantic similarity. Use source filter to search only memories, only knowledge base, or all.',
+    parameterDescription: 'query (required): What to search for. maxResults (optional): Max results (default 5). source (optional): "memory", "knowledge", or "all" (default "all").',
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'What to search for in memories' },
         maxResults: { type: 'string', description: 'Maximum number of results to return (default 5)' },
+        source: { type: 'string', description: 'Filter by source: "memory", "knowledge", or "all"', enum: ['memory', 'knowledge', 'all'] },
       },
       required: ['query'],
     },
@@ -28,12 +29,18 @@ export function createMemorySearchTool(
       if (!query) return 'Error: query parameter is required';
 
       const maxResults = Number(params.maxResults) || 5;
+      const source = (params.source as string) || 'all';
 
       // Try vector search first if client is available and store has entries
       if (ollamaClient && embeddingStore.count() > 0) {
         try {
           const queryEmbedding = await generateEmbedding(ollamaClient, query);
-          const vectorResults = await embeddingStore.search(queryEmbedding, maxResults);
+          const vectorResults = embeddingStore.search(
+            queryEmbedding,
+            maxResults,
+            0.3,
+            source === 'all' ? undefined : source,
+          );
 
           if (vectorResults.length > 0) {
             return vectorResults
@@ -45,7 +52,7 @@ export function createMemorySearchTool(
         }
       }
 
-      // Fallback to keyword search
+      // Fallback to keyword search (only searches workspace markdown files, so no source filter)
       const results = searchMarkdownFiles(workspacePath, query, maxResults);
 
       if (results.length === 0) {

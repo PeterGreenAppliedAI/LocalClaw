@@ -8,7 +8,7 @@ async function main() {
   const config = loadConfig();
   const client = new OllamaClient(config.ollama.url, config.ollama.keepAlive);
   const registry = new ToolRegistry();
-  registerAllTools(registry, config);
+  await registerAllTools(registry, config);
 
   const available = await client.isAvailable();
   console.log(`Ollama available: ${available}`);

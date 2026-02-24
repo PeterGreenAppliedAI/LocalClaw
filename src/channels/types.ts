@@ -1,3 +1,10 @@
+export interface Attachment {
+  filename: string;
+  mimeType: string;
+  size: number;
+  data: Buffer;
+}
+
 export interface InboundMessage {
   id: string;
   channel: string;
@@ -10,6 +17,7 @@ export interface InboundMessage {
   timestamp: Date;
   raw?: unknown;
   audio?: { data: Buffer; mimeType: string };
+  attachments?: Attachment[];
 }
 
 export interface MessageTarget {

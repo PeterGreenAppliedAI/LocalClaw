@@ -1,6 +1,6 @@
 import type { OllamaClient } from './ollama/client.js';
 import type { ToolRegistry } from './tools/registry.js';
-import type { LocalClawConfig, SpecialistConfig } from './config/types.js';
+import type { LocalClawConfig, SpecialistConfig, ChannelSecurity } from './config/types.js';
 import type { ToolContext } from './tools/types.js';
 import type { OllamaMessage } from './ollama/types.js';
 import { classifyMessage, type ClassifyResult } from './router/classifier.js';
@@ -42,6 +42,15 @@ export interface DispatchResult {
   iterations: number;
   hitMaxIterations: boolean;
   steps?: Array<{ tool?: string; params?: Record<string, unknown>; observation?: string }>;
+}
+
+function resolveChannelSecurity(
+  config: LocalClawConfig,
+  channel?: string,
+): ChannelSecurity | undefined {
+  if (!channel) return undefined;
+  const chConfig = config.channels[channel];
+  return chConfig?.security ?? undefined;
 }
 
 /**
@@ -113,8 +122,46 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
 
   console.log(`[Dispatch] Category: ${category} (${classification.confidence})`);
 
+  // 2b. Channel security — category enforcement
+  const channelSecurity = resolveChannelSecurity(config, params.sourceContext?.channel);
+  const senderId = params.sourceContext?.senderId;
+  const isTrusted = !channelSecurity?.trustedUsers || channelSecurity.trustedUsers.includes(senderId ?? '');
+  let effectiveCategory = category;
+
+  if (channelSecurity?.allowedCategories && !channelSecurity.allowedCategories.includes(category)) {
+    effectiveCategory = channelSecurity.allowedCategories.includes('chat')
+      ? 'chat'
+      : channelSecurity.allowedCategories[0] ?? config.router.defaultCategory;
+    console.log(`[Dispatch] Channel "${params.sourceContext?.channel}" blocked category "${category}" → "${effectiveCategory}"`);
+  }
+
+  // 2c. Per-user category restrictions — untrusted users can't use restricted categories
+  if (!isTrusted && channelSecurity?.restrictedCategories?.includes(effectiveCategory)) {
+    const fallback = 'chat';
+    console.log(`[Dispatch] Untrusted user "${senderId}" blocked from restricted category "${effectiveCategory}" → "${fallback}"`);
+    effectiveCategory = fallback;
+  }
+
   // 3. Resolve specialist config
-  const specialistConfig = config.specialists[category] ?? getDefaultSpecialist(config, category);
+  let specialistConfig = config.specialists[effectiveCategory] ?? getDefaultSpecialist(config, effectiveCategory);
+
+  // 3b. Channel security — tool enforcement
+  if (specialistConfig && channelSecurity?.blockedTools) {
+    const filtered = specialistConfig.tools.filter(t => !channelSecurity.blockedTools!.includes(t));
+    if (filtered.length !== specialistConfig.tools.length) {
+      console.log(`[Dispatch] Channel stripped tools: [${specialistConfig.tools.filter(t => channelSecurity.blockedTools!.includes(t)).join(', ')}]`);
+      specialistConfig = { ...specialistConfig, tools: filtered };
+    }
+  }
+
+  // 3c. Per-user tool restrictions — untrusted users can't use restricted tools
+  if (!isTrusted && specialistConfig && channelSecurity?.restrictedTools) {
+    const filtered = specialistConfig.tools.filter(t => !channelSecurity.restrictedTools!.includes(t));
+    if (filtered.length !== specialistConfig.tools.length) {
+      console.log(`[Dispatch] Untrusted user "${senderId}" stripped restricted tools: [${specialistConfig.tools.filter(t => channelSecurity.restrictedTools!.includes(t)).join(', ')}]`);
+      specialistConfig = { ...specialistConfig, tools: filtered };
+    }
+  }
 
   let result: DispatchResult;
   const dispatchStart = Date.now();
@@ -124,14 +171,16 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   } else if (specialistConfig.tools.length === 0) {
     // No tools — skip ReAct loop, just chat directly
     result = await runAsBareChat(client, config, message, classification, history, specialistConfig, params.onStream, agentId);
-  } else if (category === 'multi') {
+  } else if (effectiveCategory === 'multi') {
     result = await runMultiOrchestration(params, classification, specialistConfig, history);
   } else {
     result = await runSpecialist(params, classification, specialistConfig, history);
   }
 
+  result.category = effectiveCategory;
+
   logDispatch({
-    category,
+    category: effectiveCategory,
     confidence: classification.confidence,
     iterations: result.iterations,
     hitMaxIterations: result.hitMaxIterations,
@@ -146,13 +195,13 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       role: 'user',
       content: message,
       timestamp: now,
-      category,
+      category: effectiveCategory,
     });
     sessionStore.appendTurn(agentId, sessionKey, {
       role: 'assistant',
       content: result.answer,
       timestamp: now,
-      category,
+      category: effectiveCategory,
       model: specialistConfig?.model,
       iterations: result.iterations,
     });

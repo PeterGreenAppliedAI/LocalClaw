@@ -15,6 +15,8 @@ import { bootstrapWorkspace } from './agents/workspace.js';
 import { resolveWorkspacePath } from './agents/scope.js';
 import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
+import { VisionService } from './services/vision.js';
+import { saveAttachment, isImageMime } from './services/attachments.js';
 
 function splitFinalMessage(text: string, limit: number): string[] {
   if (text.length <= limit) return [text];
@@ -42,6 +44,7 @@ export class Orchestrator {
   private cronService?: CronService;
   private ttsService: TTSService;
   private sttService: STTService;
+  private visionService: VisionService;
   private config: LocalClawConfig;
   private rateLimits = new Map<string, number[]>();
 
@@ -53,6 +56,7 @@ export class Orchestrator {
     this.sessionStore = new SessionStore(config.session.transcriptDir);
     this.ttsService = new TTSService(config.tts);
     this.sttService = new STTService(config.stt);
+    this.visionService = new VisionService(config.vision, config.ollama.url);
   }
 
   getToolRegistry(): ToolRegistry {
@@ -110,7 +114,7 @@ export class Orchestrator {
     );
 
     // Register all tools
-    registerAllTools(this.toolRegistry, this.config, {
+    await registerAllTools(this.toolRegistry, this.config, {
       cronService: this.cronService,
       channelRegistry: this.channelRegistry,
       ollamaClient: this.client,
@@ -188,6 +192,39 @@ export class Orchestrator {
         msg.content = transcription;
       } else {
         console.warn('[Orchestrator] STT transcription failed, using original content');
+      }
+    }
+
+    // Attachment pre-processing: save files, run vision on images
+    if (msg.attachments?.length) {
+      const prefixes: string[] = [];
+      const suffixes: string[] = [];
+
+      for (const att of msg.attachments) {
+        const saved = saveAttachment(att, msg.channel, msg.id);
+        if (!saved) continue;
+
+        if (saved.isImage) {
+          if (this.visionService.enabled) {
+            const description = await this.visionService.describe(att.data, att.mimeType);
+            if (description) {
+              prefixes.push(`[Image: ${saved.filename}]\n${description}`);
+            } else {
+              prefixes.push(`[Attached image: ${saved.localPath}]`);
+            }
+          } else {
+            prefixes.push(`[Attached image: ${saved.localPath}]`);
+          }
+        } else {
+          suffixes.push(`[Attached file: ${saved.localPath}] (${saved.filename}, ${saved.mimeType})`);
+        }
+      }
+
+      if (prefixes.length > 0) {
+        msg.content = prefixes.join('\n\n') + '\n\n' + msg.content;
+      }
+      if (suffixes.length > 0) {
+        msg.content = msg.content + '\n' + suffixes.join('\n');
       }
     }
 

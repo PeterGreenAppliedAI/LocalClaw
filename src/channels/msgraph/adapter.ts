@@ -1,5 +1,6 @@
 import type { Client } from '@microsoft/microsoft-graph-client';
 import type {
+  Attachment as ChannelAttachment,
   ChannelAdapter,
   ChannelAdapterConfig,
   ChannelStatus,
@@ -102,7 +103,7 @@ export class MsGraphAdapter implements ChannelAdapter {
       .api(`/users/${this.userId}/mailFolders/inbox/messages`)
       .filter('isRead eq false')
       .top(10)
-      .select('id,subject,body,from,receivedDateTime,conversationId')
+      .select('id,subject,body,from,receivedDateTime,conversationId,hasAttachments')
       .get();
 
     const messages = res.value ?? [];
@@ -123,6 +124,29 @@ export class MsGraphAdapter implements ChannelAdapter {
       const body = (msg.body?.content ?? '').replace(/<[^>]+>/g, '').trim();
       const content = subject ? `[${subject}] ${body}` : body;
 
+      // Fetch attachments
+      const attachments: ChannelAttachment[] = [];
+      if (msg.hasAttachments) {
+        try {
+          const attRes = await this.client!
+            .api(`/users/${this.userId}/messages/${msg.id}/attachments`)
+            .get();
+          for (const att of attRes.value ?? []) {
+            if (att.contentBytes) {
+              const buffer = Buffer.from(att.contentBytes, 'base64');
+              attachments.push({
+                filename: att.name ?? 'attachment',
+                mimeType: att.contentType ?? 'application/octet-stream',
+                size: buffer.length,
+                data: buffer,
+              });
+            }
+          }
+        } catch (err) {
+          console.error('[MsGraph] Failed to fetch attachments:', err instanceof Error ? err.message : err);
+        }
+      }
+
       const inbound: InboundMessage = {
         id: msg.id,
         channel: 'msgraph',
@@ -133,6 +157,7 @@ export class MsGraphAdapter implements ChannelAdapter {
         threadId: msg.conversationId,
         timestamp: new Date(msg.receivedDateTime),
         raw: msg,
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
 
       await this.handler(inbound);

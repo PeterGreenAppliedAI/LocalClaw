@@ -12,6 +12,7 @@ export interface MemoryEntry {
   section: string;
   embedding: number[];
   savedAt: string;
+  source?: string;
 }
 
 export interface MemorySearchResult extends MemoryEntry {
@@ -43,12 +44,23 @@ export class EmbeddingStore {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_memory_file ON memory_chunks(file)
     `);
+    // Migration: add source column for knowledge base support
+    this.migrate();
+  }
+
+  private migrate(): void {
+    const cols = this.db.pragma('table_info(memory_chunks)') as Array<{ name: string }>;
+    const hasSource = cols.some(c => c.name === 'source');
+    if (!hasSource) {
+      this.db.exec(`ALTER TABLE memory_chunks ADD COLUMN source TEXT NOT NULL DEFAULT 'memory'`);
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_source ON memory_chunks(source)`);
+    }
   }
 
   add(entry: MemoryEntry): void {
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO memory_chunks (id, file, section, text, embedding, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO memory_chunks (id, file, section, text, embedding, created_at, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       entry.id,
@@ -57,17 +69,26 @@ export class EmbeddingStore {
       entry.text,
       float32ToBuffer(entry.embedding),
       entry.savedAt,
+      entry.source ?? 'memory',
     );
   }
 
-  search(queryEmbedding: number[], maxResults = 5, minScore = 0.3): MemorySearchResult[] {
-    const rows = this.db.prepare('SELECT * FROM memory_chunks').all() as Array<{
+  search(queryEmbedding: number[], maxResults = 5, minScore = 0.3, source?: string): MemorySearchResult[] {
+    let query = 'SELECT * FROM memory_chunks';
+    const params: string[] = [];
+    if (source && source !== 'all') {
+      query += ' WHERE source = ?';
+      params.push(source);
+    }
+
+    const rows = this.db.prepare(query).all(...params) as Array<{
       id: string;
       file: string;
       section: string;
       text: string;
       embedding: Buffer;
       created_at: string;
+      source: string;
     }>;
 
     const scored: MemorySearchResult[] = [];
@@ -90,6 +111,30 @@ export class EmbeddingStore {
     return scored
       .sort((a, b) => b.score - a.score)
       .slice(0, maxResults);
+  }
+
+  /**
+   * Find entries similar to the given embedding above a similarity threshold.
+   */
+  findSimilar(embedding: number[], threshold: number, maxResults = 3): MemorySearchResult[] {
+    return this.search(embedding, maxResults, threshold);
+  }
+
+  /**
+   * Update an existing entry's text and embedding (used for MERGE consolidation).
+   */
+  update(id: string, text: string, embedding: number[]): void {
+    const stmt = this.db.prepare(`
+      UPDATE memory_chunks SET text = ?, embedding = ?, created_at = ? WHERE id = ?
+    `);
+    stmt.run(text, float32ToBuffer(embedding), new Date().toISOString(), id);
+  }
+
+  /**
+   * Delete an entry by ID (used for REPLACE consolidation).
+   */
+  delete(id: string): void {
+    this.db.prepare('DELETE FROM memory_chunks WHERE id = ?').run(id);
   }
 
   count(): number {

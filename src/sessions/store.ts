@@ -61,6 +61,15 @@ export class SessionStore {
     } catch {
       // Ignore if file doesn't exist
     }
+
+    // Also clear the compaction summary — stale summaries after !new
+    // would inject old context into the fresh session
+    const summary = this.summaryPath(agentId, sessionKey);
+    try {
+      writeFileSync(summary, '');
+    } catch {
+      // Ignore
+    }
   }
 
   loadSummary(agentId: string, sessionKey: string): CompactionSummary | null {

@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   ChannelAdapter,
   ChannelAdapterConfig,
   ChannelStatus,
@@ -35,19 +36,68 @@ export class TelegramAdapter implements ChannelAdapter {
     const bot = new grammy.Bot(config.token);
     this.bot = bot;
 
-    bot.on('message:text', async (ctx: any) => {
+    bot.on('message', async (ctx: any) => {
       if (!this.handler) return;
 
       const msg = ctx.message;
+      const content = msg.text ?? msg.caption ?? '';
+
+      // Download photo/document attachments
+      const attachments: Attachment[] = [];
+
+      if (msg.photo && msg.photo.length > 0) {
+        try {
+          // Use the largest photo size (last in array)
+          const photo = msg.photo[msg.photo.length - 1];
+          const file = await bot.api.getFile(photo.file_id);
+          const url = `https://api.telegram.org/file/bot${config.token}/${file.file_path}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const buffer = Buffer.from(await res.arrayBuffer());
+            const ext = file.file_path?.split('.').pop() ?? 'jpg';
+            attachments.push({
+              filename: `photo.${ext}`,
+              mimeType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+              size: buffer.length,
+              data: buffer,
+            });
+          }
+        } catch (err) {
+          console.error('[Telegram] Failed to download photo:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      if (msg.document) {
+        try {
+          const file = await bot.api.getFile(msg.document.file_id);
+          const url = `https://api.telegram.org/file/bot${config.token}/${file.file_path}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const buffer = Buffer.from(await res.arrayBuffer());
+            attachments.push({
+              filename: msg.document.file_name ?? 'document',
+              mimeType: msg.document.mime_type ?? 'application/octet-stream',
+              size: buffer.length,
+              data: buffer,
+            });
+          }
+        } catch (err) {
+          console.error('[Telegram] Failed to download document:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      if (!content && attachments.length === 0) return;
+
       const inbound: InboundMessage = {
         id: String(msg.message_id),
         channel: 'telegram',
-        content: msg.text,
+        content,
         senderId: String(msg.from.id),
         senderName: msg.from.first_name,
         channelId: String(msg.chat.id),
         timestamp: new Date(msg.date * 1000),
         raw: msg,
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
 
       await this.handler(inbound);

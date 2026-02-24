@@ -2,7 +2,9 @@ import { appendFileSync, readFileSync, writeFileSync, mkdirSync, existsSync, sta
 import { basename, join, resolve, dirname } from 'node:path';
 import type { LocalClawTool } from './types.js';
 import type { OllamaClient } from '../ollama/client.js';
+import type { MemoryConsolidationConfig } from '../config/types.js';
 import { EmbeddingStore, generateEmbedding, generateMemoryId } from '../memory/embeddings.js';
+import { consolidateMemory } from '../memory/consolidation.js';
 
 /**
  * Files the memory_save tool is allowed to write to.
@@ -16,6 +18,7 @@ const MAX_MEMORY_FILE_BYTES = 100 * 1024;
 export function createMemorySaveTool(
   workspacePath: string,
   ollamaClient?: OllamaClient,
+  consolidationConfig?: MemoryConsolidationConfig,
 ): LocalClawTool {
   const embeddingStore = new EmbeddingStore();
 
@@ -70,31 +73,57 @@ export function createMemorySaveTool(
         const timestamp = new Date().toISOString();
         const entry = `\n\n---\n_Saved: ${timestamp}_\n\n${content}`;
 
-        if (existsSync(fullPath)) {
-          appendFileSync(fullPath, entry);
-        } else {
-          writeFileSync(fullPath, `# ${filename}\n${entry}`);
-        }
-
-        // Generate embedding and store in vector index
+        // Generate embedding and run consolidation before saving
+        let consolidationNote = '';
         if (ollamaClient) {
           try {
             const embedding = await generateEmbedding(ollamaClient, content);
-            embeddingStore.add({
-              id: generateMemoryId(),
-              text: content.slice(0, 500),
-              file: filename,
-              section: 'saved',
-              embedding,
-              savedAt: timestamp,
-            });
+
+            // Run consolidation if enabled
+            if (consolidationConfig?.enabled) {
+              const result = await consolidateMemory(
+                embeddingStore,
+                ollamaClient,
+                consolidationConfig.model,
+                content,
+                embedding,
+                consolidationConfig.similarityThreshold,
+              );
+
+              if (result.action === 'REPLACE') {
+                consolidationNote = ` (replaced similar entry)`;
+              } else if (result.action === 'MERGE' && result.mergedText) {
+                consolidationNote = ` (merged with existing entry)`;
+                // For MERGE, the store was already updated — skip adding a new entry
+                // but still append to the file for auditability
+              }
+            }
+
+            // Add to embedding store unless it was a MERGE (already updated in place)
+            if (!(consolidationConfig?.enabled && consolidationNote.includes('merged'))) {
+              embeddingStore.add({
+                id: generateMemoryId(),
+                text: content.slice(0, 500),
+                file: filename,
+                section: 'saved',
+                embedding,
+                savedAt: timestamp,
+                source: 'memory',
+              });
+            }
           } catch (err) {
             console.error('[Memory] Embedding generation failed:', err instanceof Error ? err.message : err);
             // File is still saved, just not indexed
           }
         }
 
-        return `Saved to ${filename} (indexed for semantic search)`;
+        if (existsSync(fullPath)) {
+          appendFileSync(fullPath, entry);
+        } else {
+          writeFileSync(fullPath, `# ${filename}\n${entry}`);
+        }
+
+        return `Saved to ${filename} (indexed for semantic search)${consolidationNote}`;
       } catch (err) {
         return `Error saving: ${err instanceof Error ? err.message : err}`;
       }

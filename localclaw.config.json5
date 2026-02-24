@@ -48,7 +48,7 @@
       maxTokens: 2048,
       temperature: 0.2,
       maxIterations: 5,
-      tools: ["memory_search", "memory_get", "memory_save"],
+      tools: ["memory_search", "memory_get", "memory_save", "knowledge_import"],
     },
     exec: {
       model: "qwen3-coder:30b",
@@ -56,7 +56,7 @@
       maxTokens: 4096,
       temperature: 0.3,
       maxIterations: 8,
-      tools: ["exec", "read_file", "write_file", "reason"],
+      tools: ["exec", "read_file", "write_file", "code_session", "reason"],
     },
     cron: {
       model: "qwen3-coder:30b",
@@ -109,6 +109,11 @@
     discord: {
       enabled: true,
       token: "${DISCORD_BOT_TOKEN}",
+      security: {
+        trustedUsers: ["415030165005926401"], // Tadeu718
+        restrictedCategories: ["exec", "config"],
+        restrictedTools: ["exec", "write_file", "code_session", "workspace_write"],
+      },
     },
     telegram: {
       enabled: false,
@@ -128,6 +133,10 @@
     },
     whatsapp: {
       enabled: true,
+      security: {
+        allowedCategories: ["chat", "web_search", "memory", "task"],
+        blockedTools: ["exec", "write_file", "send_message", "workspace_write"],
+      },
     },
   },
 
@@ -139,7 +148,14 @@
     bindings: [],
   },
 
-  memory: { backend: "markdown" },
+  memory: {
+    backend: "markdown",
+    consolidation: {
+      enabled: true,
+      model: "phi4-mini",
+      similarityThreshold: 0.85,
+    },
+  },
   cron: { enabled: true, store: "data/cron.json" },
   session: {
     transcriptDir: "data/sessions",
@@ -154,9 +170,24 @@
       fetch: { maxChars: 30000 },
     },
     exec: {
-      security: "allowlist",
+      security: "allowlist",  // or "docker"
       allowlist: ["ls", "cat", "python3", "node", "git"],
       timeout: 30000,
+      sessions: {
+        idleTimeoutMs: 300000,
+        maxSessions: 3,
+      },
+      docker: {
+        image: "localclaw-sandbox:latest",
+        mountMode: "ro",
+        memoryLimit: "512m",
+        cpuLimit: "1.0",
+        networkMode: "none",
+      },
+    },
+    knowledge: {
+      maxChunkSize: 800,
+      overlapSize: 100,
     },
   },
 
@@ -183,5 +214,12 @@
     url: "${WHISPER_URL}",
     model: "whisper-large-v3",
     language: "en",
+  },
+
+  vision: {
+    enabled: true,
+    model: "qwen3-vl:8b",
+    prompt: "Describe this image in detail. Include text content, visual elements, layout, and any relevant context.",
+    maxTokens: 512,
   },
 }

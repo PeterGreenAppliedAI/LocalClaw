@@ -11,6 +11,7 @@ import makeWASocket, {
   downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 import type {
+  Attachment,
   ChannelAdapter,
   ChannelAdapterConfig,
   ChannelStatus,
@@ -181,10 +182,12 @@ export class WhatsAppAdapter implements ChannelAdapter {
       if (!this.allowFrom.users.includes(senderId)) return;
     }
 
-    // Extract text content
+    // Extract text content (including captions from images/documents)
     const content =
       msg.message.conversation ??
       msg.message.extendedTextMessage?.text ??
+      msg.message.imageMessage?.caption ??
+      msg.message.documentMessage?.caption ??
       '';
 
     // Handle audio/voice messages
@@ -202,6 +205,39 @@ export class WhatsAppAdapter implements ChannelAdapter {
       }
     }
 
+    // Handle image attachments
+    const attachments: Attachment[] = [];
+    const imageMsg = msg.message.imageMessage;
+    if (imageMsg) {
+      try {
+        const buffer = await downloadMediaMessage(msg, 'buffer', {});
+        attachments.push({
+          filename: 'image.' + (imageMsg.mimetype?.split('/')[1]?.split(';')[0] ?? 'jpeg'),
+          mimeType: imageMsg.mimetype ?? 'image/jpeg',
+          size: (buffer as Buffer).length,
+          data: buffer as Buffer,
+        });
+      } catch (err) {
+        console.error('[WhatsApp] Failed to download image:', err instanceof Error ? err.message : err);
+      }
+    }
+
+    // Handle document attachments
+    const docMsg = msg.message.documentMessage;
+    if (docMsg) {
+      try {
+        const buffer = await downloadMediaMessage(msg, 'buffer', {});
+        attachments.push({
+          filename: docMsg.fileName ?? 'document',
+          mimeType: docMsg.mimetype ?? 'application/octet-stream',
+          size: (buffer as Buffer).length,
+          data: buffer as Buffer,
+        });
+      } catch (err) {
+        console.error('[WhatsApp] Failed to download document:', err instanceof Error ? err.message : err);
+      }
+    }
+
     const isGroup = senderId.endsWith('@g.us');
     const pushName = msg.pushName ?? senderId;
 
@@ -216,6 +252,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
       timestamp: new Date((msg.messageTimestamp as number) * 1000),
       raw: msg,
       audio,
+      attachments: attachments.length > 0 ? attachments : undefined,
     };
 
     await this.handler(inbound);

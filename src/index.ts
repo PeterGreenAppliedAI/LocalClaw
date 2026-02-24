@@ -97,7 +97,7 @@ async function runOrchestrator(config: ReturnType<typeof loadConfig>) {
 async function runRepl(config: ReturnType<typeof loadConfig>) {
   const client = new OllamaClient(config.ollama.url, config.ollama.keepAlive);
   const registry = new ToolRegistry();
-  registerAllTools(registry, config);
+  await registerAllTools(registry, config);
 
   const available = await client.isAvailable();
   if (!available) {

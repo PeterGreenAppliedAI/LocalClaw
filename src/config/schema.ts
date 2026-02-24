@@ -33,10 +33,19 @@ export const ChannelAllowFromSchema = z.object({
   users: z.array(z.string()).optional(),
 });
 
+export const ChannelSecuritySchema = z.object({
+  allowedCategories: z.array(z.string()).optional(),
+  blockedTools: z.array(z.string()).optional(),
+  trustedUsers: z.array(z.string()).optional(),
+  restrictedCategories: z.array(z.string()).optional(),
+  restrictedTools: z.array(z.string()).optional(),
+});
+
 export const ChannelConfigSchema = z.object({
   enabled: z.boolean().default(false),
   token: z.string().optional(),
   allowFrom: ChannelAllowFromSchema.optional(),
+  security: ChannelSecuritySchema.optional(),
 });
 
 export const AgentBindingMatchSchema = z.object({
@@ -66,8 +75,15 @@ export const AgentsConfigSchema = z.object({
   bindings: z.array(AgentBindingSchema).default([]),
 });
 
+export const MemoryConsolidationSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.string().default('phi4-mini'),
+  similarityThreshold: z.number().min(0).max(1).default(0.85),
+});
+
 export const MemoryConfigSchema = z.object({
   backend: z.enum(['markdown']).default('markdown'),
+  consolidation: MemoryConsolidationSchema.optional(),
 });
 
 export const CronConfigSchema = z.object({
@@ -94,10 +110,27 @@ export const WebFetchConfigSchema = z.object({
   firecrawlBaseUrl: z.string().optional(),
 });
 
+export const SessionExecConfigSchema = z.object({
+  idleTimeoutMs: z.number().default(300_000),
+  maxSessions: z.number().default(3),
+  maxOutputBytes: z.number().default(1024 * 1024),
+  allowedRuntimes: z.array(z.enum(['python', 'node', 'bash'])).default(['python', 'node', 'bash']),
+});
+
+export const DockerConfigSchema = z.object({
+  image: z.string().default('localclaw-sandbox:latest'),
+  mountMode: z.enum(['ro', 'rw']).default('ro'),
+  memoryLimit: z.string().default('512m'),
+  cpuLimit: z.string().default('1.0'),
+  networkMode: z.string().default('none'),
+});
+
 export const ExecConfigSchema = z.object({
-  security: z.enum(['allowlist']).default('allowlist'),
+  security: z.enum(['allowlist', 'docker']).default('allowlist'),
   allowlist: z.array(z.string()).default(['ls', 'cat', 'python3', 'node', 'git']),
   timeout: z.number().default(30000),
+  sessions: SessionExecConfigSchema.optional(),
+  docker: DockerConfigSchema.optional(),
 });
 
 export const WebsiteConfigSchema = z.object({
@@ -125,10 +158,23 @@ export const STTConfigSchema = z.object({
   language: z.string().default('en'),
 });
 
+export const VisionConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.string().default('qwen3-vl:8b'),
+  prompt: z.string().default('Describe this image in detail. Include text content, visual elements, layout, and any relevant context.'),
+  maxTokens: z.number().default(512),
+});
+
 export const ReasoningConfigSchema = z.object({
   model: z.string().default('nemotron-3-nano:30b'),
   maxTokens: z.number().default(8192),
   temperature: z.number().default(0.6),
+});
+
+export const KnowledgeConfigSchema = z.object({
+  maxChunkSize: z.number().default(800),
+  overlapSize: z.number().default(100),
+  allowedExtensions: z.array(z.string()).default(['.pdf', '.csv', '.md', '.txt', '.html', '.htm']),
 });
 
 export const ToolsConfigSchema = z.object({
@@ -138,6 +184,7 @@ export const ToolsConfigSchema = z.object({
   }).optional(),
   exec: ExecConfigSchema.optional(),
   website: WebsiteConfigSchema.optional(),
+  knowledge: KnowledgeConfigSchema.optional(),
 });
 
 export const LocalClawConfigSchema = z.object({
@@ -154,4 +201,5 @@ export const LocalClawConfigSchema = z.object({
   browser: BrowserConfigSchema.optional(),
   tts: TTSConfigSchema.default({}),
   stt: STTConfigSchema.default({}),
+  vision: VisionConfigSchema.default({}),
 });

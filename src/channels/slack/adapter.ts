@@ -1,4 +1,5 @@
 import type {
+  Attachment,
   ChannelAdapter,
   ChannelAdapterConfig,
   ChannelStatus,
@@ -16,6 +17,7 @@ export class SlackAdapter implements ChannelAdapter {
   private handler: ((msg: InboundMessage) => Promise<void>) | null = null;
   private currentStatus: ChannelStatus = 'disconnected';
   private allowFrom?: ChannelAdapterConfig['allowFrom'];
+  private botToken: string = '';
 
   async connect(config: ChannelAdapterConfig): Promise<void> {
     const botToken = config.token ?? (config as any).botToken;
@@ -27,6 +29,7 @@ export class SlackAdapter implements ChannelAdapter {
 
     this.currentStatus = 'connecting';
     this.allowFrom = config.allowFrom;
+    this.botToken = botToken;
 
     let bolt: any;
     try {
@@ -49,7 +52,9 @@ export class SlackAdapter implements ChannelAdapter {
       const content = (event.text as string)
         .replace(/<@[A-Z0-9]+>/g, '')
         .trim();
-      if (!content) return;
+
+      const attachments = await this.downloadSlackFiles(event.files);
+      if (!content && attachments.length === 0) return;
 
       const inbound: InboundMessage = {
         id: event.ts,
@@ -60,6 +65,7 @@ export class SlackAdapter implements ChannelAdapter {
         threadId: event.thread_ts ?? event.ts,
         timestamp: new Date(parseFloat(event.ts) * 1000),
         raw: event,
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
 
       await this.handler(inbound);
@@ -74,7 +80,9 @@ export class SlackAdapter implements ChannelAdapter {
       if (!this.isAllowed(event)) return;
 
       const content = (event.text as string).trim();
-      if (!content) return;
+
+      const attachments = await this.downloadSlackFiles(event.files);
+      if (!content && attachments.length === 0) return;
 
       const inbound: InboundMessage = {
         id: event.ts,
@@ -85,6 +93,7 @@ export class SlackAdapter implements ChannelAdapter {
         threadId: event.thread_ts ?? event.ts,
         timestamp: new Date(parseFloat(event.ts) * 1000),
         raw: event,
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
 
       await this.handler(inbound);
@@ -142,6 +151,32 @@ export class SlackAdapter implements ChannelAdapter {
 
   status(): ChannelStatus {
     return this.currentStatus;
+  }
+
+  private async downloadSlackFiles(files?: any[]): Promise<Attachment[]> {
+    if (!files || files.length === 0) return [];
+
+    const attachments: Attachment[] = [];
+    for (const file of files) {
+      if (!file.url_private) continue;
+      try {
+        const res = await fetch(file.url_private, {
+          headers: { Authorization: `Bearer ${this.botToken}` },
+        });
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          attachments.push({
+            filename: file.name ?? 'file',
+            mimeType: file.mimetype ?? 'application/octet-stream',
+            size: buffer.length,
+            data: buffer,
+          });
+        }
+      } catch (err) {
+        console.error(`[Slack] Failed to download file ${file.name}:`, err instanceof Error ? err.message : err);
+      }
+    }
+    return attachments;
   }
 
   private isAllowed(event: any): boolean {

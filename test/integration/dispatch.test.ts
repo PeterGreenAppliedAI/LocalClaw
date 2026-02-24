@@ -128,6 +128,171 @@ describe('dispatchMessage', () => {
     expect(result.classification.confidence).toBe('keyword');
   });
 
+  describe('channel security', () => {
+    it('blocked category falls back to chat', async () => {
+      const client = createMockClient('exec', 'I can help with that');
+      const config = loadConfig('/tmp/nonexistent-config.json5');
+
+      // Add security config for whatsapp — exec is not allowed
+      config.channels.whatsapp = {
+        enabled: true,
+        security: {
+          allowedCategories: ['chat', 'web_search', 'memory'],
+          blockedTools: [],
+        },
+      };
+      config.specialists.exec = {
+        model: 'test-model',
+        maxTokens: 4096,
+        temperature: 0.3,
+        maxIterations: 5,
+        tools: ['exec'],
+      };
+
+      const registry = new ToolRegistry();
+      registry.register({
+        name: 'exec',
+        description: 'Execute command',
+        parameterDescription: 'command',
+        parameters: {
+          type: 'object',
+          properties: { command: { type: 'string', description: 'Command' } },
+          required: ['command'],
+        },
+        category: 'exec',
+        execute: async () => 'mock exec',
+      });
+
+      const result = await dispatchMessage({
+        client,
+        registry,
+        config,
+        message: 'run ls',
+        sourceContext: { channel: 'whatsapp', channelId: '123' },
+      });
+
+      expect(result.category).toBe('chat');
+    });
+
+    it('blocked tool stripped from specialist', async () => {
+      const client = createMockClient('web_search', 'Here are results');
+      const config = loadConfig('/tmp/nonexistent-config.json5');
+
+      config.channels.whatsapp = {
+        enabled: true,
+        security: {
+          allowedCategories: ['chat', 'web_search'],
+          blockedTools: ['reason'],
+        },
+      };
+      config.specialists.web_search = {
+        model: 'test-model',
+        maxTokens: 4096,
+        temperature: 0.3,
+        maxIterations: 5,
+        tools: ['web_search', 'reason'],
+      };
+
+      const registry = new ToolRegistry();
+      registry.register({
+        name: 'web_search',
+        description: 'Search',
+        parameterDescription: 'query',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string', description: 'Query' } },
+          required: ['query'],
+        },
+        category: 'web_search',
+        execute: async () => 'mock results',
+      });
+
+      const result = await dispatchMessage({
+        client,
+        registry,
+        config,
+        message: 'search for news',
+        sourceContext: { channel: 'whatsapp', channelId: '123' },
+      });
+
+      // Should still route to web_search (allowed category) but reason tool is stripped
+      expect(result.category).toBe('web_search');
+    });
+
+    it('all tools stripped degrades to bare chat', async () => {
+      const client = createMockClient('web_search', 'Chat fallback response');
+      const config = loadConfig('/tmp/nonexistent-config.json5');
+
+      config.channels.whatsapp = {
+        enabled: true,
+        security: {
+          allowedCategories: ['chat', 'web_search'],
+          blockedTools: ['web_search'],
+        },
+      };
+      config.specialists.web_search = {
+        model: 'test-model',
+        maxTokens: 4096,
+        temperature: 0.3,
+        maxIterations: 5,
+        tools: ['web_search'],
+      };
+
+      const registry = new ToolRegistry();
+
+      const result = await dispatchMessage({
+        client,
+        registry,
+        config,
+        message: 'search for news',
+        sourceContext: { channel: 'whatsapp', channelId: '123' },
+      });
+
+      // All tools stripped — runs as bare chat
+      expect(result.category).toBe('web_search');
+      expect(result.iterations).toBe(1);
+    });
+
+    it('no security config means unrestricted', async () => {
+      const client = createMockClient('exec', 'Command output');
+      const config = loadConfig('/tmp/nonexistent-config.json5');
+
+      config.channels.discord = { enabled: true };
+      config.specialists.exec = {
+        model: 'test-model',
+        maxTokens: 4096,
+        temperature: 0.3,
+        maxIterations: 5,
+        tools: ['exec'],
+      };
+
+      const registry = new ToolRegistry();
+      registry.register({
+        name: 'exec',
+        description: 'Execute command',
+        parameterDescription: 'command',
+        parameters: {
+          type: 'object',
+          properties: { command: { type: 'string', description: 'Command' } },
+          required: ['command'],
+        },
+        category: 'exec',
+        execute: async () => 'mock exec',
+      });
+
+      const result = await dispatchMessage({
+        client,
+        registry,
+        config,
+        message: 'run ls',
+        sourceContext: { channel: 'discord', channelId: '456' },
+      });
+
+      // No security block — routes normally to exec
+      expect(result.category).toBe('exec');
+    });
+  });
+
   it('passes history to specialist', async () => {
     const chatFn = vi.fn().mockResolvedValue({
       message: { role: 'assistant', content: 'response', tool_calls: null },

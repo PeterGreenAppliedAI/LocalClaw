@@ -10,7 +10,11 @@ import { createWebFetchTool } from './web-fetch.js';
 import { createMemorySearchTool } from './memory-search.js';
 import { createMemoryGetTool } from './memory-get.js';
 import { createMemorySaveTool } from './memory-save.js';
+import { createKnowledgeImportTool } from './knowledge-import.js';
 import { createExecTool } from './exec.js';
+import { createCodeSessionTool } from './code-session.js';
+import { SessionManager } from '../exec/session-manager.js';
+import { DockerBackend } from '../exec/docker-backend.js';
 import { createReadFileTool } from './read-file.js';
 import { createWriteFileTool } from './write-file.js';
 import { createBrowserTool } from './browser.js';
@@ -39,12 +43,13 @@ export interface RegisterToolsOptions {
 /**
  * Register all available tools with the registry based on config.
  * Called once at startup. New tools: add registration here.
+ * Async to support Docker availability check.
  */
-export function registerAllTools(
+export async function registerAllTools(
   registry: ToolRegistry,
   config: LocalClawConfig,
   options?: RegisterToolsOptions,
-): void {
+): Promise<void> {
   // Web tools
   registry.register(createWebSearchTool(config.tools?.web?.search));
   registry.register(createWebFetchTool(config.tools?.web?.fetch));
@@ -53,12 +58,33 @@ export function registerAllTools(
   const workspace = resolveWorkspacePath(config.agents.default, config);
   registry.register(createMemorySearchTool(workspace, options?.ollamaClient));
   registry.register(createMemoryGetTool(workspace));
-  registry.register(createMemorySaveTool(workspace, options?.ollamaClient));
+  registry.register(createMemorySaveTool(workspace, options?.ollamaClient, config.memory?.consolidation));
+
+  // Knowledge import tool (requires Ollama for embeddings)
+  if (options?.ollamaClient) {
+    registry.register(createKnowledgeImportTool(workspace, options.ollamaClient, config.tools?.knowledge));
+  }
+
+  // Docker backend (if configured)
+  let dockerBackend: DockerBackend | undefined;
+  if (config.tools?.exec?.security === 'docker') {
+    const dockerAvailable = await DockerBackend.isAvailable();
+    if (dockerAvailable) {
+      dockerBackend = new DockerBackend(config.tools.exec.docker);
+      console.log('[Docker] Docker sandbox enabled');
+    } else {
+      console.warn('[Docker] Docker requested but not available — falling back to allowlist');
+    }
+  }
 
   // Exec tools
-  registry.register(createExecTool(config.tools?.exec));
+  registry.register(createExecTool(config.tools?.exec, dockerBackend));
   registry.register(createReadFileTool());
   registry.register(createWriteFileTool());
+
+  // Code session tool
+  const sessionManager = new SessionManager(config.tools?.exec?.sessions);
+  registry.register(createCodeSessionTool(sessionManager));
 
   // Browser tool
   if (config.browser?.enabled) {

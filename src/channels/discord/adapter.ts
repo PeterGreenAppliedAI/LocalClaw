@@ -5,6 +5,7 @@ import {
   type Message,
 } from 'discord.js';
 import type {
+  Attachment,
   ChannelAdapter,
   ChannelAdapterConfig,
   ChannelStatus,
@@ -58,7 +59,26 @@ export class DiscordAdapter implements ChannelAdapter {
         return;
       }
 
-      if (!content) return;
+      if (!content && msg.attachments.size === 0) return;
+
+      // Download attachments
+      const attachments: Attachment[] = [];
+      for (const att of msg.attachments.values()) {
+        try {
+          const res = await fetch(att.url);
+          if (res.ok) {
+            const buffer = Buffer.from(await res.arrayBuffer());
+            attachments.push({
+              filename: att.name ?? 'unknown',
+              mimeType: att.contentType ?? 'application/octet-stream',
+              size: buffer.length,
+              data: buffer,
+            });
+          }
+        } catch (err) {
+          console.error(`[Discord] Failed to download attachment ${att.name}:`, err instanceof Error ? err.message : err);
+        }
+      }
 
       // Show typing indicator while processing
       const typingInterval = setInterval(() => {
@@ -77,6 +97,7 @@ export class DiscordAdapter implements ChannelAdapter {
         threadId: msg.thread?.id,
         timestamp: msg.createdAt,
         raw: msg,
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
 
       try {

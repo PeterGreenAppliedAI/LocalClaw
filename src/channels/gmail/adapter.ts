@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import type {
+  Attachment,
   ChannelAdapter,
   ChannelAdapterConfig,
   ChannelStatus,
@@ -118,6 +119,30 @@ export class GmailAdapter implements ChannelAdapter {
       const body = extractBody(full.data.payload);
       const content = subject ? `[${subject}] ${body}` : body;
 
+      // Extract attachments
+      const attachments: Attachment[] = [];
+      const attParts = findAttachmentParts(full.data.payload);
+      for (const part of attParts) {
+        try {
+          const attData = await this.gmail.users.messages.attachments.get({
+            userId: 'me',
+            messageId: stub.id,
+            id: part.body.attachmentId,
+          });
+          if (attData.data?.data) {
+            const buffer = Buffer.from(attData.data.data, 'base64url');
+            attachments.push({
+              filename: part.filename ?? 'attachment',
+              mimeType: part.mimeType ?? 'application/octet-stream',
+              size: buffer.length,
+              data: buffer,
+            });
+          }
+        } catch (err) {
+          console.error(`[Gmail] Failed to download attachment ${part.filename}:`, err instanceof Error ? err.message : err);
+        }
+      }
+
       const inbound: InboundMessage = {
         id: stub.id,
         channel: 'gmail',
@@ -128,6 +153,7 @@ export class GmailAdapter implements ChannelAdapter {
         threadId: full.data.threadId,
         timestamp: new Date(parseInt(full.data.internalDate, 10)),
         raw: full.data,
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
 
       await this.handler(inbound);
@@ -170,6 +196,23 @@ function extractBody(payload: any): string {
   }
 
   return '';
+}
+
+function findAttachmentParts(payload: any): any[] {
+  const parts: any[] = [];
+  if (!payload) return parts;
+
+  if (payload.body?.attachmentId && payload.filename) {
+    parts.push(payload);
+  }
+
+  if (payload.parts) {
+    for (const part of payload.parts) {
+      parts.push(...findAttachmentParts(part));
+    }
+  }
+
+  return parts;
 }
 
 function buildRawEmail(to: string, subject: string, body: string): string {

@@ -1,0 +1,6 @@
+FROM alpine:3.19
+RUN apk add --no-cache python3 py3-pip nodejs npm bash coreutils git
+RUN adduser -D -h /workspace sandbox
+USER sandbox
+WORKDIR /workspace
+CMD ["tail", "-f", "/dev/null"]
