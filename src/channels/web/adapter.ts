@@ -1,4 +1,5 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFileSync } from 'node:fs';
 import type {
   ChannelAdapter,
   ChannelAdapterConfig,
@@ -8,6 +9,8 @@ import type {
   MessageContent,
 } from '../types.js';
 import { channelConnectError, channelSendError } from '../../errors.js';
+
+const voiceHtml = readFileSync(new URL('./voice-ui.html', import.meta.url), 'utf-8');
 
 /**
  * Simple HTTP REST API adapter for testing.
@@ -22,10 +25,16 @@ export class WebApiAdapter implements ChannelAdapter {
 
   async connect(config: ChannelAdapterConfig): Promise<void> {
     const port = (config as any).port ?? 3100;
+    const host = (config as any).host ?? '0.0.0.0';
     this.currentStatus = 'connecting';
 
     this.server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method === 'POST' && req.url === '/api/message') {
+      if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(voiceHtml);
+      } else if (req.method === 'POST' && req.url === '/api/voice') {
+        await this.handleVoiceMessage(req, res);
+      } else if (req.method === 'POST' && req.url === '/api/message') {
         await this.handleHttpMessage(req, res);
       } else if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -37,9 +46,9 @@ export class WebApiAdapter implements ChannelAdapter {
     });
 
     await new Promise<void>((resolve, reject) => {
-      this.server!.listen(port, () => {
+      this.server!.listen(port, host, () => {
         this.currentStatus = 'connected';
-        console.log(`[Web] API listening on http://localhost:${port}`);
+        console.log(`[Web] API listening on http://${host}:${port}`);
         resolve();
       });
       this.server!.on('error', reject);
@@ -70,6 +79,74 @@ export class WebApiAdapter implements ChannelAdapter {
 
   status(): ChannelStatus {
     return this.currentStatus;
+  }
+
+  private async handleVoiceMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    const audioBuffer = Buffer.concat(chunks);
+
+    if (audioBuffer.length < 1000) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Audio too short' }));
+      return;
+    }
+
+    const mimeType = req.headers['content-type'] ?? 'audio/webm';
+    const msgId = `web-voice-${Date.now()}`;
+    console.log(`[Web] Voice message from web-user (${audioBuffer.length} bytes, ${mimeType})`);
+
+    // SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+
+    const responsePromise = new Promise<MessageContent>((resolve) => {
+      this.pendingResponses.set(msgId, resolve);
+      setTimeout(() => {
+        if (this.pendingResponses.has(msgId)) {
+          this.pendingResponses.delete(msgId);
+          resolve({ text: 'Request timed out' });
+        }
+      }, 120_000);
+    });
+
+    const inbound: InboundMessage = {
+      id: msgId,
+      channel: 'web',
+      content: '',
+      senderId: 'web-user',
+      channelId: 'web',
+      timestamp: new Date(),
+      audio: { data: audioBuffer, mimeType },
+      onProgress(stage: string, data?: Record<string, unknown>) {
+        const payload = { stage, ...data };
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      },
+    };
+
+    if (this.handler) {
+      this.handler(inbound).catch(console.error);
+    }
+
+    const response = await responsePromise;
+
+    const donePayload: Record<string, unknown> = {
+      stage: 'done',
+      response: response.text,
+    };
+    if (response.audio) {
+      donePayload.audio = {
+        data: response.audio.data.toString('base64'),
+        mimeType: response.audio.mimeType,
+      };
+    }
+    res.write(`data: ${JSON.stringify(donePayload)}\n\n`);
+    res.end();
   }
 
   private async handleHttpMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -46,7 +46,7 @@ export const ChannelConfigSchema = z.object({
   token: z.string().optional(),
   allowFrom: ChannelAllowFromSchema.optional(),
   security: ChannelSecuritySchema.optional(),
-});
+}).passthrough();
 
 export const AgentBindingMatchSchema = z.object({
   channel: z.string().optional(),

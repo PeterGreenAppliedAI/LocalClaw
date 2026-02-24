@@ -12,8 +12,8 @@
     timeout: 2000,
     defaultCategory: "chat",
     categories: {
-      chat:       { description: "Simple conversation, greetings, opinions" },
-      web_search: { description: "Questions needing current internet information" },
+      chat:       { description: "Simple conversation, greetings, opinions, questions about the owner/user (Peter), or anything answerable from context" },
+      web_search: { description: "Questions needing current internet information about external topics (NOT about the owner or user)" },
       memory:     { description: "Questions about past conversations or stored info" },
       exec:       { description: "Run commands, edit files, system operations" },
       cron:       { description: "Schedule, list, or manage recurring tasks" },
@@ -130,6 +130,10 @@
     msgraph: {
       enabled: false,
       userId: "${MSGRAPH_USER_ID}",
+    },
+    web: {
+      enabled: true,
+      port: 3100,
     },
     whatsapp: {
       enabled: true,

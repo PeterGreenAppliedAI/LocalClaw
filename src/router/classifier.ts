@@ -44,6 +44,11 @@ const NEW_TOPIC_PATTERNS = [
   /\b(remember this|save this|store this)\b/i,         // explicit memory intent
 ];
 
+/** Messages that open with a greeting are starting a new conversation, not following up */
+const GREETING_PATTERNS = [
+  /^\s*(hi|hey|hello|yo|sup|howdy|hola|what'?s up|how'?s it going|good (morning|afternoon|evening)|thanks|thank you)\b/i,
+];
+
 function hasStrongNewTopicSignal(message: string): boolean {
   return NEW_TOPIC_PATTERNS.some(p => p.test(message));
 }
@@ -52,13 +57,19 @@ function hasStrongNewTopicSignal(message: string): boolean {
  * Heuristic: messages under a reasonable length that don't contain
  * strong signals for a completely different topic are likely continuations.
  */
+function isGreeting(message: string): boolean {
+  return GREETING_PATTERNS.some(p => p.test(message));
+}
+
 function isLikelyFollowUp(message: string): boolean {
   const trimmed = message.trim();
   // Long, self-contained messages are likely new topics
   if (trimmed.length > 200) return false;
   // Strong new-topic signals override stickiness
   if (hasStrongNewTopicSignal(trimmed)) return false;
-  // Under 150 chars without strong new-topic signals — likely a follow-up
+  // Simple greetings are never follow-ups
+  if (isGreeting(trimmed)) return false;
+  // Under 200 chars without strong new-topic signals — likely a follow-up
   return true;
 }
 

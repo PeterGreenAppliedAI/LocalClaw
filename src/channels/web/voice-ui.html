@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LocalClaw Voice</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0f0f0f;
+    color: #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 2rem 1rem;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 2rem;
+    color: #fff;
+  }
+
+  #mic-btn {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: none;
+    background: #2a2a2a;
+    color: #999;
+    font-size: 2.5rem;
+    cursor: pointer;
+    transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  #mic-btn:hover { background: #333; }
+
+  #mic-btn.recording {
+    background: #c0392b;
+    color: #fff;
+    box-shadow: 0 0 0 0 rgba(192, 57, 43, 0.5);
+    animation: pulse 1.5s infinite;
+  }
+
+  #mic-btn.processing {
+    background: #2980b9;
+    color: #fff;
+    cursor: wait;
+  }
+
+  #mic-btn:active { transform: scale(0.95); }
+
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(192, 57, 43, 0.5); }
+    70%  { box-shadow: 0 0 0 20px rgba(192, 57, 43, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(192, 57, 43, 0); }
+  }
+
+  #status {
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    color: #777;
+    min-height: 1.2em;
+  }
+
+  #transcript {
+    margin-top: 2rem;
+    width: 100%;
+    max-width: 500px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .turn {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    line-height: 1.5;
+    word-wrap: break-word;
+  }
+
+  .turn.user {
+    background: #1a2a1a;
+    border-left: 3px solid #27ae60;
+  }
+
+  .turn.bot {
+    background: #1a1a2a;
+    border-left: 3px solid #2980b9;
+  }
+
+  .turn-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 0.25rem;
+    color: #888;
+  }
+
+  .turn.user .turn-label { color: #27ae60; }
+  .turn.bot .turn-label { color: #2980b9; }
+
+  #audio-player {
+    margin-top: 1rem;
+    width: 100%;
+    max-width: 500px;
+  }
+
+  audio {
+    width: 100%;
+    height: 36px;
+    outline: none;
+  }
+
+  #reset-btn {
+    margin-top: 0.75rem;
+    padding: 0.4rem 1rem;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background: transparent;
+    color: #888;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  #reset-btn:hover {
+    background: #222;
+    color: #ccc;
+  }
+
+  #hint {
+    margin-top: 1rem;
+    font-size: 0.8rem;
+    color: #555;
+  }
+</style>
+</head>
+<body>
+
+<h1>LocalClaw Voice</h1>
+
+<button id="mic-btn" title="Hold to talk">&#x1F3A4;</button>
+<div id="status">Click and hold to talk</div>
+<button id="reset-btn" title="Reset session">New Session</button>
+
+<div id="transcript"></div>
+<div id="audio-player"></div>
+<div id="hint">Hold the mic button while speaking, release to send</div>
+
+<script>
+(function() {
+  const micBtn = document.getElementById('mic-btn');
+  const statusEl = document.getElementById('status');
+  const transcriptEl = document.getElementById('transcript');
+  const audioPlayerEl = document.getElementById('audio-player');
+
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let isRecording = false;
+  let stream = null;
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  function addTurn(role, text) {
+    const div = document.createElement('div');
+    div.className = 'turn ' + role;
+
+    const label = document.createElement('div');
+    label.className = 'turn-label';
+    label.textContent = role === 'user' ? 'You' : 'LocalClaw';
+
+    const body = document.createElement('div');
+    body.textContent = text;
+
+    div.appendChild(label);
+    div.appendChild(body);
+    transcriptEl.appendChild(div);
+    div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+
+  function playAudio(base64, mimeType) {
+    const bytes = atob(base64);
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    const blob = new Blob([arr], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+
+    audioPlayerEl.innerHTML = '';
+    const audio = new Audio(url);
+    const el = document.createElement('audio');
+    el.controls = true;
+    el.src = url;
+    audioPlayerEl.appendChild(el);
+
+    audio.play().catch(function() {
+      // Autoplay blocked — user can use controls
+    });
+  }
+
+  async function startRecording() {
+    if (isRecording) return;
+
+    try {
+      if (!stream) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+
+      audioChunks = [];
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm'
+      });
+
+      mediaRecorder.ondataavailable = function(e) {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      };
+
+      mediaRecorder.start();
+      isRecording = true;
+      micBtn.classList.add('recording');
+      setStatus('Recording... release to send');
+    } catch (err) {
+      setStatus('Microphone access denied');
+      console.error('Mic error:', err);
+    }
+  }
+
+  async function stopRecording() {
+    if (!isRecording || !mediaRecorder) return;
+
+    return new Promise(function(resolve) {
+      mediaRecorder.onstop = async function() {
+        isRecording = false;
+        micBtn.classList.remove('recording');
+        micBtn.classList.add('processing');
+        setStatus('Processing...');
+
+        const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+
+        if (blob.size < 1000) {
+          setStatus('Too short — hold longer');
+          micBtn.classList.remove('processing');
+          resolve();
+          return;
+        }
+
+        try {
+          const resp = await fetch('/api/voice', {
+            method: 'POST',
+            headers: { 'Content-Type': mediaRecorder.mimeType },
+            body: blob,
+          });
+
+          if (!resp.ok) {
+            const err = await resp.text();
+            setStatus('Error: ' + err);
+            micBtn.classList.remove('processing');
+            resolve();
+            return;
+          }
+
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const event = JSON.parse(line.slice(6));
+
+              if (event.stage === 'stt') {
+                setStatus('Transcribed');
+                if (event.transcript) addTurn('user', event.transcript);
+              } else if (event.stage === 'thinking') {
+                setStatus('Thinking...');
+              } else if (event.stage === 'tts') {
+                setStatus('Generating speech...');
+              } else if (event.stage === 'done') {
+                if (event.response) addTurn('bot', event.response);
+                if (event.audio && event.audio.data) {
+                  playAudio(event.audio.data, event.audio.mimeType);
+                }
+              }
+            }
+          }
+
+          setStatus('Click and hold to talk');
+        } catch (err) {
+          setStatus('Request failed');
+          console.error('Voice error:', err);
+        }
+
+        micBtn.classList.remove('processing');
+        resolve();
+      };
+
+      mediaRecorder.stop();
+    });
+  }
+
+  // Mouse events
+  micBtn.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    startRecording();
+  });
+  micBtn.addEventListener('mouseup', function() { stopRecording(); });
+  micBtn.addEventListener('mouseleave', function() {
+    if (isRecording) stopRecording();
+  });
+
+  // Touch events for mobile
+  micBtn.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    startRecording();
+  });
+  micBtn.addEventListener('touchend', function(e) {
+    e.preventDefault();
+    stopRecording();
+  });
+
+  // Reset session button
+  document.getElementById('reset-btn').addEventListener('click', async function() {
+    try {
+      const resp = await fetch('/api/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: '!reset' }),
+      });
+      if (resp.ok) {
+        transcriptEl.innerHTML = '';
+        audioPlayerEl.innerHTML = '';
+        setStatus('Session cleared');
+        setTimeout(function() { setStatus('Click and hold to talk'); }, 1500);
+      }
+    } catch (err) {
+      console.error('Reset error:', err);
+    }
+  });
+
+  // Keyboard: hold space to talk
+  let spaceDown = false;
+  document.addEventListener('keydown', function(e) {
+    if (e.code === 'Space' && !spaceDown && e.target === document.body) {
+      e.preventDefault();
+      spaceDown = true;
+      startRecording();
+    }
+  });
+  document.addEventListener('keyup', function(e) {
+    if (e.code === 'Space' && spaceDown) {
+      e.preventDefault();
+      spaceDown = false;
+      stopRecording();
+    }
+  });
+})();
+</script>
+</body>
+</html>

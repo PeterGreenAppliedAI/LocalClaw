@@ -35,6 +35,7 @@ function splitFinalMessage(text: string, limit: number): string[] {
 
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 10; // max messages per window per user
+const VOICE_MODEL = 'qwen2.5:7b'; // Fast model for voice-originated messages
 
 export class Orchestrator {
   private client: OllamaClient;
@@ -190,6 +191,7 @@ export class Orchestrator {
       if (transcription) {
         console.log(`[Orchestrator] STT transcribed: "${transcription.slice(0, 80)}${transcription.length > 80 ? '...' : ''}"`);
         msg.content = transcription;
+        msg.onProgress?.('stt', { transcript: transcription });
       } else {
         console.warn('[Orchestrator] STT transcription failed, using original content');
       }
@@ -275,6 +277,8 @@ export class Orchestrator {
         }
       };
 
+      msg.onProgress?.('thinking');
+
       const result = await dispatchMessage({
         client: this.client,
         registry: this.toolRegistry,
@@ -290,6 +294,7 @@ export class Orchestrator {
           senderId: msg.senderId,
         },
         onStream,
+        modelOverride: hadAudio ? VOICE_MODEL : undefined,
       });
 
       console.log(`[Orchestrator] → ${result.category} (${result.iterations} steps)`);
@@ -297,6 +302,7 @@ export class Orchestrator {
       // TTS post-processing: voice in → voice out (skip if streaming — audio can't attach to edits)
       let responseAudio: { data: Buffer; mimeType: string } | undefined;
       if (hadAudio && this.ttsService.enabled && !streamMsg) {
+        msg.onProgress?.('tts');
         const audioBuffer = await this.ttsService.synthesize(result.answer);
         if (audioBuffer) {
           const format = this.config.tts.format;

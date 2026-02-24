@@ -154,6 +154,20 @@ LocalClaw supports voice input and output through an optional TTS/STT service la
 
 Both use OpenAI-compatible HTTP APIs (no extra npm packages). The rule is simple: **voice in → voice out, text in → text out**. Adapters that don't support audio (Gmail, Microsoft Graph) gracefully ignore it.
 
+#### Web Voice UI
+
+The web adapter includes a built-in voice interface at `http://localhost:3100`. Hold the mic button (or hold Space) to record, release to send. The endpoint uses **Server-Sent Events (SSE)** to stream progress back in real-time:
+
+```
+Transcribing... → "What you said" → Thinking... → Generating speech... → Audio plays
+```
+
+The UI also includes a **New Session** button to reset conversation history.
+
+#### Voice Model Override
+
+Voice interactions use a faster, lighter model (`qwen2.5:7b` by default) for chat responses to minimize latency. Tool-using categories (web search, memory, exec, etc.) still use the full specialist model for reliable tool calling. The voice model is configured in `src/orchestrator.ts` via the `VOICE_MODEL` constant.
+
 **Voice setup requires three services on your inference node:**
 
 1. **llama-server** — Serves the Orpheus-3b model (port 8080)
@@ -325,6 +339,7 @@ Add `"reason"` to any specialist's `tools` array to enable the reasoning pass fo
 | Specialist Model | qwen3-coder:30b |
 | Embedding Model | qwen3-embedding:8b |
 | Reasoning Model | nemotron-3-nano:30b (optional) |
+| Voice Chat Model | qwen2.5:7b (for low-latency voice responses) |
 | Discord | discord.js 14 |
 | Browser | playwright-core |
 | Scheduling | croner |

@@ -18,6 +18,7 @@ export interface InboundMessage {
   raw?: unknown;
   audio?: { data: Buffer; mimeType: string };
   attachments?: Attachment[];
+  onProgress?: (stage: string, data?: Record<string, unknown>) => void;
 }
 
 export interface MessageTarget {

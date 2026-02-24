@@ -33,6 +33,8 @@ export interface DispatchParams {
   overrideCategory?: string;
   /** Stream callback — called with text deltas for progressive output */
   onStream?: (delta: string) => void;
+  /** Override model — used by voice for faster responses */
+  modelOverride?: string;
 }
 
 export interface DispatchResult {
@@ -173,6 +175,12 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       console.log(`[Dispatch] Untrusted user "${senderId}" stripped restricted tools: [${specialistConfig.tools.filter(t => channelSecurity.restrictedTools!.includes(t)).join(', ')}]`);
       specialistConfig = { ...specialistConfig, tools: filtered };
     }
+  }
+
+  // 3d. Voice model override — only for chat (no tools) to keep tool-calling reliable
+  if (params.modelOverride && specialistConfig && specialistConfig.tools.length === 0) {
+    console.log(`[Dispatch] Model override: ${specialistConfig.model} → ${params.modelOverride}`);
+    specialistConfig = { ...specialistConfig, model: params.modelOverride };
   }
 
   let result: DispatchResult;
