@@ -41,6 +41,7 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 | Config | `cron_edit`, `workspace_read`, `workspace_write` | Self-administration — edit cron jobs, read/write workspace files |
 | Messaging | `send_message` | Cross-channel message delivery |
 | Browsing | `browser` | Playwright headless Chromium — navigate, snapshot, screenshot |
+| Vision | *(automatic)* | Image analysis via multimodal model — descriptions injected into context for natural Q&A |
 | Voice | TTS/STT | Orpheus TTS + faster-whisper STT — voice in, voice out |
 | Multi-task | *(decomposed)* | Complex requests split into sub-tasks across specialists |
 | Heartbeat | *(autonomous)* | Scheduled autonomous task checks, memory cleanup, and status reports |
@@ -196,6 +197,30 @@ Enable in `localclaw.config.json5`:
 ```json5
 tts: { enabled: true, url: "${ORPHEUS_URL}", voice: "tara", format: "opus" },
 stt: { enabled: true, url: "${WHISPER_URL}", model: "whisper-large-v3", language: "en" },
+```
+
+### Vision (Image Analysis)
+
+When a user sends an image, LocalClaw automatically runs it through a multimodal vision model (`qwen3-vl:8b` by default) via Ollama. The vision description is injected into the message context so the specialist can answer questions about the image naturally — no special commands needed.
+
+**How it works:**
+
+1. **Attachment saved** — The image is downloaded and stored locally
+2. **Vision model** — The image is sent as base64 to the vision model, which returns a text description
+3. **Context injection** — The description is prepended to the user's message so the router sees it as "answerable from context" and routes to `chat`
+4. **Natural response** — The chat specialist uses the vision description to answer the user's question directly
+
+If the vision model is unavailable or fails, the message is still processed — the user just gets a note that image analysis wasn't available.
+
+**Configuration** (in `localclaw.config.json5`):
+
+```json5
+vision: {
+  enabled: true,
+  model: "qwen3-vl:8b",
+  prompt: "Describe this image in detail. Include text content, visual elements, layout, and any relevant context.",
+  maxTokens: 512,
+},
 ```
 
 ### WhatsApp

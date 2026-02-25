@@ -263,14 +263,17 @@ export class Orchestrator {
 
         if (saved.isImage) {
           if (this.visionService.enabled) {
+            console.log(`[Orchestrator] Running vision on ${saved.filename} (${att.data.length} bytes, ${att.mimeType})`);
             const description = await this.visionService.describe(att.data, att.mimeType);
             if (description) {
-              prefixes.push(`[Image: ${saved.filename}]\n${description}`);
+              console.log(`[Orchestrator] Vision result: "${description.slice(0, 100)}..."`);
+              prefixes.push(`[The user attached an image. Vision analysis: ${description}]\nUse the above description to answer the user's question about the image.`);
             } else {
-              prefixes.push(`[Attached image: ${saved.localPath}]`);
+              console.log('[Orchestrator] Vision returned null');
+              prefixes.push(`[The user attached an image (${saved.filename}) but vision analysis was unavailable.]`);
             }
           } else {
-            prefixes.push(`[Attached image: ${saved.localPath}]`);
+            prefixes.push(`[The user attached an image (${saved.filename}) but vision is not enabled.]`);
           }
         } else {
           suffixes.push(`[Attached file: ${saved.localPath}] (${saved.filename}, ${saved.mimeType})`);
