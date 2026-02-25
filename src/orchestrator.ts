@@ -292,6 +292,7 @@ export class Orchestrator {
     }
 
     // Attachment pre-processing: save files, run vision on images
+    let hasImageAttachment = false;
     if (msg.attachments?.length) {
       const prefixes: string[] = [];
       const suffixes: string[] = [];
@@ -301,6 +302,7 @@ export class Orchestrator {
         if (!saved) continue;
 
         if (saved.isImage) {
+          hasImageAttachment = true;
           if (this.visionService.enabled) {
             console.log(`[Orchestrator] Running vision on ${saved.filename} (${att.data.length} bytes, ${att.mimeType})`);
             const description = await this.visionService.describe(att.data, att.mimeType);
@@ -384,6 +386,7 @@ export class Orchestrator {
         agentId: route.agentId,
         sessionKey: route.sessionKey,
         sessionStore: this.sessionStore,
+        ...(hasImageAttachment ? { overrideCategory: 'chat' } : {}),
         sourceContext: {
           channel: msg.channel,
           channelId: msg.channelId ?? '',
