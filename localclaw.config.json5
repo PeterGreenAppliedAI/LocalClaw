@@ -239,6 +239,6 @@
     enabled: true,
     model: "qwen3-vl:8b",
     prompt: "Describe this image in detail. Include text content, visual elements, layout, and any relevant context. /no_think",
-    maxTokens: 512,
+    maxTokens: 1024,
   },
 }
