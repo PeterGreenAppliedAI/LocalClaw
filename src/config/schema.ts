@@ -187,6 +187,10 @@ export const ToolsConfigSchema = z.object({
   knowledge: KnowledgeConfigSchema.optional(),
 });
 
+export const VoiceConfigSchema = z.object({
+  model: z.string().default('qwen2.5:7b'),
+});
+
 export const HeartbeatConfigSchema = z.object({
   enabled: z.boolean().default(false),
   schedule: z.string().default('0 */2 * * *'), // every 2 hours
@@ -197,6 +201,7 @@ export const HeartbeatConfigSchema = z.object({
 });
 
 export const LocalClawConfigSchema = z.object({
+  timezone: z.string().default('America/New_York'),
   ollama: OllamaConfigSchema.default({}),
   router: RouterConfigSchema.default({}),
   specialists: z.record(z.string(), SpecialistConfigSchema).default({}),
@@ -211,5 +216,6 @@ export const LocalClawConfigSchema = z.object({
   tts: TTSConfigSchema.default({}),
   stt: STTConfigSchema.default({}),
   vision: VisionConfigSchema.default({}),
+  voice: VoiceConfigSchema.default({}),
   heartbeat: HeartbeatConfigSchema.optional(),
 });

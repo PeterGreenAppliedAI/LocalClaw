@@ -28,6 +28,7 @@ import type {
   STTConfigSchema,
   VisionConfigSchema,
   HeartbeatConfigSchema,
+  VoiceConfigSchema,
 } from './schema.js';
 
 export type LocalClawConfig = z.infer<typeof LocalClawConfigSchema>;
@@ -58,3 +59,4 @@ export type TTSConfig = z.infer<typeof TTSConfigSchema>;
 export type STTConfig = z.infer<typeof STTConfigSchema>;
 export type VisionConfig = z.infer<typeof VisionConfigSchema>;
 export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
+export type VoiceConfig = z.infer<typeof VoiceConfigSchema>;

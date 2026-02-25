@@ -37,7 +37,6 @@ function splitFinalMessage(text: string, limit: number): string[] {
 
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 10; // max messages per window per user
-const VOICE_MODEL = 'qwen2.5:7b'; // Fast model for voice-originated messages
 
 export class Orchestrator {
   private client: OllamaClient;
@@ -90,6 +89,7 @@ export class Orchestrator {
       const cronStore = new CronStore(this.config.cron.store);
       this.cronService = new CronService({
         store: cronStore,
+        timezone: this.config.timezone,
         onTrigger: async (job) => {
           const result = await dispatchMessage({
             client: this.client,
@@ -145,7 +145,7 @@ export class Orchestrator {
     // Set up heartbeat
     if (this.config.heartbeat?.enabled) {
       const hb = this.config.heartbeat;
-      this.heartbeatCron = new Cron(hb.schedule, { timezone: 'America/New_York' }, async () => {
+      this.heartbeatCron = new Cron(hb.schedule, { timezone: this.config.timezone }, async () => {
         await this.runHeartbeat();
       });
       const next = this.heartbeatCron.nextRun();
@@ -178,9 +178,10 @@ export class Orchestrator {
 
       // Inject current date/time and task board state for context
       const now = new Date();
-      const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long' });
+      const tz = this.config.timezone;
+      const formatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' });
       const dayOfWeek = formatter.format(now);
-      const dateStr = now.toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' }) + ' ET';
+      const dateStr = now.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
 
       let currentTasks = '';
       try {
@@ -370,7 +371,7 @@ export class Orchestrator {
           senderId: msg.senderId,
         },
         onStream,
-        modelOverride: hadAudio ? VOICE_MODEL : undefined,
+        modelOverride: hadAudio ? this.config.voice.model : undefined,
       });
 
       console.log(`[Orchestrator] → ${result.category} (${result.iterations} steps)`);

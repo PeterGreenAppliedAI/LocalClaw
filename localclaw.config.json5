@@ -2,6 +2,8 @@
   // LocalClaw Configuration
   // See .env.example for API key environment variables
 
+  timezone: "America/New_York",
+
   ollama: {
     url: "${OLLAMA_URL}",
     keepAlive: "30m",
@@ -218,6 +220,10 @@
     url: "${WHISPER_URL}",
     model: "whisper-large-v3",
     language: "en",
+  },
+
+  voice: {
+    model: "qwen2.5:7b",  // fast model for voice-originated messages
   },
 
   heartbeat: {

@@ -5,17 +5,20 @@ import type { CronJob, CronJobCreate, CronJobUpdate } from './types.js';
 export interface CronServiceDeps {
   store: CronStore;
   onTrigger: (job: CronJob) => Promise<void>;
+  timezone?: string;
 }
 
 export class CronService {
   private store: CronStore;
   private onTrigger: (job: CronJob) => Promise<void>;
+  private timezone: string;
   private schedulers = new Map<string, Cron>();
   private running = false;
 
   constructor(deps: CronServiceDeps) {
     this.store = deps.store;
     this.onTrigger = deps.onTrigger;
+    this.timezone = deps.timezone ?? 'America/New_York';
   }
 
   async start(): Promise<void> {
@@ -88,7 +91,7 @@ export class CronService {
   private scheduleJob(job: CronJob): void {
     try {
       const cron = new Cron(job.schedule, {
-        timezone: 'America/New_York',
+        timezone: this.timezone,
       }, async () => {
         if (!this.running) return;
         await this.executeJob(job);
