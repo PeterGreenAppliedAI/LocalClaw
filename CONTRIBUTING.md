@@ -66,6 +66,19 @@ src/
 └── exec/                 # Shell execution with sandbox
 ```
 
+## Branching Model
+
+The `main` branch is **protected** — all changes must go through pull requests.
+
+- **No direct pushes to `main`** — CI status checks (typecheck, tests, build) must pass before merge
+- **Branches must be up-to-date** with `main` before merging
+- **Branch naming conventions:**
+  - `feature/` — new functionality (e.g. `feature/slack-adapter`)
+  - `fix/` — bug fixes (e.g. `fix/router-timeout`)
+  - `docs/` — documentation changes (e.g. `docs/tool-api`)
+- **`dev` branch** — persistent working branch for maintainers; feature branches can branch from `dev` or `main`
+- **Contributor PRs target `main`**
+
 ## How to Contribute
 
 ### 1. Add a New Tool
@@ -130,14 +143,15 @@ npm run test:watch
 
 ## Pull Request Process
 
-1. **Fork** the repo and create a branch from `main`
+1. **Fork** the repo and create a branch from `main` using the naming convention above (`feature/`, `fix/`, `docs/`)
 2. **Make your changes** — keep PRs focused on a single concern
 3. **Run checks** before submitting:
    ```bash
    npm run typecheck   # Zero type errors
    npm test            # All tests pass
+   npm run build       # Build compiles
    ```
-4. **Open a PR** with:
+4. **Open a PR** targeting `main` with:
    - A clear title describing the change
    - A summary of what and why
    - Any testing you did
