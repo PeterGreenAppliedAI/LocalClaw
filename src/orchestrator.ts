@@ -176,9 +176,27 @@ export class Orchestrator {
       const heartbeatPath = join(workspacePath, 'HEARTBEAT.md');
       const heartbeatContent = readFileSync(heartbeatPath, 'utf-8');
 
+      // Inject current date/time and task board state for context
+      const now = new Date();
+      const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'long' });
+      const dayOfWeek = formatter.format(now);
+      const dateStr = now.toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' }) + ' ET';
+
+      let currentTasks = '';
+      try {
+        currentTasks = readFileSync(join(workspacePath, 'TASKS.md'), 'utf-8');
+      } catch { /* no tasks file */ }
+
       const prompt = [
+        `Current date/time: ${dateStr} (${dayOfWeek})`,
+        '',
         'Execute the following heartbeat tasks. For each task, actually perform it using the available tools (check tasks, search memory, etc.).',
-        'Report what you found and any actions taken.\n',
+        'Report what you found and any actions taken.',
+        'IMPORTANT: Do NOT create tasks that already exist on the board. Check the current task board below before creating anything.',
+        '',
+        '## Current Task Board',
+        currentTasks || '_Empty_',
+        '',
         heartbeatContent,
       ].join('\n');
 

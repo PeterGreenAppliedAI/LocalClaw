@@ -187,10 +187,10 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   const dispatchStart = Date.now();
 
   if (!specialistConfig) {
-    result = await runAsBareChat(client, config, message, classification, history, undefined, params.onStream, agentId);
+    result = await runAsBareChat(client, config, message, classification, history, undefined, params.onStream, agentId, params.sourceContext);
   } else if (specialistConfig.tools.length === 0) {
     // No tools — skip ReAct loop, just chat directly
-    result = await runAsBareChat(client, config, message, classification, history, specialistConfig, params.onStream, agentId);
+    result = await runAsBareChat(client, config, message, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext);
   } else if (effectiveCategory === 'multi') {
     result = await runMultiOrchestration(params, classification, specialistConfig, history);
   } else {
@@ -252,9 +252,9 @@ async function runSpecialist(
   const wsCategory = category === 'cron' ? 'cron' as const : 'tool' as const;
   const workspaceContext = buildWorkspaceContext(workspacePath, { category: wsCategory });
 
-  // Inject source context into system prompt for tools that need delivery info
+  // Inject source context into system prompt so specialists know which channel the user is on
   let systemPrompt = specialist.systemPrompt;
-  if (params.sourceContext && ['cron', 'message', 'multi'].includes(category)) {
+  if (params.sourceContext) {
     const ctx = params.sourceContext;
     systemPrompt = (systemPrompt ?? '') +
       `\n\nCurrent message context: The user is messaging from channel="${ctx.channel}", channelId="${ctx.channelId}"${ctx.guildId ? `, guildId="${ctx.guildId}"` : ''}. Use these values for delivery targets (e.g., cron job channel and target fields).`;
@@ -410,6 +410,7 @@ async function runAsBareChat(
   specialist?: SpecialistConfig,
   onStream?: (delta: string) => void,
   agentId = 'main',
+  sourceContext?: DispatchParams['sourceContext'],
 ): Promise<DispatchResult> {
   const chatModel = specialist?.model ?? config.specialists.chat?.model ?? config.router.model;
   const temperature = specialist?.temperature ?? 0.8;
@@ -421,6 +422,9 @@ async function runAsBareChat(
   let systemContent = specialist?.systemPrompt ?? 'You are a helpful AI assistant. Respond naturally and concisely.';
   if (workspaceContext) {
     systemContent += '\n\n' + workspaceContext;
+  }
+  if (sourceContext) {
+    systemContent += `\n\nCurrent message context: The user is messaging from channel="${sourceContext.channel}"${sourceContext.guildId ? `, guildId="${sourceContext.guildId}"` : ''}.`;
   }
 
   const messages: OllamaMessage[] = [
