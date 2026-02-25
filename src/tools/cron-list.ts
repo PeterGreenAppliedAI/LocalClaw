@@ -21,7 +21,7 @@ export function createCronListTool(cronService: CronService): LocalClawTool {
       if (jobs.length === 0) return 'No scheduled jobs';
 
       return jobs
-        .map(j => `- ${j.name} (${j.id}): "${j.schedule}" → ${j.category}: "${j.message.slice(0, 60)}" [${j.enabled ? 'enabled' : 'disabled'}]${j.lastRunAt ? ` (last run: ${j.lastRunAt})` : ''}`)
+        .map(j => `- [${j.type ?? 'cron'}] ${j.name} (${j.id}): "${j.schedule}" → ${j.category}: "${j.message.slice(0, 60)}" [${j.enabled ? 'enabled' : 'disabled'}]${j.lastRunAt ? ` (last run: ${j.lastRunAt})` : ''}`)
         .join('\n');
     },
   };

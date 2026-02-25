@@ -39,9 +39,17 @@ export class CronService {
     return this.store.list(includeDisabled);
   }
 
+  listByType(type: 'cron' | 'heartbeat', includeDisabled = false): CronJob[] {
+    return this.store.listByType(type, includeDisabled);
+  }
+
+  updateLastRun(id: string): void {
+    this.store.updateLastRun(id);
+  }
+
   add(input: CronJobCreate): CronJob {
     const job = this.store.add(input);
-    if (this.running && job.enabled) {
+    if (this.running && job.enabled && job.type !== 'heartbeat') {
       this.scheduleJob(job);
     }
     return job;
@@ -84,6 +92,7 @@ export class CronService {
 
   private scheduleAll(): void {
     for (const job of this.store.list()) {
+      if (job.type === 'heartbeat') continue;
       this.scheduleJob(job);
     }
   }

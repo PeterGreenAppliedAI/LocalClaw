@@ -19,9 +19,14 @@ export class CronStore {
     return this.jobs.find(j => j.id === id);
   }
 
+  listByType(type: 'cron' | 'heartbeat', includeDisabled = false): CronJob[] {
+    return this.jobs.filter(j => j.type === type && (includeDisabled || j.enabled));
+  }
+
   add(input: CronJobCreate): CronJob {
     const job: CronJob = {
       ...input,
+      type: input.type ?? 'cron',
       id: randomUUID().slice(0, 8),
       enabled: true,
       createdAt: new Date().toISOString(),
@@ -69,6 +74,10 @@ export class CronStore {
     try {
       const data = readFileSync(this.filePath, 'utf-8');
       this.jobs = JSON.parse(data);
+      // Backfill type for pre-migration jobs
+      for (const job of this.jobs) {
+        if (!job.type) job.type = 'cron';
+      }
     } catch {
       this.jobs = [];
     }

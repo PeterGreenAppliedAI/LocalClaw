@@ -24,6 +24,9 @@ import { createCronListTool } from './cron-list.js';
 import { createCronRemoveTool } from './cron-remove.js';
 import { createSendMessageTool } from './send-message.js';
 import { createCronEditTool } from './cron-edit.js';
+import { createHeartbeatAddTool } from './heartbeat-add.js';
+import { createHeartbeatListTool } from './heartbeat-list.js';
+import { createHeartbeatRemoveTool } from './heartbeat-remove.js';
 import { createWorkspaceReadTool } from './workspace-read.js';
 import { createWorkspaceWriteTool } from './workspace-write.js';
 import { createTaskAddTool } from './task-add.js';
@@ -38,6 +41,7 @@ export interface RegisterToolsOptions {
   channelRegistry?: ChannelRegistry;
   ollamaClient?: OllamaClient;
   taskStore?: TaskStore;
+  heartbeatConfig?: import('../config/types.js').HeartbeatConfig;
 }
 
 /**
@@ -102,6 +106,13 @@ export async function registerAllTools(
     registry.register(createCronListTool(options.cronService));
     registry.register(createCronRemoveTool(options.cronService));
     registry.register(createCronEditTool(options.cronService));
+
+    // Heartbeat tools (require heartbeat config)
+    if (options.heartbeatConfig) {
+      registry.register(createHeartbeatAddTool(options.cronService, options.heartbeatConfig));
+      registry.register(createHeartbeatListTool(options.cronService));
+      registry.register(createHeartbeatRemoveTool(options.cronService));
+    }
   }
 
   // Send message tool (requires channel registry)

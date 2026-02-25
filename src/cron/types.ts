@@ -1,6 +1,7 @@
 export interface CronJob {
   id: string;
   name: string;
+  type: 'cron' | 'heartbeat';
   schedule: string;    // cron expression
   category: string;    // specialist category
   message: string;     // prompt to run
@@ -15,6 +16,7 @@ export interface CronJob {
 
 export interface CronJobCreate {
   name: string;
+  type?: 'cron' | 'heartbeat';
   schedule: string;
   category: string;
   message: string;

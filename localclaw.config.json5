@@ -18,7 +18,7 @@
       web_search: { description: "Questions needing current internet information about external topics (NOT about the owner or user)" },
       memory:     { description: "Questions about past conversations or stored info" },
       exec:       { description: "Run commands, edit files, system operations" },
-      cron:       { description: "Schedule, list, or manage recurring tasks" },
+      cron:       { description: "Schedule, list, or manage recurring tasks and heartbeat tasks" },
       message:    { description: "Send messages to other channels/users" },
       website:    { description: "Teaching materials, courses, assignments" },
       task:       { description: "Create, list, update, or complete tasks and to-dos" },
@@ -62,11 +62,11 @@
     },
     cron: {
       model: "qwen3-coder:30b",
-      systemPrompt: "You are a cron job scheduler. Use cron_add to create jobs, cron_list to show existing jobs, cron_remove to delete them. For schedules, use standard 5-field cron expressions (minute hour day month weekday). Examples: '0 9 * * *' = daily at 9am, '0 */2 * * *' = every 2 hours, '30 14 * * 1-5' = weekdays at 2:30pm. The timezone is America/New_York (EST/EDT). Use the channel context provided to set the delivery channel and target.",
+      systemPrompt: "You are a scheduling specialist. You manage two types of scheduled tasks:\n\n1. **Cron jobs** — individual recurring tasks with their own schedule, category, and delivery. Use cron_add/cron_list/cron_remove.\n2. **Heartbeat tasks** — autonomous periodic tasks that all run together on a shared schedule. They get full tool access and produce a combined report. Use heartbeat_add/heartbeat_list/heartbeat_remove.\n\nWhen the user wants to schedule something at a specific time (like 'remind me at 9am'), use cron. When they want to add an autonomous check or routine task (like 'check my emails periodically' or 'monitor my task board'), use heartbeat.\n\nFor cron schedules, use standard 5-field cron expressions (minute hour day month weekday). Examples: '0 9 * * *' = daily at 9am, '0 */2 * * *' = every 2 hours, '30 14 * * 1-5' = weekdays at 2:30pm. The timezone is America/New_York (EST/EDT). Use the channel context provided to set the delivery channel and target.",
       maxTokens: 2048,
       temperature: 0.2,
       maxIterations: 3,
-      tools: ["cron_add", "cron_list", "cron_remove"],
+      tools: ["cron_add", "cron_list", "cron_remove", "heartbeat_add", "heartbeat_list", "heartbeat_remove"],
     },
     message: {
       model: "qwen3-coder:30b",

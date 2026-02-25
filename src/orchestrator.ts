@@ -123,6 +123,7 @@ export class Orchestrator {
       channelRegistry: this.channelRegistry,
       ollamaClient: this.client,
       taskStore,
+      heartbeatConfig: this.config.heartbeat,
     });
 
     // Set up message handler
@@ -171,10 +172,21 @@ export class Orchestrator {
     console.log('[Heartbeat] Running...');
 
     try {
-      // Read HEARTBEAT.md from the default agent's workspace
       const workspacePath = resolveWorkspacePath(this.config.agents.default, this.config);
-      const heartbeatPath = join(workspacePath, 'HEARTBEAT.md');
-      const heartbeatContent = readFileSync(heartbeatPath, 'utf-8');
+
+      // Query heartbeat tasks from cron store
+      const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
+
+      let taskInstructions: string;
+      if (heartbeatTasks.length > 0) {
+        taskInstructions = heartbeatTasks
+          .map((t, i) => `${i + 1}. **${t.name}**: ${t.message}`)
+          .join('\n');
+      } else {
+        // Fallback: read HEARTBEAT.md (legacy / migration path)
+        const heartbeatPath = join(workspacePath, 'HEARTBEAT.md');
+        taskInstructions = readFileSync(heartbeatPath, 'utf-8');
+      }
 
       // Inject current date/time and task board state for context
       const now = new Date();
@@ -198,7 +210,8 @@ export class Orchestrator {
         '## Current Task Board',
         currentTasks || '_Empty_',
         '',
-        heartbeatContent,
+        '## Heartbeat Tasks',
+        taskInstructions,
       ].join('\n');
 
       const result = await dispatchMessage({
@@ -211,6 +224,13 @@ export class Orchestrator {
       });
 
       console.log(`[Heartbeat] Completed (${result.iterations} steps)`);
+
+      // Update lastRunAt for all heartbeat tasks
+      if (this.cronService) {
+        for (const task of heartbeatTasks) {
+          this.cronService.updateLastRun(task.id);
+        }
+      }
 
       // Deliver results to configured channel
       if (hb.delivery.target) {
