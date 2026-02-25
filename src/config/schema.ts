@@ -187,6 +187,15 @@ export const ToolsConfigSchema = z.object({
   knowledge: KnowledgeConfigSchema.optional(),
 });
 
+export const HeartbeatConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  schedule: z.string().default('0 */2 * * *'), // every 2 hours
+  delivery: z.object({
+    channel: z.string().default('discord'),
+    target: z.string(), // Discord channel ID or user ID for DMs
+  }),
+});
+
 export const LocalClawConfigSchema = z.object({
   ollama: OllamaConfigSchema.default({}),
   router: RouterConfigSchema.default({}),
@@ -202,4 +211,5 @@ export const LocalClawConfigSchema = z.object({
   tts: TTSConfigSchema.default({}),
   stt: STTConfigSchema.default({}),
   vision: VisionConfigSchema.default({}),
+  heartbeat: HeartbeatConfigSchema.optional(),
 });

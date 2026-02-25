@@ -220,6 +220,15 @@
     language: "en",
   },
 
+  heartbeat: {
+    enabled: true,
+    schedule: "0 */2 * * *",  // every 2 hours
+    delivery: {
+      channel: "discord",
+      target: "415030165005926401",  // DM to tadeu718
+    },
+  },
+
   vision: {
     enabled: true,
     model: "qwen3-vl:8b",

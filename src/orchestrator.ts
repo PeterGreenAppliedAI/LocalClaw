@@ -1,4 +1,6 @@
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { Cron } from 'croner';
 import type { LocalClawConfig } from './config/types.js';
 import type { ChannelAdapterConfig, InboundMessage } from './channels/types.js';
 import { OllamaClient } from './ollama/client.js';
@@ -48,6 +50,7 @@ export class Orchestrator {
   private visionService: VisionService;
   private config: LocalClawConfig;
   private rateLimits = new Map<string, number[]>();
+  private heartbeatCron?: Cron;
 
   constructor(config: LocalClawConfig) {
     this.config = config;
@@ -139,15 +142,67 @@ export class Orchestrator {
       await this.cronService.start();
     }
 
+    // Set up heartbeat
+    if (this.config.heartbeat?.enabled) {
+      const hb = this.config.heartbeat;
+      this.heartbeatCron = new Cron(hb.schedule, { timezone: 'America/New_York' }, async () => {
+        await this.runHeartbeat();
+      });
+      const next = this.heartbeatCron.nextRun();
+      console.log(`[Heartbeat] Scheduled (${hb.schedule}) — next run: ${next?.toISOString() ?? 'unknown'}`);
+    }
+
     const models = await this.client.listModels();
     console.log(`[Orchestrator] Models: ${models.length} | Tools: ${this.toolRegistry.list().length} | Channels: ${this.channelRegistry.list().join(', ') || 'none'}`);
     console.log('[Orchestrator] Started');
   }
 
   async stop(): Promise<void> {
+    this.heartbeatCron?.stop();
     this.cronService?.stop();
     await this.channelRegistry.disconnectAll();
     console.log('[Orchestrator] Stopped');
+  }
+
+  private async runHeartbeat(): Promise<void> {
+    const hb = this.config.heartbeat;
+    if (!hb) return;
+
+    console.log('[Heartbeat] Running...');
+
+    try {
+      // Read HEARTBEAT.md from the default agent's workspace
+      const workspacePath = resolveWorkspacePath(this.config.agents.default, this.config);
+      const heartbeatPath = join(workspacePath, 'HEARTBEAT.md');
+      const heartbeatContent = readFileSync(heartbeatPath, 'utf-8');
+
+      const prompt = [
+        'Execute the following heartbeat tasks. For each task, actually perform it using the available tools (check tasks, search memory, etc.).',
+        'Report what you found and any actions taken.\n',
+        heartbeatContent,
+      ].join('\n');
+
+      const result = await dispatchMessage({
+        client: this.client,
+        registry: this.toolRegistry,
+        config: this.config,
+        message: prompt,
+        overrideCategory: 'multi',
+        sessionStore: this.sessionStore,
+      });
+
+      console.log(`[Heartbeat] Completed (${result.iterations} steps)`);
+
+      // Deliver results to configured channel
+      if (hb.delivery.target) {
+        await this.channelRegistry.send(
+          { channel: hb.delivery.channel, channelId: hb.delivery.target },
+          { text: `**[Heartbeat Report]**\n${result.answer}` },
+        );
+      }
+    } catch (err) {
+      console.error('[Heartbeat] Error:', err instanceof Error ? err.message : err);
+    }
   }
 
   private isRateLimited(userId: string): boolean {

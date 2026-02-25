@@ -130,12 +130,17 @@ export class DiscordAdapter implements ChannelAdapter {
     }
 
     try {
-      const channel = await this.client.channels.fetch(target.channelId);
-      if (!channel || !('send' in channel)) {
-        throw new Error(`Channel ${target.channelId} not found or not text-based`);
-      }
+      let sendable: any;
 
-      const sendable = channel as any;
+      // Try fetching as a server channel first
+      const channel = await this.client.channels.fetch(target.channelId).catch(() => null);
+      if (channel && 'send' in channel) {
+        sendable = channel;
+      } else {
+        // Fallback: treat target as a user ID and open a DM
+        const user = await this.client.users.fetch(target.channelId);
+        sendable = await user.createDM();
+      }
 
       // Send audio as file attachment if present
       const files = content.audio

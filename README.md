@@ -43,6 +43,7 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 | Browsing | `browser` | Playwright headless Chromium — navigate, snapshot, screenshot |
 | Voice | TTS/STT | Orpheus TTS + faster-whisper STT — voice in, voice out |
 | Multi-task | *(decomposed)* | Complex requests split into sub-tasks across specialists |
+| Heartbeat | *(autonomous)* | Scheduled autonomous task checks, memory cleanup, and status reports |
 | Context Compaction | *(automatic)* | Budget-aware history summarization with memory flush |
 
 ## Quick Start
@@ -275,6 +276,47 @@ A persistent kanban-style task system that both users and the bot can use. Tasks
 - "Mark a1b2c3d4 done" → completes a task
 
 Tasks support priority levels (low/medium/high), assignees, due dates, and tags. The Done section is capped at 20 items to prevent bloat. `TASKS.md` is a protected file — the bot can only modify it through the TaskStore, not by directly writing to it.
+
+### Heartbeat (Autonomous Scheduled Tasks)
+
+LocalClaw includes an autonomous heartbeat system that periodically reads `HEARTBEAT.md` from the workspace and executes the tasks defined in it — checking the task board for overdue items, reviewing memory for stale entries, and delivering a report to a configured Discord channel (or DM).
+
+**How it works:**
+
+1. **Schedule** — A cron job (default: every 2 hours) triggers the heartbeat
+2. **Read** — The orchestrator reads `HEARTBEAT.md` from the default agent's workspace
+3. **Dispatch** — The instructions are dispatched through the `multi` category, which decomposes them into sub-tasks across specialists (task checks, memory searches, etc.)
+4. **Deliver** — Results are sent to the configured Discord channel or user DM
+
+No new specialists or tools are required — the heartbeat reuses the existing `multi` decomposition pipeline and all standard tools (`task_list`, `memory_search`, etc.).
+
+**Configuration** (in `localclaw.config.json5`):
+
+```json5
+heartbeat: {
+  enabled: true,
+  schedule: "0 */2 * * *",  // every 2 hours (cron expression)
+  delivery: {
+    channel: "discord",
+    target: "415030165005926401",  // Discord channel ID or user ID for DMs
+  },
+},
+```
+
+**`HEARTBEAT.md`** defines the tasks the model should execute each run. Edit it to customize what the heartbeat checks:
+
+```markdown
+## Every Run
+- Check the task board (task_list) — report overdue or high-priority items
+
+## Daily (morning runs only)
+- Review if there are stale memory entries that should be consolidated or removed
+
+## Weekly (Monday morning only)
+- Summarize key activities from the past week
+```
+
+The Discord adapter automatically detects whether the `target` is a server channel ID or a user ID. If the channel fetch fails, it falls back to opening a DM with the user.
 
 ### Reasoning Model
 
