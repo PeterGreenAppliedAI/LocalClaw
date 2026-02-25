@@ -316,6 +316,21 @@ export class Orchestrator {
           } else {
             prefixes.push(`[The user attached an image (${saved.filename}) but vision is not enabled.]`);
           }
+        } else if (att.mimeType === 'application/pdf') {
+          try {
+            const pdfParse = (await import('pdf-parse')).default;
+            const pdf = await pdfParse(att.data);
+            const text = pdf.text.trim();
+            if (text) {
+              console.log(`[Orchestrator] Extracted ${text.length} chars from PDF: ${saved.filename}`);
+              prefixes.push(`[The user attached a PDF: ${saved.filename}. Extracted text below:]\n\n${text}`);
+            } else {
+              suffixes.push(`[Attached PDF: ${saved.filename} but no text could be extracted (scanned/image PDF).]`);
+            }
+          } catch (err) {
+            console.error(`[Orchestrator] PDF extraction failed for ${saved.filename}:`, err instanceof Error ? err.message : err);
+            suffixes.push(`[Attached file: ${saved.localPath}] (${saved.filename}, ${saved.mimeType})`);
+          }
         } else {
           suffixes.push(`[Attached file: ${saved.localPath}] (${saved.filename}, ${saved.mimeType})`);
         }
