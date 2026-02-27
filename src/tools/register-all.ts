@@ -4,6 +4,7 @@ import type { CronService } from '../cron/service.js';
 import type { ChannelRegistry } from '../channels/registry.js';
 import type { OllamaClient } from '../ollama/client.js';
 import type { TaskStore } from '../tasks/store.js';
+import { EmbeddingStore } from '../memory/embeddings.js';
 import { resolveWorkspacePath } from '../agents/scope.js';
 import { createWebSearchTool } from './web-search.js';
 import { createWebFetchTool } from './web-fetch.js';
@@ -44,6 +45,10 @@ export interface RegisterToolsOptions {
   heartbeatConfig?: import('../config/types.js').HeartbeatConfig;
 }
 
+export interface RegisterToolsResult {
+  embeddingStore: EmbeddingStore;
+}
+
 /**
  * Register all available tools with the registry based on config.
  * Called once at startup. New tools: add registration here.
@@ -53,20 +58,24 @@ export async function registerAllTools(
   registry: ToolRegistry,
   config: LocalClawConfig,
   options?: RegisterToolsOptions,
-): Promise<void> {
+): Promise<RegisterToolsResult> {
   // Web tools
   registry.register(createWebSearchTool(config.tools?.web?.search));
   registry.register(createWebFetchTool(config.tools?.web?.fetch));
 
   // Memory tools (with embedding support if client available)
   const workspace = resolveWorkspacePath(config.agents.default, config);
-  registry.register(createMemorySearchTool(workspace, options?.ollamaClient));
+
+  // Create a single shared EmbeddingStore so all memory tools share one DB connection
+  const embeddingStore = new EmbeddingStore();
+
+  registry.register(createMemorySearchTool(workspace, options?.ollamaClient, embeddingStore));
   registry.register(createMemoryGetTool(workspace));
-  registry.register(createMemorySaveTool(workspace, options?.ollamaClient, config.memory?.consolidation));
+  registry.register(createMemorySaveTool(workspace, options?.ollamaClient, config.memory?.consolidation, embeddingStore));
 
   // Knowledge import tool (requires Ollama for embeddings)
   if (options?.ollamaClient) {
-    registry.register(createKnowledgeImportTool(workspace, options.ollamaClient, config.tools?.knowledge));
+    registry.register(createKnowledgeImportTool(workspace, options.ollamaClient, embeddingStore, config.tools?.knowledge));
   }
 
   // Docker backend (if configured)
@@ -137,4 +146,6 @@ export async function registerAllTools(
   // Workspace tools (always available)
   registry.register(createWorkspaceReadTool());
   registry.register(createWorkspaceWriteTool());
+
+  return { embeddingStore };
 }

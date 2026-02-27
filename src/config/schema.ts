@@ -147,7 +147,7 @@ export const BrowserConfigSchema = z.object({
 export const TTSConfigSchema = z.object({
   enabled: z.boolean().default(false),
   url: z.string().default('http://127.0.0.1:5005'),
-  voice: z.string().default('tara'),
+  voice: z.string().default('serena'),
   format: z.enum(['wav', 'opus', 'mp3']).default('opus'),
 });
 

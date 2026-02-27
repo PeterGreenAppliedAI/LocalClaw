@@ -42,7 +42,7 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 | Messaging | `send_message` | Cross-channel message delivery |
 | Browsing | `browser` | Playwright headless Chromium — navigate, snapshot, screenshot |
 | Vision | *(automatic)* | Image analysis via multimodal model — descriptions injected into context for natural Q&A |
-| Voice | TTS/STT | Orpheus TTS + faster-whisper STT — voice in, voice out |
+| Voice | TTS/STT | QwenTTS + faster-whisper STT — voice in, voice out |
 | Multi-task | *(decomposed)* | Complex requests split into sub-tasks across specialists |
 | Heartbeat | *(autonomous)* | Scheduled autonomous task checks, memory cleanup, and status reports |
 | Context Compaction | *(automatic)* | Budget-aware history summarization with memory flush |
@@ -109,7 +109,7 @@ localclaw/
 │   ├── tool-loop/            # Tool-calling loop engine
 │   ├── ollama/               # Ollama HTTP client (chat, stream, embed)
 │   ├── channels/             # Pluggable adapters (Discord, Telegram, Web, Slack, Gmail, Microsoft Graph, WhatsApp)
-│   ├── services/             # TTS (Orpheus) and STT (Whisper) services
+│   ├── services/             # TTS (QwenTTS) and STT (Whisper) services
 │   ├── tasks/                # Task board (types + JSON/Markdown store)
 │   ├── tools/                # 22 tool implementations
 │   ├── agents/               # Workspace files + routing
@@ -152,7 +152,7 @@ Adding a new adapter requires zero core code changes — implement the interface
 LocalClaw supports voice input and output through an optional TTS/STT service layer:
 
 - **STT (Speech-to-Text)** — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server on your inference node. Incoming voice messages are automatically transcribed before processing.
-- **TTS (Text-to-Speech)** — [Orpheus TTS](https://github.com/canopyai/orpheus-tts) with [llama.cpp](https://github.com/ggerganov/llama.cpp) backend on your inference node. When a user sends a voice message, the response is synthesized back as audio.
+- **TTS (Text-to-Speech)** — [QwenTTS](https://github.com/QwenLM/Qwen2.5-Omni) on your inference node. When a user sends a voice message, the response is synthesized back as audio.
 
 Both use OpenAI-compatible HTTP APIs (no extra npm packages). The rule is simple: **voice in → voice out, text in → text out**. Adapters that don't support audio (Gmail, Microsoft Graph) gracefully ignore it.
 
@@ -170,32 +170,28 @@ The UI also includes a **New Session** button to reset conversation history.
 
 Voice interactions use a faster, lighter model (`qwen2.5:7b` by default) for chat responses to minimize latency. Tool-using categories (web search, memory, exec, etc.) still use the full specialist model for reliable tool calling. The voice model is configured in `src/orchestrator.ts` via the `VOICE_MODEL` constant.
 
-**Voice setup requires three services on your inference node:**
+**Voice setup requires two services on your inference node:**
 
-1. **llama-server** — Serves the Orpheus-3b model (port 8080)
+1. **QwenTTS** — OpenAI-compatible TTS endpoint (port 5005)
    ```bash
-   ./llama-server -m orpheus-3b-0.1-ft-q4_k_m.gguf -c 2048 -ngl 99 --flash-attn --port 8080
+   python -m qwen_tts.server --port 5005
    ```
-2. **Orpheus TTS FastAPI** — Converts LLM tokens to audio via SNAC codec (port 5005)
-   ```bash
-   cd orpheus-tts && python api/app.py
-   ```
-3. **faster-whisper** — OpenAI-compatible STT endpoint (port 8000)
+2. **faster-whisper** — OpenAI-compatible STT endpoint (port 8000)
    ```bash
    faster-whisper-server --model large-v3 --device cuda
    ```
 
-**Important:** The Orpheus FastAPI server must convert output to OGG Opus format (required for WhatsApp voice notes). Ensure ffmpeg is installed on the inference node for the WAV→Opus conversion.
+**Important:** The QwenTTS server must convert output to OGG Opus format (required for WhatsApp voice notes). Ensure ffmpeg is installed on the inference node for the WAV→Opus conversion.
 
 Configure in `.env`:
 ```env
-ORPHEUS_URL=http://your-gpu-node:5005
+QWEN_TTS_URL=http://your-gpu-node:5005
 WHISPER_URL=http://your-gpu-node:8000
 ```
 
 Enable in `localclaw.config.json5`:
 ```json5
-tts: { enabled: true, url: "${ORPHEUS_URL}", voice: "tara", format: "opus" },
+tts: { enabled: true, url: "${QWEN_TTS_URL}", voice: "serena", format: "opus" },
 stt: { enabled: true, url: "${WHISPER_URL}", model: "whisper-large-v3", language: "en" },
 ```
 
@@ -412,7 +408,7 @@ Add `"reason"` to any specialist's `tools` array to enable the reasoning pass fo
 | Scheduling | croner |
 | Vector Store | better-sqlite3 |
 | WhatsApp | @whiskeysockets/baileys |
-| TTS | Orpheus TTS (HTTP) |
+| TTS | QwenTTS (HTTP) |
 | STT | faster-whisper (HTTP) |
 | Config | JSON5 + Zod |
 | Testing | Vitest |

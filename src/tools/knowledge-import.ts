@@ -3,7 +3,8 @@ import { resolve, extname, basename } from 'node:path';
 import type { LocalClawTool } from './types.js';
 import type { OllamaClient } from '../ollama/client.js';
 import type { KnowledgeConfig } from '../config/types.js';
-import { EmbeddingStore, generateMemoryId } from '../memory/embeddings.js';
+import type { EmbeddingStore } from '../memory/embeddings.js';
+import { generateMemoryId } from '../memory/embeddings.js';
 import { readDocument, chunkDocument } from '../knowledge/chunker.js';
 
 const DEFAULT_ALLOWED_EXTENSIONS = ['.pdf', '.csv', '.md', '.txt', '.html', '.htm'];
@@ -11,9 +12,9 @@ const DEFAULT_ALLOWED_EXTENSIONS = ['.pdf', '.csv', '.md', '.txt', '.html', '.ht
 export function createKnowledgeImportTool(
   workspacePath: string,
   ollamaClient: OllamaClient,
+  embeddingStore: EmbeddingStore,
   config?: KnowledgeConfig,
 ): LocalClawTool {
-  const embeddingStore = new EmbeddingStore();
   const allowedExtensions = new Set(config?.allowedExtensions ?? DEFAULT_ALLOWED_EXTENSIONS);
   const maxChunkSize = config?.maxChunkSize ?? 800;
   const overlapSize = config?.overlapSize ?? 100;
