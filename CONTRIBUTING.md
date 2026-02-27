@@ -54,7 +54,7 @@ src/
 ├── tool-loop/            # ReAct tool-calling loop engine
 ├── ollama/               # Ollama HTTP client (chat, stream, embed)
 ├── channels/             # Pluggable adapters (Discord, Web, WhatsApp, etc.)
-├── services/             # TTS (Orpheus) and STT (Whisper) services
+├── services/             # TTS (QwenTTS) and STT (Whisper) services
 ├── tools/                # Tool implementations
 ├── agents/               # Workspace files + agent routing
 ├── context/              # Token budget, history compaction

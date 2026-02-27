@@ -105,6 +105,11 @@ export class WebApiAdapter implements ChannelAdapter {
       'Connection': 'keep-alive',
     });
 
+    // SSE keepalive: send a comment every 15s to prevent browser/proxy timeouts
+    const keepalive = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 15_000);
+
     const responsePromise = new Promise<MessageContent>((resolve) => {
       this.pendingResponses.set(msgId, resolve);
       setTimeout(() => {
@@ -112,7 +117,7 @@ export class WebApiAdapter implements ChannelAdapter {
           this.pendingResponses.delete(msgId);
           resolve({ text: 'Request timed out' });
         }
-      }, 120_000);
+      }, 300_000);
     });
 
     const inbound: InboundMessage = {
@@ -134,6 +139,7 @@ export class WebApiAdapter implements ChannelAdapter {
     }
 
     const response = await responsePromise;
+    clearInterval(keepalive);
 
     const donePayload: Record<string, unknown> = {
       stage: 'done',
@@ -180,7 +186,7 @@ export class WebApiAdapter implements ChannelAdapter {
           this.pendingResponses.delete(msgId);
           resolve({ text: 'Request timed out' });
         }
-      }, 120_000);
+      }, 300_000);
     });
 
     const inbound: InboundMessage = {

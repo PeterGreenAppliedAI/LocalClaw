@@ -1,13 +1,14 @@
 import type { LocalClawTool } from './types.js';
 import type { OllamaClient } from '../ollama/client.js';
 import { searchMarkdownFiles } from '../memory/search.js';
-import { EmbeddingStore, generateEmbedding } from '../memory/embeddings.js';
+import type { EmbeddingStore } from '../memory/embeddings.js';
+import { generateEmbedding } from '../memory/embeddings.js';
 
 export function createMemorySearchTool(
   workspacePath: string,
   ollamaClient?: OllamaClient,
+  embeddingStore?: EmbeddingStore,
 ): LocalClawTool {
-  const embeddingStore = new EmbeddingStore();
 
   return {
     name: 'memory_search',
@@ -32,7 +33,7 @@ export function createMemorySearchTool(
       const source = (params.source as string) || 'all';
 
       // Try vector search first if client is available and store has entries
-      if (ollamaClient && embeddingStore.count() > 0) {
+      if (ollamaClient && embeddingStore && embeddingStore.count() > 0) {
         try {
           const queryEmbedding = await generateEmbedding(ollamaClient, query);
           const vectorResults = embeddingStore.search(

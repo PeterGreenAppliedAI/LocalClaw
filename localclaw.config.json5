@@ -210,8 +210,8 @@
 
   tts: {
     enabled: true,
-    url: "${ORPHEUS_URL}",
-    voice: "tara",
+    url: "${QWEN_TTS_URL}",
+    voice: "serena",
     format: "opus",
   },
 

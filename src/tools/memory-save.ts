@@ -3,7 +3,8 @@ import { basename, join, resolve, dirname } from 'node:path';
 import type { LocalClawTool } from './types.js';
 import type { OllamaClient } from '../ollama/client.js';
 import type { MemoryConsolidationConfig } from '../config/types.js';
-import { EmbeddingStore, generateEmbedding, generateMemoryId } from '../memory/embeddings.js';
+import type { EmbeddingStore } from '../memory/embeddings.js';
+import { generateEmbedding, generateMemoryId } from '../memory/embeddings.js';
 import { consolidateMemory } from '../memory/consolidation.js';
 
 /**
@@ -19,8 +20,8 @@ export function createMemorySaveTool(
   workspacePath: string,
   ollamaClient?: OllamaClient,
   consolidationConfig?: MemoryConsolidationConfig,
+  embeddingStore?: EmbeddingStore,
 ): LocalClawTool {
-  const embeddingStore = new EmbeddingStore();
 
   return {
     name: 'memory_save',
@@ -75,7 +76,7 @@ export function createMemorySaveTool(
 
         // Generate embedding and run consolidation before saving
         let consolidationNote = '';
-        if (ollamaClient) {
+        if (ollamaClient && embeddingStore) {
           try {
             const embedding = await generateEmbedding(ollamaClient, content);
 

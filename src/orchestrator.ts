@@ -15,6 +15,7 @@ import { resolveRoute } from './agents/resolve-route.js';
 import { registerAllTools } from './tools/register-all.js';
 import { bootstrapWorkspace } from './agents/workspace.js';
 import { resolveWorkspacePath } from './agents/scope.js';
+import type { EmbeddingStore } from './memory/embeddings.js';
 import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
 import { VisionService } from './services/vision.js';
@@ -50,6 +51,7 @@ export class Orchestrator {
   private config: LocalClawConfig;
   private rateLimits = new Map<string, number[]>();
   private heartbeatCron?: Cron;
+  private embeddingStore?: EmbeddingStore;
 
   constructor(config: LocalClawConfig) {
     this.config = config;
@@ -118,13 +120,14 @@ export class Orchestrator {
     );
 
     // Register all tools
-    await registerAllTools(this.toolRegistry, this.config, {
+    const { embeddingStore } = await registerAllTools(this.toolRegistry, this.config, {
       cronService: this.cronService,
       channelRegistry: this.channelRegistry,
       ollamaClient: this.client,
       taskStore,
       heartbeatConfig: this.config.heartbeat,
     });
+    this.embeddingStore = embeddingStore;
 
     // Set up message handler
     this.channelRegistry.onMessage(async (msg) => {
@@ -161,6 +164,7 @@ export class Orchestrator {
   async stop(): Promise<void> {
     this.heartbeatCron?.stop();
     this.cronService?.stop();
+    this.embeddingStore?.close();
     await this.channelRegistry.disconnectAll();
     console.log('[Orchestrator] Stopped');
   }
@@ -214,13 +218,14 @@ export class Orchestrator {
         taskInstructions,
       ].join('\n');
 
+      // No sessionStore — heartbeat runs are stateless so the model
+      // can't pattern-match from previous (potentially hallucinated) runs
       const result = await dispatchMessage({
         client: this.client,
         registry: this.toolRegistry,
         config: this.config,
         message: prompt,
         overrideCategory: 'multi',
-        sessionStore: this.sessionStore,
       });
 
       console.log(`[Heartbeat] Completed (${result.iterations} steps)`);

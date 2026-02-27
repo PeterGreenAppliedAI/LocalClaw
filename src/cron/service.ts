@@ -24,7 +24,7 @@ export class CronService {
   async start(): Promise<void> {
     this.running = true;
     this.scheduleAll();
-    console.log(`[Cron] Started with ${this.store.list().length} active job(s)`);
+    console.log(`[Cron] Started with ${this.store.listByType('cron').length} cron job(s), ${this.store.listByType('heartbeat').length} heartbeat task(s)`);
   }
 
   stop(): void {
