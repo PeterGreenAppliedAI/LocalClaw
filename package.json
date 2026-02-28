@@ -11,7 +11,8 @@
     "build": "tsdown src/index.ts --format esm --dts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "setup": "tsx src/setup/index.ts"
   },
   "dependencies": {
     "@azure/identity": "^4.13.0",

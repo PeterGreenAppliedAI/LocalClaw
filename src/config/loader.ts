@@ -86,6 +86,7 @@ export function loadConfig(filePath?: string): LocalClawConfig {
     raw = JSON5.parse(text);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      console.warn(`[config] ${path} not found — run "npm run setup" to generate it`);
       return LocalClawConfigSchema.parse({});
     }
     throw configInvalid(`Failed to read ${path}: ${err instanceof Error ? err.message : err}`);
