@@ -1,6 +1,7 @@
 import type { LocalClawTool, ToolContext } from './types.js';
 import type { WebFetchConfig } from '../config/types.js';
 import { assertPublicUrl, assertPublicRedirect } from './ssrf.js';
+import { LocalClawError } from '../errors.js';
 import { extractReadableContent, htmlToMarkdown, truncateText } from './web-fetch-utils.js';
 
 export function createWebFetchTool(config?: WebFetchConfig): LocalClawTool {
@@ -85,7 +86,11 @@ export function createWebFetchTool(config?: WebFetchConfig): LocalClawTool {
           return truncateText(md, limit);
         }
       } catch (err) {
-        // Firecrawl fallback
+        // Never bypass SSRF blocks via fallback
+        if (err instanceof LocalClawError && err.code === 'SSRF_BLOCKED') {
+          return `Error: ${err.message}`;
+        }
+        // Firecrawl fallback for non-security errors
         if (config?.firecrawlApiKey) {
           return fetchViaFirecrawl(url, config.firecrawlApiKey, config.firecrawlBaseUrl, limit);
         }

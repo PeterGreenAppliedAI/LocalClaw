@@ -6,7 +6,7 @@ LocalClaw uses a **Router + Specialist** pattern with a **tool-loop (ReAct) engi
 
 ```
 Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph)
-  -> Router (phi4-mini, classifies intent into one category)
+  -> Router (phi4:14b, classifies intent into one category)
     -> Specialist (config-assigned model + focused tool-loop, 1-3 tools)
       -> Tool Executor (sandboxed via Docker or allowlist)
         -> Response back to channel
@@ -20,6 +20,29 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph)
 - **DockerBackend** — `src/exec/docker-backend.ts`, sandboxed command execution.
 
 **Data flow:** Channel message -> session resolution -> Router classification -> Specialist dispatch -> tool-loop execution -> response to channel -> transcript persistence.
+
+### Memory System
+
+Memory uses **dated flat files + a consolidated index** — no embedding dependency for core memory.
+
+**Storage layout:**
+```
+workspace/
+  memory/
+    pending.json          # Temp: fact candidates awaiting user approval (from !reset)
+    last-review.json      # Marker: timestamp of last heartbeat transcript review
+    2026-02-28.md         # Dated audit trail (append-only)
+    2026-02-27.md
+  FACTS.md                # Consolidated searchable index (rebuilt from dated files)
+```
+
+**Two fact-extraction paths:**
+1. **`!reset` (user-approved)** — On session clear, transcript is loaded before clearing, facts extracted via router model (`phi4:14b`), candidates shown to user. User replies `!save` to commit or `!discard` to skip. Implemented in `src/orchestrator.ts`.
+2. **Heartbeat (autonomous)** — Every 2 hours, `reviewTranscripts()` scans session files modified since `last-review.json`, extracts facts, writes directly to dated file + rebuilds `FACTS.md`. No user approval.
+
+**Search priority:** `memory_search` tool checks FACTS.md first (keyword search), then falls back to general workspace markdown files. The `memory/` subdirectory is excluded from general search — dated files are audit trail only, FACTS.md is the search target.
+
+**Embedding store** (`src/memory/embeddings.ts`) is still used by `knowledge_import` for document chunking/vector search, but core user memory no longer depends on it.
 
 ---
 
@@ -154,9 +177,9 @@ src/
     tokens.ts               #   estimateMessagesTokens()
 
   memory/                   # Memory system
-    embeddings.ts           #   EmbeddingStore (SQLite + vectors)
-    consolidation.ts        #   Memory consolidation
-    search.ts               #   Search utilities
+    embeddings.ts           #   EmbeddingStore (SQLite + vectors, used for knowledge_import)
+    consolidation.ts        #   Legacy memory consolidation (LLM-driven dedup)
+    search.ts               #   searchMarkdownFiles() — keyword search over workspace .md files
 
   cron/                     # Scheduling
     service.ts              #   CronService
@@ -214,27 +237,10 @@ Action hallucination detector catches models that claim to perform actions witho
 
 ### Silent error swallowing
 ```typescript
-// BAD — found in orchestrator.ts:268, :283, :395, :477
+// BAD
 ).catch(() => {});
 ```
-Silently swallowing errors hides failures. Use error factory + structured logging.
-
-### console.error instead of error factory
-```typescript
-// BAD — found in orchestrator.ts:79, :249, :337, :466
-console.error('[Orchestrator] PDF extraction failed:', err);
-throw new Error('Ollama unreachable');  // should be ollamaUnreachable()
-```
-Always wrap errors in `LocalClawError` using the factory functions.
-
-### Ad-hoc try/catch without domain error wrapping
-```typescript
-// BAD — found in orchestrator.ts:248-250, :204-206, :465-480
-} catch (err) {
-  console.error('[Heartbeat] Error:', err instanceof Error ? err.message : err);
-}
-```
-Catch blocks must wrap in domain errors (`LocalClawError`) and use structured error codes.
+Silently swallowing errors hides failures. Use `console.warn` with error details for best-effort operations, or wrap in `LocalClawError` for domain errors.
 
 ### Duplicating types instead of using Zod inference
 ```typescript

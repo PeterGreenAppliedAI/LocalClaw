@@ -130,7 +130,7 @@ export async function classifyMessage(
     // Model returned garbage — fall through to keyword heuristics
   } catch (err) {
     // Timeout or inference error — fall through
-    console.error('[Router] Model classification failed:', err instanceof Error ? err.message : err);
+    console.warn('[Router] OLLAMA_INFERENCE_ERROR: Classification failed —', err instanceof Error ? err.message : err);
   }
 
   // Keyword heuristic fallback (per ChatGPT feedback)

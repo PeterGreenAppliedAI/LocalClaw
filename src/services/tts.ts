@@ -31,18 +31,19 @@ export class TTSService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        console.error(`[TTS] QwenTTS returned ${res.status}: ${res.statusText} — ${body}`);
+        console.warn(`[TTS] OLLAMA_INFERENCE_ERROR: QwenTTS returned ${res.status}: ${res.statusText} — ${body}`);
         return null;
       }
 
       const arrayBuffer = await res.arrayBuffer();
       return Buffer.from(arrayBuffer);
     } catch (err) {
-      console.error('[TTS] Failed to reach QwenTTS:', err instanceof Error ? err.message : err);
+      console.warn('[TTS] OLLAMA_UNREACHABLE: Failed to reach QwenTTS —', err instanceof Error ? err.message : err);
       return null;
     }
   }

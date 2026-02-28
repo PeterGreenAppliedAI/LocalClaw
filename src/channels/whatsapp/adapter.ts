@@ -139,7 +139,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
         try {
           await this.handleMessage(msg);
         } catch (err) {
-          console.error('[WhatsApp] Message handling error:', err instanceof Error ? err.message : err);
+          console.warn('[WhatsApp] CHANNEL_CONNECT_ERROR: Message handling error —', err instanceof Error ? err.message : err);
         }
       }
     });
@@ -156,7 +156,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
       try {
         await this.createSocket();
       } catch (err) {
-        console.error('[WhatsApp] Reconnect failed:', err instanceof Error ? err.message : err);
+        console.warn('[WhatsApp] CHANNEL_CONNECT_ERROR: Reconnect failed —', err instanceof Error ? err.message : err);
         this.currentStatus = 'error';
         this.reconnecting = false;
       }
@@ -201,7 +201,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
           mimeType: audioMsg.mimetype ?? 'audio/ogg',
         };
       } catch (err) {
-        console.error('[WhatsApp] Failed to download audio:', err instanceof Error ? err.message : err);
+        console.warn('[WhatsApp] CHANNEL_CONNECT_ERROR: Failed to download audio —', err instanceof Error ? err.message : err);
       }
     }
 
@@ -218,7 +218,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
           data: buffer as Buffer,
         });
       } catch (err) {
-        console.error('[WhatsApp] Failed to download image:', err instanceof Error ? err.message : err);
+        console.warn('[WhatsApp] CHANNEL_CONNECT_ERROR: Failed to download image —', err instanceof Error ? err.message : err);
       }
     }
 
@@ -234,7 +234,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
           data: buffer as Buffer,
         });
       } catch (err) {
-        console.error('[WhatsApp] Failed to download document:', err instanceof Error ? err.message : err);
+        console.warn('[WhatsApp] CHANNEL_CONNECT_ERROR: Failed to download document —', err instanceof Error ? err.message : err);
       }
     }
 
@@ -286,7 +286,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
             ptt: true,
           });
         } catch (audioErr) {
-          console.error('[WhatsApp] Audio send failed:', audioErr instanceof Error ? audioErr.message : audioErr);
+          console.warn('[WhatsApp] CHANNEL_SEND_ERROR: Audio send failed —', audioErr instanceof Error ? audioErr.message : audioErr);
         }
       }
 

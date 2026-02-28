@@ -1,3 +1,5 @@
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { LocalClawTool } from './types.js';
 import type { OllamaClient } from '../ollama/client.js';
 import { searchMarkdownFiles } from '../memory/search.js';
@@ -49,11 +51,22 @@ export function createMemorySearchTool(
               .join('\n\n');
           }
         } catch (err) {
-          console.error('[Memory] Embedding search failed, falling back to keyword:', err instanceof Error ? err.message : err);
+          console.warn('[Memory] Embedding search failed, falling back to keyword:', err instanceof Error ? err.message : err);
         }
       }
 
-      // Fallback to keyword search (only searches workspace markdown files, so no source filter)
+      // Check FACTS.md first — consolidated, distilled facts are the best source
+      const factsPath = join(workspacePath, 'FACTS.md');
+      if (existsSync(factsPath)) {
+        const factsResults = searchMarkdownFiles(workspacePath, query, maxResults, [factsPath]);
+        if (factsResults.length > 0) {
+          return factsResults
+            .map((r, i) => `${i + 1}. [${r.file}] ${r.section} (score: ${r.score})\n   ${r.content}`)
+            .join('\n\n');
+        }
+      }
+
+      // Fallback to general keyword search across all workspace markdown files
       const results = searchMarkdownFiles(workspacePath, query, maxResults);
 
       if (results.length === 0) {

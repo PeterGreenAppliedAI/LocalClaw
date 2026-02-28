@@ -315,7 +315,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
           const errMsg = err instanceof Error ? err.message : String(err);
           observation = `Tool "${toolName}" failed: ${errMsg}. Try a different approach or tool.`;
           logToolCall({ tool: toolName, category: config.model, durationMs: Date.now() - toolStart, success: false, error: errMsg });
-          console.error(`[ReAct] Tool error: ${toolName} — ${errMsg}`);
+          console.warn(`[ReAct] TOOL_EXECUTION_ERROR: ${toolName} — ${errMsg}`);
         }
 
         // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5)
@@ -381,7 +381,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
         console.log(`[ReAct] Reasoning pass complete (${answer.length} chars)`);
       } catch (err) {
         // Reasoning failed — keep the model's original answer
-        console.error(`[ReAct] Reasoning pass failed: ${err instanceof Error ? err.message : err}`);
+        console.warn(`[ReAct] OLLAMA_INFERENCE_ERROR: Reasoning pass failed — ${err instanceof Error ? err.message : err}`);
       }
     }
 
@@ -412,7 +412,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       steps.push({ thought: '', finalAnswer: answer });
       return { answer, steps, iterations: config.maxIterations, hitMaxIterations: true };
     } catch (err) {
-      console.error(`[ReAct] Max-iter reasoning pass failed: ${err instanceof Error ? err.message : err}`);
+      console.warn(`[ReAct] OLLAMA_INFERENCE_ERROR: Max-iter reasoning pass failed — ${err instanceof Error ? err.message : err}`);
       // Fall through to normal synthesis
     }
   }

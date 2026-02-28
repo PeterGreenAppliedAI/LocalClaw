@@ -32,6 +32,7 @@ export function searchMarkdownFiles(
   workspacePath: string,
   query: string,
   maxResults = 5,
+  onlyFiles?: string[],
 ): MemorySearchResult[] {
   if (!existsSync(workspacePath)) return [];
 
@@ -42,7 +43,7 @@ export function searchMarkdownFiles(
 
   if (keywords.length === 0) return [];
 
-  const mdFiles = findMarkdownFiles(workspacePath);
+  const mdFiles = onlyFiles ?? findMarkdownFiles(workspacePath);
   const results: MemorySearchResult[] = [];
 
   for (const filePath of mdFiles) {
@@ -86,7 +87,7 @@ function findMarkdownFiles(dir: string): string[] {
     }
 
     for (const entry of entries) {
-      if (entry.startsWith('.') || entry === 'node_modules') continue;
+      if (entry.startsWith('.') || entry === 'node_modules' || entry === 'memory') continue;
       const full = join(current, entry);
       try {
         const stat = statSync(full);

@@ -39,14 +39,12 @@ export function createKnowledgeImportTool(
 
       if (!filePath) return 'Error: path parameter is required';
 
-      // Resolve and validate path
-      const fullPath = resolve(filePath);
+      // Resolve relative to workspace and validate containment
       const workspaceRoot = resolve(workspacePath);
+      const fullPath = resolve(workspacePath, filePath);
 
-      // Security: only allow files within the workspace or absolute paths the user provides
-      // but block obvious traversal attempts
-      if (fullPath.includes('..')) {
-        return 'Error: Path traversal not allowed';
+      if (!fullPath.startsWith(workspaceRoot + '/') && fullPath !== workspaceRoot) {
+        return 'Error: Path traversal not allowed — files must be inside workspace';
       }
 
       if (!existsSync(fullPath)) {

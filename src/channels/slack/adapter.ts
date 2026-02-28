@@ -132,7 +132,7 @@ export class SlackAdapter implements ChannelAdapter {
             thread_ts: target.threadId,
           });
         } catch (uploadErr) {
-          console.error('[Slack] Audio upload failed:', uploadErr instanceof Error ? uploadErr.message : uploadErr);
+          console.warn('[Slack] CHANNEL_SEND_ERROR: Audio upload failed —', uploadErr instanceof Error ? uploadErr.message : uploadErr);
         }
       }
 
@@ -173,7 +173,7 @@ export class SlackAdapter implements ChannelAdapter {
           });
         }
       } catch (err) {
-        console.error(`[Slack] Failed to download file ${file.name}:`, err instanceof Error ? err.message : err);
+        console.warn(`[Slack] CHANNEL_CONNECT_ERROR: Failed to download file ${file.name} —`, err instanceof Error ? err.message : err);
       }
     }
     return attachments;

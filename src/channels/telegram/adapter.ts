@@ -63,7 +63,7 @@ export class TelegramAdapter implements ChannelAdapter {
             });
           }
         } catch (err) {
-          console.error('[Telegram] Failed to download photo:', err instanceof Error ? err.message : err);
+          console.warn('[Telegram] CHANNEL_CONNECT_ERROR: Failed to download photo —', err instanceof Error ? err.message : err);
         }
       }
 
@@ -82,7 +82,7 @@ export class TelegramAdapter implements ChannelAdapter {
             });
           }
         } catch (err) {
-          console.error('[Telegram] Failed to download document:', err instanceof Error ? err.message : err);
+          console.warn('[Telegram] CHANNEL_CONNECT_ERROR: Failed to download document —', err instanceof Error ? err.message : err);
         }
       }
 

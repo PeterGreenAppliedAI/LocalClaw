@@ -101,7 +101,8 @@ export async function assertPublicUrl(urlStr: string): Promise<void> {
     }
   } catch (err) {
     if (err instanceof Error && err.message.startsWith('SSRF blocked')) throw err;
-    // DNS failure — allow through (will fail at fetch)
+    // DNS failure — block for safety (prevents DNS rebinding attacks)
+    throw ssrfBlocked(urlStr);
   }
 }
 

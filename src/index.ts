@@ -79,7 +79,7 @@ async function runOrchestrator(config: ReturnType<typeof loadConfig>) {
           console.warn(`[LocalClaw] Unknown channel: ${channelId}`);
       }
     } catch (err) {
-      console.error(`[LocalClaw] Failed to load ${channelId} adapter:`, err instanceof Error ? err.message : err);
+      console.warn(`[LocalClaw] CHANNEL_CONNECT_ERROR: Failed to load ${channelId} adapter —`, err instanceof Error ? err.message : err);
     }
   }
 

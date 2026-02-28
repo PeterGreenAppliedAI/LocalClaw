@@ -110,7 +110,7 @@ export class CronService {
       const next = cron.nextRun();
       console.log(`[Cron] Scheduled "${job.name}" (${job.schedule}) — next run: ${next?.toISOString() ?? 'unknown'}`);
     } catch (err) {
-      console.error(`[Cron] Invalid schedule "${job.schedule}" for job ${job.id}:`, err instanceof Error ? err.message : err);
+      console.warn(`[Cron] CONFIG_INVALID: Invalid schedule "${job.schedule}" for job ${job.id} —`, err instanceof Error ? err.message : err);
     }
   }
 
@@ -120,7 +120,7 @@ export class CronService {
       await this.onTrigger(job);
       this.store.updateLastRun(job.id);
     } catch (err) {
-      console.error(`[Cron] Job ${job.id} failed:`, err instanceof Error ? err.message : err);
+      console.warn(`[Cron] TOOL_EXECUTION_ERROR: Job ${job.id} failed —`, err instanceof Error ? err.message : err);
     }
   }
 }

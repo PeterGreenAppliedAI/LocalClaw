@@ -113,7 +113,7 @@ export function createMemorySaveTool(
               });
             }
           } catch (err) {
-            console.error('[Memory] Embedding generation failed:', err instanceof Error ? err.message : err);
+            console.warn('[Memory] TOOL_EXECUTION_ERROR: Embedding generation failed —', err instanceof Error ? err.message : err);
             // File is still saved, just not indexed
           }
         }

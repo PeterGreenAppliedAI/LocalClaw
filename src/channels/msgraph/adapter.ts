@@ -41,13 +41,13 @@ export class MsGraphAdapter implements ChannelAdapter {
     // Start polling for unread messages
     this.pollTimer = setInterval(() => {
       this.poll().catch((err) => {
-        console.error('[MsGraph] Poll error:', err instanceof Error ? err.message : err);
+        console.warn('[MsGraph] CHANNEL_CONNECT_ERROR: Poll error —', err instanceof Error ? err.message : err);
       });
     }, POLL_INTERVAL_MS);
 
     // Run first poll immediately
     this.poll().catch((err) => {
-      console.error('[MsGraph] Initial poll error:', err instanceof Error ? err.message : err);
+      console.warn('[MsGraph] CHANNEL_CONNECT_ERROR: Initial poll error —', err instanceof Error ? err.message : err);
     });
 
     this.currentStatus = 'connected';
@@ -143,7 +143,7 @@ export class MsGraphAdapter implements ChannelAdapter {
             }
           }
         } catch (err) {
-          console.error('[MsGraph] Failed to fetch attachments:', err instanceof Error ? err.message : err);
+          console.warn('[MsGraph] CHANNEL_CONNECT_ERROR: Failed to fetch attachments —', err instanceof Error ? err.message : err);
         }
       }
 

@@ -88,7 +88,7 @@ export class VisionService {
       });
 
       if (!res.ok) {
-        console.error(`[Vision] Ollama returned ${res.status}: ${res.statusText}`);
+        console.warn(`[Vision] OLLAMA_INFERENCE_ERROR: Ollama returned ${res.status}: ${res.statusText}`);
         return null;
       }
 
@@ -97,12 +97,12 @@ export class VisionService {
       try {
         data = JSON.parse(raw);
       } catch {
-        console.error(`[Vision] Invalid JSON response: ${raw.slice(0, 200)}`);
+        console.warn(`[Vision] OLLAMA_INFERENCE_ERROR: Invalid JSON response — ${raw.slice(0, 200)}`);
         return null;
       }
 
       if (data.error) {
-        console.error(`[Vision] Ollama error: ${data.error.message ?? JSON.stringify(data.error)}`);
+        console.warn(`[Vision] OLLAMA_INFERENCE_ERROR: ${data.error.message ?? JSON.stringify(data.error)}`);
         return null;
       }
 
@@ -119,7 +119,7 @@ export class VisionService {
 
       return description ?? null;
     } catch (err) {
-      console.error('[Vision] Failed:', err instanceof Error ? err.message : err);
+      console.warn('[Vision] OLLAMA_INFERENCE_ERROR:', err instanceof Error ? err.message : err);
       return null;
     }
   }

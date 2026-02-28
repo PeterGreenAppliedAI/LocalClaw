@@ -76,15 +76,20 @@ export class DiscordAdapter implements ChannelAdapter {
             });
           }
         } catch (err) {
-          console.error(`[Discord] Failed to download attachment ${att.name}:`, err instanceof Error ? err.message : err);
+          console.warn(`[Discord] CHANNEL_CONNECT_ERROR: Failed to download attachment ${att.name} —`, err instanceof Error ? err.message : err);
         }
       }
 
       // Show typing indicator while processing
-      const typingInterval = setInterval(() => {
-        if ('sendTyping' in msg.channel) msg.channel.sendTyping().catch(() => {});
-      }, 5000);
-      if ('sendTyping' in msg.channel) msg.channel.sendTyping().catch(() => {});
+      const sendTyping = () => {
+        if ('sendTyping' in msg.channel) {
+          (msg.channel as any).sendTyping().catch((err: unknown) => {
+            console.warn('[Discord] CHANNEL_SEND_ERROR: Typing indicator failed —', err instanceof Error ? err.message : err);
+          });
+        }
+      };
+      const typingInterval = setInterval(sendTyping, 5000);
+      sendTyping();
 
       const inbound: InboundMessage = {
         id: msg.id,

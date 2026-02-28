@@ -139,7 +139,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   // 2b. Channel security — category enforcement
   const channelSecurity = resolveChannelSecurity(config, params.sourceContext?.channel);
   const senderId = params.sourceContext?.senderId;
-  const isTrusted = !channelSecurity?.trustedUsers || channelSecurity.trustedUsers.includes(senderId ?? '');
+  const isTrusted = senderId !== undefined && (!channelSecurity?.trustedUsers || channelSecurity.trustedUsers.includes(senderId));
   let effectiveCategory = category;
 
   if (channelSecurity?.allowedCategories && !channelSecurity.allowedCategories.includes(category)) {
@@ -360,6 +360,25 @@ IMPORTANT: Respond with ONLY the JSON array, no other text.`;
   let totalIterations = 1; // count decompose step
 
   for (const task of subTasks) {
+    // Validate sub-task has required shape
+    if (typeof task.category !== 'string' || typeof task.message !== 'string') {
+      subResults.push('[unknown] Skipped: invalid sub-task format');
+      continue;
+    }
+
+    // Enforce channel security on LLM-chosen category
+    const subChannelSecurity = resolveChannelSecurity(config, params.sourceContext?.channel);
+    if (subChannelSecurity?.allowedCategories && !subChannelSecurity.allowedCategories.includes(task.category)) {
+      subResults.push(`[${task.category}] Skipped: category not allowed on this channel`);
+      continue;
+    }
+    const subSenderId = params.sourceContext?.senderId;
+    const subIsTrusted = subSenderId !== undefined && (!subChannelSecurity?.trustedUsers || subChannelSecurity.trustedUsers.includes(subSenderId));
+    if (!subIsTrusted && subChannelSecurity?.restrictedCategories?.includes(task.category)) {
+      subResults.push(`[${task.category}] Skipped: restricted category for untrusted user`);
+      continue;
+    }
+
     const taskSpecialist = config.specialists[task.category];
     if (!taskSpecialist) {
       subResults.push(`[${task.category}] Skipped: unknown specialist`);

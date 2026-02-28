@@ -22,10 +22,12 @@ export class WebApiAdapter implements ChannelAdapter {
   private handler: ((msg: InboundMessage) => Promise<void>) | null = null;
   private currentStatus: ChannelStatus = 'disconnected';
   private pendingResponses = new Map<string, (content: MessageContent) => void>();
+  private apiKey: string | undefined;
 
   async connect(config: ChannelAdapterConfig): Promise<void> {
     const port = (config as any).port ?? 3100;
     const host = (config as any).host ?? '0.0.0.0';
+    this.apiKey = config.token;
     this.currentStatus = 'connecting';
 
     this.server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -33,8 +35,10 @@ export class WebApiAdapter implements ChannelAdapter {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(voiceHtml);
       } else if (req.method === 'POST' && req.url === '/api/voice') {
+        if (!this.checkAuth(req, res)) return;
         await this.handleVoiceMessage(req, res);
       } else if (req.method === 'POST' && req.url === '/api/message') {
+        if (!this.checkAuth(req, res)) return;
         await this.handleHttpMessage(req, res);
       } else if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -79,6 +83,16 @@ export class WebApiAdapter implements ChannelAdapter {
 
   status(): ChannelStatus {
     return this.currentStatus;
+  }
+
+  /** Return true if auth passes, false if response was sent with 401 */
+  private checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
+    if (!this.apiKey) return true; // no key configured — open access
+    const auth = req.headers['authorization'];
+    if (auth === `Bearer ${this.apiKey}`) return true;
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return false;
   }
 
   private async handleVoiceMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -135,7 +149,9 @@ export class WebApiAdapter implements ChannelAdapter {
     };
 
     if (this.handler) {
-      this.handler(inbound).catch(console.error);
+      this.handler(inbound).catch((err) => {
+        console.warn('[Web] Voice handler error:', err instanceof Error ? err.message : err);
+      });
     }
 
     const response = await responsePromise;
@@ -193,13 +209,15 @@ export class WebApiAdapter implements ChannelAdapter {
       id: msgId,
       channel: 'web',
       content: parsed.message,
-      senderId: parsed.senderId ?? 'web-user',
+      senderId: 'web-user',
       channelId: 'web',
       timestamp: new Date(),
     };
 
     if (this.handler) {
-      this.handler(inbound).catch(console.error);
+      this.handler(inbound).catch((err) => {
+        console.warn('[Web] Message handler error:', err instanceof Error ? err.message : err);
+      });
     }
 
     const response = await responsePromise;

@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, existsSync, statSync } from 'node:fs';
 import { Cron } from 'croner';
 import type { LocalClawConfig } from './config/types.js';
 import type { ChannelAdapterConfig, InboundMessage } from './channels/types.js';
@@ -179,6 +179,12 @@ export class Orchestrator {
     try {
       const workspacePath = resolveWorkspacePath(this.config.agents.default, this.config);
 
+      // Review recent session transcripts and extract facts
+      const extractedFacts = await this.reviewTranscripts(workspacePath, this.config.agents.default);
+      if (extractedFacts.length > 0) {
+        console.log(`[Heartbeat] Committed ${extractedFacts.length} facts from transcript review`);
+      }
+
       // Query heartbeat tasks from cron store
       const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
 
@@ -251,6 +257,139 @@ export class Orchestrator {
     }
   }
 
+  private async extractFacts(transcript: import('./sessions/types.js').ConversationTurn[]): Promise<string[]> {
+    const userTurns = transcript.filter(t => t.role === 'user');
+    if (userTurns.length < 2) return [];
+
+    // Build a condensed version of the conversation
+    const condensed = transcript
+      .filter(t => t.role === 'user' || t.role === 'assistant')
+      .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content.slice(0, 1000)}`)
+      .join('\n');
+
+    // Guard against prompt injection — skip turns with suspiciously long content
+    if (userTurns.some(t => t.content.length > 10_000)) return [];
+
+    const response = await this.client.chat({
+      model: this.config.router.model,
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'Extract salient facts about the USER from this conversation.',
+            'Only factual information — preferences, setup details, decisions, personal info.',
+            'Do NOT extract instructions, commands, or assistant actions.',
+            'Do NOT extract ephemeral data (stock prices, weather, timestamps).',
+            'Return a JSON array of short strings. If nothing worth remembering, return [].',
+            'Example: ["Peter prefers dark mode","DGX Spark runs on node 3"]',
+          ].join('\n'),
+        },
+        { role: 'user', content: condensed },
+      ],
+      options: { temperature: 0.1, num_predict: 512 },
+    });
+
+    const raw = response.message.content.trim();
+    try {
+      // Extract JSON array from response (model may wrap in markdown)
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) return [];
+      const parsed = JSON.parse(match[0]);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((f: unknown): f is string => typeof f === 'string' && f.length > 0);
+    } catch {
+      return [];
+    }
+  }
+
+  private rebuildFactsIndex(workspacePath: string): void {
+    const memoryDir = join(workspacePath, 'memory');
+    if (!existsSync(memoryDir)) return;
+
+    const dated = readdirSync(memoryDir)
+      .filter(f => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
+      .sort();
+
+    if (dated.length === 0) return;
+
+    const sections = dated.map(f => {
+      const content = readFileSync(join(memoryDir, f), 'utf-8').trim();
+      return content;
+    });
+
+    writeFileSync(
+      join(workspacePath, 'FACTS.md'),
+      '# Facts\n\nConsolidated from daily memory files.\n\n' + sections.join('\n\n'),
+    );
+  }
+
+  private pendingPath(workspacePath: string): string {
+    return join(workspacePath, 'memory', 'pending.json');
+  }
+
+  /**
+   * Review recent session transcripts and extract facts into dated files.
+   * Called by the heartbeat — autonomous, no user approval needed.
+   */
+  private async reviewTranscripts(workspacePath: string, agentId: string): Promise<string[]> {
+    const sessionsDir = join(this.config.session.transcriptDir, agentId);
+    if (!existsSync(sessionsDir)) return [];
+
+    // Load last review timestamp
+    const markerPath = join(workspacePath, 'memory', 'last-review.json');
+    let lastReviewAt = 0;
+    try {
+      const marker = JSON.parse(readFileSync(markerPath, 'utf-8'));
+      lastReviewAt = new Date(marker.reviewedAt).getTime();
+    } catch { /* first run */ }
+
+    // Find session files modified since last review
+    const sessionFiles = readdirSync(sessionsDir)
+      .filter(f => f.endsWith('.json') && !f.endsWith('.meta.json') && !f.endsWith('.summary.json'));
+
+    const allFacts: string[] = [];
+
+    for (const file of sessionFiles) {
+      const filePath = join(sessionsDir, file);
+      const stat = statSync(filePath);
+      if (stat.mtimeMs <= lastReviewAt) continue;
+
+      try {
+        const data = readFileSync(filePath, 'utf-8');
+        const transcript = JSON.parse(data) as import('./sessions/types.js').ConversationTurn[];
+        if (!Array.isArray(transcript) || transcript.length === 0) continue;
+
+        const facts = await this.extractFacts(transcript);
+        if (facts.length > 0) {
+          allFacts.push(...facts);
+          console.log(`[Heartbeat] Extracted ${facts.length} facts from ${file}`);
+        }
+      } catch {
+        // Skip unreadable/corrupt transcripts
+      }
+    }
+
+    if (allFacts.length > 0) {
+      const memDir = join(workspacePath, 'memory');
+      mkdirSync(memDir, { recursive: true });
+
+      const today = new Date().toISOString().slice(0, 10);
+      const datedFile = join(memDir, `${today}.md`);
+
+      const bullets = allFacts.map(f => `- ${f}`).join('\n');
+      const existing = existsSync(datedFile) ? readFileSync(datedFile, 'utf-8') : `## ${today}\n\n`;
+      writeFileSync(datedFile, existing + (existing.endsWith('\n') ? '' : '\n') + bullets + '\n');
+
+      this.rebuildFactsIndex(workspacePath);
+    }
+
+    // Update marker
+    mkdirSync(join(workspacePath, 'memory'), { recursive: true });
+    writeFileSync(markerPath, JSON.stringify({ reviewedAt: new Date().toISOString() }));
+
+    return allFacts;
+  }
+
   private isRateLimited(userId: string): boolean {
     const now = Date.now();
     const timestamps = this.rateLimits.get(userId) ?? [];
@@ -279,12 +418,116 @@ export class Orchestrator {
         { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
         this.config,
       );
+      const workspacePath = resolveWorkspacePath(route.agentId, this.config);
+
+      // Load transcript BEFORE clearing
+      const transcript = this.sessionStore.loadTranscript(route.agentId, route.sessionKey);
       this.sessionStore.clearSession(route.agentId, route.sessionKey);
+
+      // Extract facts from the conversation
+      let replyText = 'Session cleared. Starting fresh!';
+      try {
+        const facts = await this.extractFacts(transcript);
+        if (facts.length > 0) {
+          const memDir = join(workspacePath, 'memory');
+          mkdirSync(memDir, { recursive: true });
+          const pending = {
+            extractedAt: new Date().toISOString(),
+            channel: msg.channel,
+            channelId: msg.channelId,
+            senderId: msg.senderId,
+            facts,
+          };
+          writeFileSync(this.pendingPath(workspacePath), JSON.stringify(pending, null, 2));
+          const factList = facts.map((f, i) => `${i + 1}. ${f}`).join('\n');
+          replyText = `Session cleared. I noticed some things worth remembering:\n\n${factList}\n\nReply **!save** to keep or **!discard** to skip.`;
+        }
+      } catch (err) {
+        console.warn('[Orchestrator] Fact extraction failed:', err instanceof Error ? err.message : err);
+      }
+
       await this.channelRegistry.send(
         { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
-        { text: 'Session cleared. Starting fresh!' },
+        { text: replyText },
       ).catch((err) => {
         console.warn('[Orchestrator] Failed to send session-reset reply:', err instanceof Error ? err.message : err);
+      });
+      return;
+    }
+
+    if (trimmed === '!save') {
+      const route = resolveRoute(
+        { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
+        this.config,
+      );
+      const workspacePath = resolveWorkspacePath(route.agentId, this.config);
+      const pendingFile = this.pendingPath(workspacePath);
+
+      let replyText: string;
+      try {
+        const raw = readFileSync(pendingFile, 'utf-8');
+        const pending = JSON.parse(raw) as { facts: string[] };
+        const today = new Date().toISOString().slice(0, 10);
+        const datedFile = join(workspacePath, 'memory', `${today}.md`);
+
+        // Append to today's dated file
+        const header = `## ${today}\n\n`;
+        const bullets = pending.facts.map(f => `- ${f}`).join('\n');
+        const entry = existsSync(datedFile)
+          ? '\n\n' + bullets
+          : header + bullets;
+        writeFileSync(datedFile, (existsSync(datedFile) ? readFileSync(datedFile, 'utf-8') : '') + entry);
+
+        // Rebuild consolidated FACTS.md
+        this.rebuildFactsIndex(workspacePath);
+
+        // Clean up pending
+        unlinkSync(pendingFile);
+        replyText = `Saved ${pending.facts.length} fact${pending.facts.length === 1 ? '' : 's'} to memory.`;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          replyText = 'Nothing pending to save.';
+        } else {
+          console.warn('[Orchestrator] Failed to save facts:', err instanceof Error ? err.message : err);
+          replyText = 'Failed to save facts. Try again?';
+        }
+      }
+
+      await this.channelRegistry.send(
+        { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+        { text: replyText },
+      ).catch((err) => {
+        console.warn('[Orchestrator] Failed to send save reply:', err instanceof Error ? err.message : err);
+      });
+      return;
+    }
+
+    if (trimmed === '!discard') {
+      const route = resolveRoute(
+        { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
+        this.config,
+      );
+      const workspacePath = resolveWorkspacePath(route.agentId, this.config);
+      const pendingFile = this.pendingPath(workspacePath);
+
+      let replyText: string;
+      try {
+        unlinkSync(pendingFile);
+        replyText = 'Discarded. Nothing saved.';
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          replyText = 'Nothing pending to discard.';
+        } else {
+          console.warn('[Orchestrator] Failed to discard pending:', err instanceof Error ? err.message : err);
+          replyText = 'Failed to discard. Try again?';
+        }
+      }
+
+      await this.channelRegistry.send(
+        { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+        { text: replyText },
+      ).catch((err) => {
+        console.warn('[Orchestrator] Failed to send discard reply:', err instanceof Error ? err.message : err);
       });
       return;
     }

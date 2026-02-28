@@ -35,13 +35,13 @@ export class GmailAdapter implements ChannelAdapter {
     // Start polling for unread messages
     this.pollTimer = setInterval(() => {
       this.poll().catch((err) => {
-        console.error('[Gmail] Poll error:', err instanceof Error ? err.message : err);
+        console.warn('[Gmail] CHANNEL_CONNECT_ERROR: Poll error —', err instanceof Error ? err.message : err);
       });
     }, POLL_INTERVAL_MS);
 
     // Run first poll immediately
     this.poll().catch((err) => {
-      console.error('[Gmail] Initial poll error:', err instanceof Error ? err.message : err);
+      console.warn('[Gmail] CHANNEL_CONNECT_ERROR: Initial poll error —', err instanceof Error ? err.message : err);
     });
 
     this.currentStatus = 'connected';
@@ -139,7 +139,7 @@ export class GmailAdapter implements ChannelAdapter {
             });
           }
         } catch (err) {
-          console.error(`[Gmail] Failed to download attachment ${part.filename}:`, err instanceof Error ? err.message : err);
+          console.warn(`[Gmail] CHANNEL_CONNECT_ERROR: Failed to download attachment ${part.filename} —`, err instanceof Error ? err.message : err);
         }
       }
 

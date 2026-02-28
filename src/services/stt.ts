@@ -32,17 +32,18 @@ export class STTService {
       const res = await fetch(`${this.config.url}/v1/audio/transcriptions`, {
         method: 'POST',
         body: formData,
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!res.ok) {
-        console.error(`[STT] Whisper returned ${res.status}: ${res.statusText}`);
+        console.warn(`[STT] OLLAMA_INFERENCE_ERROR: Whisper returned ${res.status}: ${res.statusText}`);
         return null;
       }
 
       const data = await res.json() as { text?: string };
       return data.text?.trim() ?? null;
     } catch (err) {
-      console.error('[STT] Failed to reach Whisper:', err instanceof Error ? err.message : err);
+      console.warn('[STT] OLLAMA_UNREACHABLE: Failed to reach Whisper —', err instanceof Error ? err.message : err);
       return null;
     }
   }

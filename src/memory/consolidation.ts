@@ -61,7 +61,7 @@ MERGED: <only if ACTION is MERGE, write the combined text>`;
     const text = response.message?.content ?? '';
     return parseConsolidationResponse(text);
   } catch (err) {
-    console.error('[Consolidation] LLM call failed, falling back to KEEP_SEPARATE:', err instanceof Error ? err.message : err);
+    console.warn('[Consolidation] OLLAMA_INFERENCE_ERROR: LLM call failed, falling back to KEEP_SEPARATE —', err instanceof Error ? err.message : err);
     return { action: 'KEEP_SEPARATE' };
   }
 }
