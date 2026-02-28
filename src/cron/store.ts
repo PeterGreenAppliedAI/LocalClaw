@@ -24,6 +24,15 @@ export class CronStore {
   }
 
   add(input: CronJobCreate): CronJob {
+    // Dedup: if an enabled job with the same name and schedule exists, return it
+    const existing = this.jobs.find(
+      j => j.enabled && j.name === input.name && j.schedule === input.schedule,
+    );
+    if (existing) {
+      console.log(`[Cron] Dedup: "${input.name}" (${input.schedule}) already exists as ${existing.id}, returning existing`);
+      return existing;
+    }
+
     const job: CronJob = {
       ...input,
       type: input.type ?? 'cron',

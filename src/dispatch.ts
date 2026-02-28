@@ -260,6 +260,10 @@ async function runSpecialist(
       `\n\nCurrent message context: The user is messaging from channel="${ctx.channel}", channelId="${ctx.channelId}"${ctx.guildId ? `, guildId="${ctx.guildId}"` : ''}. Use these values for delivery targets (e.g., cron job channel and target fields).`;
   }
 
+  // Tell tool-using specialists where user scripts and workspace files live
+  systemPrompt = (systemPrompt ?? '') +
+    `\n\nWorkspace directory: "${workspacePath}" — user scripts, notes, and workspace files are stored here. Check this directory first when looking for user-created files.`;
+
   const result = await runToolLoop({
     client,
     config: {

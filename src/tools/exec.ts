@@ -1,5 +1,8 @@
 import { execFile } from 'node:child_process';
-import type { LocalClawTool } from './types.js';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import type { LocalClawTool, ToolContext } from './types.js';
 import type { ExecConfig } from '../config/types.js';
 import type { DockerBackend } from '../exec/docker-backend.js';
 
@@ -12,8 +15,8 @@ export function createExecTool(config?: ExecConfig, dockerBackend?: DockerBacken
     name: 'exec',
     description: useDocker
       ? 'Run a shell command inside a sandboxed Docker container.'
-      : `Run a shell command. Allowed commands: ${[...allowlist].join(', ')}`,
-    parameterDescription: 'command (required): The command to run. args (optional): Arguments for the command.',
+      : `Run a shell command or inline code snippet. Allowed commands: ${[...allowlist].join(', ')}`,
+    parameterDescription: 'command (required): The command to run. args (optional): Arguments for the command. code (optional): Inline code to execute — will be written to a temp file and run with the command as interpreter (e.g., command="python3", code="print(1+1)").',
     parameters: {
       type: 'object',
       properties: {
@@ -21,15 +24,16 @@ export function createExecTool(config?: ExecConfig, dockerBackend?: DockerBacken
           type: 'string',
           description: useDocker
             ? 'The command to run inside the sandbox'
-            : `The command to run. Must be one of: ${[...allowlist].join(', ')}`,
+            : `The command to run (or interpreter for inline code). Must be one of: ${[...allowlist].join(', ')}`,
         },
         args: { type: 'string', description: 'Space-separated arguments for the command' },
+        code: { type: 'string', description: 'Inline code to execute. The command parameter becomes the interpreter (e.g., python3, node).' },
       },
       required: ['command'],
     },
     category: 'exec',
 
-    async execute(params: Record<string, unknown>): Promise<string> {
+    async execute(params: Record<string, unknown>, ctx: ToolContext): Promise<string> {
       const command = params.command as string;
       if (!command) return 'Error: command parameter is required';
 
@@ -61,8 +65,24 @@ export function createExecTool(config?: ExecConfig, dockerBackend?: DockerBacken
         return `Error: Command "${baseCmd}" is not in the allowlist. Allowed: ${[...allowlist].join(', ')}`;
       }
 
+      // Run from workspace directory so exec and write_file share the same cwd
+      const cwd = ctx.workspacePath ?? process.cwd();
+
+      // Inline code support: write to temp file, execute, clean up
+      const code = params.code as string | undefined;
+      let tmpFile: string | undefined;
+      if (code) {
+        const ext = command === 'node' ? '.js' : '.py';
+        tmpFile = join(cwd, `_tmp_${randomUUID().slice(0, 8)}${ext}`);
+        writeFileSync(tmpFile, code);
+        args = [tmpFile];
+      }
+
       return new Promise((resolve) => {
-        execFile(command, args, { timeout, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        execFile(command, args, { timeout, maxBuffer: 1024 * 1024, cwd }, (err, stdout, stderr) => {
+          // Clean up temp file
+          if (tmpFile) try { unlinkSync(tmpFile); } catch { /* ignore */ }
+
           if (err) {
             const output = stderr || err.message;
             resolve(`Error (exit ${(err as any).code ?? '?'}): ${output.slice(0, 2000)}`);

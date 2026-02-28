@@ -93,13 +93,14 @@ export class Orchestrator {
         store: cronStore,
         timezone: this.config.timezone,
         onTrigger: async (job) => {
+          // No sessionStore — cron runs are stateless so each trigger
+          // starts fresh without accumulating history from previous runs
           const result = await dispatchMessage({
             client: this.client,
             registry: this.toolRegistry,
             config: this.config,
             message: job.message,
             overrideCategory: job.category,
-            sessionStore: this.sessionStore,
           });
 
           if (job.delivery.target) {

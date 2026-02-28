@@ -4,6 +4,8 @@ import type { OllamaMessage, OllamaTool, OllamaToolCall } from '../ollama/types.
 import type { ToolDefinition, ToolExecutor, ToolContext } from '../tools/types.js';
 import type { ReActConfig, ReActResult, ReActStep } from './types.js';
 import { estimateMessagesTokens } from '../context/tokens.js';
+import { buildReActSystemPrompt } from './prompt-builder.js';
+import { parseReActResponse } from './parser.js';
 
 export interface RunReActLoopParams {
   client: OllamaClient;
@@ -129,11 +131,14 @@ function parseToolCallsFromText(
  * without actually calling any tools (per ChatGPT analysis §3-4).
  */
 const ACTION_CLAIM_PATTERNS = [
-  /\b(?:i'?ve|i have|i just|i'?ve just)\s+(?:updated|created|added|removed|deleted|modified|changed|fixed|completed|set|saved|written|executed|ran|scheduled|marked)\b/i,
+  /\b(?:i'?ve|i have|i just|i'?ve just)\s+(?:updated|created|added|removed|deleted|modified|changed|fixed|completed|set|saved|written|executed|ran|scheduled|marked|searched|checked|looked|fetched|retrieved)\b/i,
   /\b(?:successfully|already)\s+(?:updated|created|added|removed|deleted|modified|changed|fixed|completed|saved|scheduled)\b/i,
   /\btask\s+(?:has been|was|is now)\s+(?:updated|created|added|removed|deleted|modified|changed|completed|marked)\b/i,
-  /\bhere(?:'s| is)\s+the\s+updated\b/i,
+  /\bhere(?:'s| is)\s+the\s+(?:updated|current|latest|result)\b/i,
   /\bthat(?:'s| is)\s+(?:been|now)\s+(?:updated|done|added|saved|fixed|changed)\b/i,
+  /\bbased on (?:the |my )?(?:current|latest|recent)\s+(?:stock|data|information|search|results)\b/i,
+  /\b(?:the|current)\s+(?:stock |share )?price (?:is|of)\b/i,
+  /\baccording to (?:the |my )?(?:latest|current|recent)\b/i,
 ];
 
 function claimsActionWithoutToolCall(text: string): boolean {
@@ -156,16 +161,8 @@ const MAX_TOOL_RESULT_CHARS = 2000;
 export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResult> {
   const { client, config, tools, executor, toolContext, userMessage, history, workspaceContext } = params;
 
-  // Build system prompt
-  const today = new Date().toISOString().split('T')[0];
-  let systemPrompt = `You are a helpful AI assistant. Today's date is ${today}.\n`;
-  if (config.systemPrompt) {
-    systemPrompt += `\n${config.systemPrompt}\n`;
-  }
-  if (workspaceContext) {
-    systemPrompt += `\n${workspaceContext}\n`;
-  }
-  systemPrompt += '\nUse the provided tools to help answer the user\'s question. When you have enough information, respond directly to the user.';
+  // Build system prompt with full ReAct format instructions, tool list, and examples
+  const systemPrompt = buildReActSystemPrompt(config.systemPrompt, tools, workspaceContext);
 
   // Convert tools to Ollama format
   const ollamaTools = toOllamaTools(tools);
@@ -239,15 +236,32 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
     let toolCalls = msg.tool_calls;
 
     // Fallback: if model narrated tool calls in text, parse them out
+    let parsedFromText = false;
     if ((!toolCalls || toolCalls.length === 0) && msg.content && availableToolNames.size > 0) {
+      // Try the inline XML/Action parser first
       const parsed = parseToolCallsFromText(msg.content, availableToolNames);
       if (parsed.length > 0) {
-        toolCalls = parsed;
+        // Only take the FIRST tool call — local models often "unroll" entire chains
+        // with fabricated observations. Executing only the first and discarding the
+        // rest forces the model to see the real observation before continuing.
+        toolCalls = [parsed[0]];
+        parsedFromText = true;
         const format = msg.content.includes('<function=') ? 'xml' as const : 'action' as const;
-        for (const p of parsed) {
-          logRepair({ category: config.model, format, toolName: p.function.name });
+        logRepair({ category: config.model, format, toolName: parsed[0].function.name });
+        if (parsed.length > 1) {
+          console.log(`[ReAct] Step ${i + 1}: parsed_from_text=${parsed[0].function.name} (discarded ${parsed.length - 1} narrated follow-ups)`);
+        } else {
+          console.log(`[ReAct] Step ${i + 1}: parsed_from_text=${parsed[0].function.name}`);
         }
-        console.log(`[ReAct] Step ${i + 1}: parsed_from_text=${parsed.map(c => c.function.name).join(', ')}`);
+      } else {
+        // Try the ReAct-aware parser with JSON5 repair for local model quirks
+        const reActParsed = parseReActResponse(msg.content);
+        if (reActParsed.type === 'action' && availableToolNames.has(reActParsed.tool)) {
+          toolCalls = [{ function: { name: reActParsed.tool, arguments: reActParsed.params } }];
+          parsedFromText = true;
+          logRepair({ category: config.model, format: 'action' as const, toolName: reActParsed.tool });
+          console.log(`[ReAct] Step ${i + 1}: react_parsed=${reActParsed.tool}`);
+        }
       }
     }
 
@@ -260,8 +274,26 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
     // If model returns tool calls, execute them
     if (toolCalls && toolCalls.length > 0) {
-      // Add the assistant message with tool calls to history
-      messages.push(msg);
+      // When tool calls were parsed from text, truncate the assistant message to
+      // just the Thought + first Action line. Local models often "unroll" entire
+      // tool chains with fabricated observations in a single response — leaving
+      // that text in history causes the model to believe its own hallucinations.
+      let historyMsg = msg;
+      if (parsedFromText && msg.content) {
+        const firstActionEnd = msg.content.search(/Action:\s*\w+\s*[\[({].*?[\])}]/);
+        if (firstActionEnd !== -1) {
+          const actionLineEnd = msg.content.indexOf('\n', firstActionEnd);
+          historyMsg = {
+            ...msg,
+            content: actionLineEnd !== -1
+              ? msg.content.slice(0, actionLineEnd).trim()
+              : msg.content.trim(),
+          };
+        }
+      }
+
+      // Add the (possibly truncated) assistant message to history
+      messages.push(historyMsg);
 
       for (const call of toolCalls) {
         const toolName = call.function.name;
@@ -274,9 +306,11 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
         let observation: string;
         const toolStart = Date.now();
+        console.log(`[ReAct] → ${toolName}(${JSON.stringify(toolParams).slice(0, 200)})`);
         try {
           observation = await executor(toolName, toolParams, toolContext);
           logToolCall({ tool: toolName, category: config.model, durationMs: Date.now() - toolStart, success: true });
+          console.log(`[ReAct] ← ${toolName}: ${observation.slice(0, 200)}${observation.length > 200 ? '...' : ''}`);
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           observation = `Tool "${toolName}" failed: ${errMsg}. Try a different approach or tool.`;
@@ -371,7 +405,8 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       console.log(`[ReAct] Max-iter reasoning pass (${maxIterToolCalls.length} tool calls)`);
       const answer = await executor('reason', {
         prompt: userMessage,
-        context: observations,
+        context: observations +
+          '\n\nIMPORTANT: Base your answer ONLY on the tool observations above. If the observations contain errors or do not include the requested information, say so honestly. NEVER fabricate data, file names, or command output.',
       }, toolContext);
 
       steps.push({ thought: '', finalAnswer: answer });
@@ -385,7 +420,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
   try {
     messages.push({
       role: 'user',
-      content: 'You have reached the maximum number of tool calls. Based on all the information you have gathered so far, please provide your best answer to the original question now. Do not call any more tools.',
+      content: 'You have reached the maximum number of tool calls. Based ONLY on the actual tool results above, provide your best answer to the original question. If you were unable to find the requested information, say so honestly. NEVER fabricate data, file names, command output, or results that did not appear in the tool observations. Do not call any more tools.',
     });
 
     const finalResponse = await client.chat({

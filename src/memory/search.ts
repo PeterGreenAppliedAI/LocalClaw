@@ -1,6 +1,22 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
+/**
+ * System files that should never appear in memory search results.
+ * These are workspace configuration files, not user memories.
+ * MEMORY.md is intentionally excluded from this set — it IS user memory.
+ */
+const SYSTEM_FILES = new Set([
+  'SOUL.md',
+  'AGENTS.md',
+  'IDENTITY.md',
+  'TOOLS.md',
+  'HEARTBEAT.md',
+  'BOOTSTRAP.md',
+  'USER.md',
+  'TASKS.md',
+]);
+
 export interface MemorySearchResult {
   file: string;
   section: string;
@@ -76,7 +92,7 @@ function findMarkdownFiles(dir: string): string[] {
         const stat = statSync(full);
         if (stat.isDirectory()) {
           walk(full);
-        } else if (entry.endsWith('.md')) {
+        } else if (entry.endsWith('.md') && !SYSTEM_FILES.has(entry)) {
           files.push(full);
         }
       } catch {
