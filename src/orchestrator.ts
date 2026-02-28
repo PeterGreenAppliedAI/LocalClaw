@@ -20,6 +20,7 @@ import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
 import { VisionService } from './services/vision.js';
 import { saveAttachment, isImageMime } from './services/attachments.js';
+import { ollamaUnreachable, toolExecutionError, LocalClawError } from './errors.js';
 
 function splitFinalMessage(text: string, limit: number): string[] {
   if (text.length <= limit) return [text];
@@ -76,8 +77,7 @@ export class Orchestrator {
     // Check Ollama
     const available = await this.client.isAvailable();
     if (!available) {
-      console.error(`[Orchestrator] Cannot reach Ollama at ${this.config.ollama.url}`);
-      throw new Error('Ollama unreachable');
+      throw ollamaUnreachable(this.config.ollama.url);
     }
 
     // Bootstrap workspaces
@@ -246,7 +246,8 @@ export class Orchestrator {
         );
       }
     } catch (err) {
-      console.error('[Heartbeat] Error:', err instanceof Error ? err.message : err);
+      const wrapped = err instanceof LocalClawError ? err : new LocalClawError('TOOL_EXECUTION_ERROR', 'Heartbeat failed', err);
+      console.error(`[Heartbeat] ${wrapped.code}: ${wrapped.message}`);
     }
   }
 
@@ -265,7 +266,9 @@ export class Orchestrator {
       await this.channelRegistry.send(
         { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
         { text: 'You\'re sending messages too quickly. Please wait a moment.' },
-      ).catch(() => {});
+      ).catch((err) => {
+        console.warn('[Orchestrator] Failed to send rate-limit notice:', err instanceof Error ? err.message : err);
+      });
       return;
     }
 
@@ -280,7 +283,9 @@ export class Orchestrator {
       await this.channelRegistry.send(
         { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
         { text: 'Session cleared. Starting fresh!' },
-      ).catch(() => {});
+      ).catch((err) => {
+        console.warn('[Orchestrator] Failed to send session-reset reply:', err instanceof Error ? err.message : err);
+      });
       return;
     }
 
@@ -334,7 +339,8 @@ export class Orchestrator {
               suffixes.push(`[Attached PDF: ${saved.filename} but no text could be extracted (scanned/image PDF).]`);
             }
           } catch (err) {
-            console.error(`[Orchestrator] PDF extraction failed for ${saved.filename}:`, err instanceof Error ? err.message : err);
+            const wrapped = err instanceof LocalClawError ? err : toolExecutionError('pdf-parse', err);
+            console.warn(`[Orchestrator] PDF extraction failed for ${saved.filename}: ${wrapped.message}`);
             suffixes.push(`[Attached file: ${saved.localPath}] (${saved.filename}, ${saved.mimeType})`);
           }
         } else {
@@ -392,8 +398,8 @@ export class Orchestrator {
           } else {
             await streamMsg.edit(streamBuffer + ' ...');
           }
-        } catch {
-          // Ignore edit failures
+        } catch (err) {
+          console.warn('[Orchestrator] Stream edit failed:', err instanceof Error ? err.message : err);
         }
       };
 
@@ -463,7 +469,8 @@ export class Orchestrator {
         );
       }
     } catch (err) {
-      console.error('[Orchestrator] Error:', err instanceof Error ? err.message : err);
+      const wrapped = err instanceof LocalClawError ? err : new LocalClawError('TOOL_EXECUTION_ERROR', 'Message handling failed', err);
+      console.error(`[Orchestrator] ${wrapped.code}: ${wrapped.message}`);
       try {
         await this.channelRegistry.send(
           {
@@ -474,8 +481,8 @@ export class Orchestrator {
           },
           { text: 'Sorry, I encountered an error processing your request.' },
         );
-      } catch {
-        // Swallow send failure
+      } catch (sendErr) {
+        console.warn('[Orchestrator] Failed to send error response:', sendErr instanceof Error ? sendErr.message : sendErr);
       }
     }
   }

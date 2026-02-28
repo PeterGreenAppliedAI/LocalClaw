@@ -69,7 +69,17 @@ cd LocalClaw
 npm install
 ```
 
-### Configure
+### Setup Wizard (Recommended)
+
+The interactive setup wizard walks you through Ollama connectivity, model selection, channel configuration, workspace bootstrap, and config generation:
+
+```bash
+npm run setup
+```
+
+This creates `localclaw.config.json5` and `.env` with your settings. You can re-run it anytime to reconfigure.
+
+### Manual Configuration
 
 ```bash
 cp .env.example .env
@@ -119,6 +129,7 @@ localclaw/
 │   ├── memory/               # Vector + keyword search (SQLite)
 │   └── browser/              # Playwright wrapper
 ├── test/                     # 94 tests across 9 suites
+├── CLAUDE.md                 # AI code generation guidelines (for Claude Code)
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens
 ```
@@ -361,6 +372,19 @@ reasoning: {
 ```
 
 Add `"reason"` to any specialist's `tools` array to enable the reasoning pass for that category. Specialists without `reason` in their tools are unaffected — zero overhead.
+
+## AI-Assisted Development
+
+LocalClaw includes a `CLAUDE.md` file that provides project-level guidelines for AI code generation tools (Claude Code, etc.). When you open this repo in Claude Code, it automatically reads `CLAUDE.md` and follows the project's architecture, code standards, error handling patterns, and security rules.
+
+This means AI-generated code will:
+- Use the error factory in `src/errors.ts` instead of ad-hoc try/catch
+- Follow the `LocalClawTool` interface and tool registration pattern
+- Respect the dispatch security pipeline
+- Derive TypeScript types from Zod schemas (never duplicate)
+- Place new code in the correct directories
+
+See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklist.
 
 ## Extending LocalClaw
 

@@ -4,6 +4,14 @@ LocalClaw is a local-model-first AI agent framework running on personal infrastr
 
 This roadmap organizes the next phase of development into prioritized milestones.
 
+> **Note:** The PRD refers to `src/react/` but the implementation directory is `src/tool-loop/`. The architecture is the same (ReAct-style loop), the naming evolved during implementation to avoid confusion with the React UI framework.
+
+---
+
+## Completed
+
+- **Setup Wizard** — Interactive `npm run setup` flow that walks through Ollama connectivity, model selection, channel configuration, workspace bootstrap, and config generation. Implemented in `src/setup/`.
+
 ---
 
 ## Milestone 1: Auth & Security Hardening
