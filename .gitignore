@@ -2,6 +2,8 @@ node_modules/
 dist/
 data/
 .env
+.claude/
+bot.log
 localclaw.config.json5
 .baileys_auth/
 .wwebjs_auth/
