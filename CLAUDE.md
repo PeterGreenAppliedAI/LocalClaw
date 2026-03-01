@@ -25,22 +25,23 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph)
 
 Memory uses **dated flat files + a consolidated index** — no embedding dependency for core memory.
 
-**Storage layout:**
+**Storage layout (per-user):**
 ```
 workspace/
   memory/
-    pending.json          # Temp: fact candidates awaiting user approval (from !reset)
-    last-review.json      # Marker: timestamp of last heartbeat transcript review
-    2026-02-28.md         # Dated audit trail (append-only)
-    2026-02-27.md
-  FACTS.md                # Consolidated searchable index (rebuilt from dated files)
+    last-review.json                # Marker: timestamp of last heartbeat transcript review
+    <senderId>/
+      pending.json                  # Temp: fact candidates awaiting user approval (from !reset)
+      2026-02-28.md                 # Dated audit trail (append-only)
+      2026-02-27.md
+      FACTS.md                      # Consolidated searchable index (rebuilt from dated files)
 ```
 
 **Two fact-extraction paths:**
 1. **`!reset` (user-approved)** — On session clear, transcript is loaded before clearing, facts extracted via router model (`phi4:14b`), candidates shown to user. User replies `!save` to commit or `!discard` to skip. Implemented in `src/orchestrator.ts`.
 2. **Heartbeat (autonomous)** — Every 2 hours, `reviewTranscripts()` scans session files modified since `last-review.json`, extracts facts, writes directly to dated file + rebuilds `FACTS.md`. No user approval.
 
-**Search priority:** `memory_search` tool checks FACTS.md first (keyword search), then falls back to general workspace markdown files. The `memory/` subdirectory is excluded from general search — dated files are audit trail only, FACTS.md is the search target.
+**Search priority:** `memory_search` tool checks per-user `memory/<senderId>/FACTS.md` first, then shared `FACTS.md`, then falls back to general workspace markdown files. Use `source="knowledge"` for vector search over imported documents.
 
 **Embedding store** (`src/memory/embeddings.ts`) is still used by `knowledge_import` for document chunking/vector search, but core user memory no longer depends on it.
 
@@ -75,6 +76,7 @@ Each has a corresponding factory function (e.g., `routerTimeout(ms)`, `toolExecu
 - `restrictedCategories` blocks categories for untrusted users.
 - SSRF protection in `src/tools/ssrf.ts` — all URL-fetching tools must use it.
 - Exec security: Docker sandbox or command allowlist, configured per `config.tools.exec.security`.
+- Cron safety: `cronMode` in dispatch strips `write_file` from cron/heartbeat tasks so automated runs can't create or modify files.
 
 ### SOLID / DRY / YAGNI / KISS
 
@@ -225,8 +227,11 @@ registry.register(webSearch);
 ### Config flow
 JSON5 -> env interpolation -> Zod validation -> TypeScript types. Never hand-write config types — always `z.infer<typeof XxxSchema>`.
 
-### Security enforcement in dispatch (`src/dispatch.ts:139-178`)
-Layered filtering: allowedCategories -> restrictedCategories (untrusted) -> blockedTools -> restrictedTools (untrusted). Each layer narrows what a message can do.
+### Security enforcement in dispatch (`src/dispatch.ts`)
+Layered filtering: allowedCategories -> restrictedCategories (untrusted) -> blockedTools -> restrictedTools (untrusted) -> cronMode (strips write_file). Each layer narrows what a message can do.
+
+### Context priority layers (`src/agents/workspace.ts`)
+Tool-using specialists get `minimal` workspace context (SOUL.md + IDENTITY.md only) to preserve token budget for tool results. Chat gets `full` context. Configurable per specialist via `contextLevel: 'full' | 'minimal'` in config.
 
 ### Tool-loop with hallucination detection (`src/tool-loop/engine.ts`)
 Action hallucination detector catches models that claim to perform actions without actually calling tools. Repair prompt sent once. Only the FIRST parsed tool call is executed per iteration to prevent hallucination chains.

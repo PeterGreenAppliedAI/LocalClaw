@@ -21,6 +21,7 @@ import { STTService } from './services/stt.js';
 import { VisionService } from './services/vision.js';
 import { saveAttachment, isImageMime } from './services/attachments.js';
 import { ollamaUnreachable, toolExecutionError, LocalClawError } from './errors.js';
+// Pipeline utilities kept in src/services/tts-stream.ts for future use with slower TTS models
 
 function splitFinalMessage(text: string, limit: number): string[] {
   if (text.length <= limit) return [text];
@@ -101,6 +102,7 @@ export class Orchestrator {
             config: this.config,
             message: job.message,
             overrideCategory: job.category,
+            cronMode: true,
           });
 
           if (job.delivery.target) {
@@ -259,7 +261,11 @@ export class Orchestrator {
 
   private async extractFacts(transcript: import('./sessions/types.js').ConversationTurn[]): Promise<string[]> {
     const userTurns = transcript.filter(t => t.role === 'user');
-    if (userTurns.length < 2) return [];
+    console.log(`[Facts] Transcript has ${transcript.length} turns (${userTurns.length} user)`);
+    if (userTurns.length < 2) {
+      console.log('[Facts] Skipping — fewer than 2 user turns');
+      return [];
+    }
 
     // Build a condensed version of the conversation
     const condensed = transcript
@@ -268,8 +274,12 @@ export class Orchestrator {
       .join('\n');
 
     // Guard against prompt injection — skip turns with suspiciously long content
-    if (userTurns.some(t => t.content.length > 10_000)) return [];
+    if (userTurns.some(t => t.content.length > 10_000)) {
+      console.log('[Facts] Skipping — user turn exceeds 10k chars');
+      return [];
+    }
 
+    console.log(`[Facts] Calling ${this.config.router.model} for extraction (${condensed.length} chars)`);
     const response = await this.client.chat({
       model: this.config.router.model,
       messages: [
@@ -290,41 +300,48 @@ export class Orchestrator {
     });
 
     const raw = response.message.content.trim();
+    console.log(`[Facts] Model response: ${raw.slice(0, 300)}`);
     try {
       // Extract JSON array from response (model may wrap in markdown)
       const match = raw.match(/\[[\s\S]*\]/);
-      if (!match) return [];
+      if (!match) {
+        console.log('[Facts] No JSON array found in response');
+        return [];
+      }
       const parsed = JSON.parse(match[0]);
       if (!Array.isArray(parsed)) return [];
-      return parsed.filter((f: unknown): f is string => typeof f === 'string' && f.length > 0);
+      const facts = parsed.filter((f: unknown): f is string => typeof f === 'string' && f.length > 0);
+      console.log(`[Facts] Extracted ${facts.length} fact(s)`);
+      return facts;
     } catch {
+      console.warn('[Facts] Failed to parse model response as JSON');
       return [];
     }
   }
 
-  private rebuildFactsIndex(workspacePath: string): void {
-    const memoryDir = join(workspacePath, 'memory');
-    if (!existsSync(memoryDir)) return;
+  private rebuildFactsIndex(workspacePath: string, senderId: string): void {
+    const userMemDir = join(workspacePath, 'memory', senderId);
+    if (!existsSync(userMemDir)) return;
 
-    const dated = readdirSync(memoryDir)
+    const dated = readdirSync(userMemDir)
       .filter(f => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
       .sort();
 
     if (dated.length === 0) return;
 
     const sections = dated.map(f => {
-      const content = readFileSync(join(memoryDir, f), 'utf-8').trim();
+      const content = readFileSync(join(userMemDir, f), 'utf-8').trim();
       return content;
     });
 
     writeFileSync(
-      join(workspacePath, 'FACTS.md'),
+      join(userMemDir, 'FACTS.md'),
       '# Facts\n\nConsolidated from daily memory files.\n\n' + sections.join('\n\n'),
     );
   }
 
-  private pendingPath(workspacePath: string): string {
-    return join(workspacePath, 'memory', 'pending.json');
+  private pendingPath(workspacePath: string, senderId: string): string {
+    return join(workspacePath, 'memory', senderId, 'pending.json');
   }
 
   /**
@@ -354,6 +371,11 @@ export class Orchestrator {
       const stat = statSync(filePath);
       if (stat.mtimeMs <= lastReviewAt) continue;
 
+      // Extract senderId from session filename (format: agentId:channel:...:senderId.json)
+      const sessionKey = file.replace(/\.json$/, '');
+      const parts = sessionKey.split(':');
+      const senderId = parts.length > 0 ? parts[parts.length - 1] : 'unknown';
+
       try {
         const data = readFileSync(filePath, 'utf-8');
         const transcript = JSON.parse(data) as import('./sessions/types.js').ConversationTurn[];
@@ -362,25 +384,24 @@ export class Orchestrator {
         const facts = await this.extractFacts(transcript);
         if (facts.length > 0) {
           allFacts.push(...facts);
-          console.log(`[Heartbeat] Extracted ${facts.length} facts from ${file}`);
+          console.log(`[Heartbeat] Extracted ${facts.length} facts from ${file} (user: ${senderId})`);
+
+          // Write to per-user memory directory
+          const userMemDir = join(workspacePath, 'memory', senderId);
+          mkdirSync(userMemDir, { recursive: true });
+
+          const today = new Date().toISOString().slice(0, 10);
+          const datedFile = join(userMemDir, `${today}.md`);
+
+          const bullets = facts.map(f => `- ${f}`).join('\n');
+          const existing = existsSync(datedFile) ? readFileSync(datedFile, 'utf-8') : `## ${today}\n\n`;
+          writeFileSync(datedFile, existing + (existing.endsWith('\n') ? '' : '\n') + bullets + '\n');
+
+          this.rebuildFactsIndex(workspacePath, senderId);
         }
       } catch {
         // Skip unreadable/corrupt transcripts
       }
-    }
-
-    if (allFacts.length > 0) {
-      const memDir = join(workspacePath, 'memory');
-      mkdirSync(memDir, { recursive: true });
-
-      const today = new Date().toISOString().slice(0, 10);
-      const datedFile = join(memDir, `${today}.md`);
-
-      const bullets = allFacts.map(f => `- ${f}`).join('\n');
-      const existing = existsSync(datedFile) ? readFileSync(datedFile, 'utf-8') : `## ${today}\n\n`;
-      writeFileSync(datedFile, existing + (existing.endsWith('\n') ? '' : '\n') + bullets + '\n');
-
-      this.rebuildFactsIndex(workspacePath);
     }
 
     // Update marker
@@ -429,8 +450,8 @@ export class Orchestrator {
       try {
         const facts = await this.extractFacts(transcript);
         if (facts.length > 0) {
-          const memDir = join(workspacePath, 'memory');
-          mkdirSync(memDir, { recursive: true });
+          const userMemDir = join(workspacePath, 'memory', msg.senderId);
+          mkdirSync(userMemDir, { recursive: true });
           const pending = {
             extractedAt: new Date().toISOString(),
             channel: msg.channel,
@@ -438,7 +459,7 @@ export class Orchestrator {
             senderId: msg.senderId,
             facts,
           };
-          writeFileSync(this.pendingPath(workspacePath), JSON.stringify(pending, null, 2));
+          writeFileSync(this.pendingPath(workspacePath, msg.senderId), JSON.stringify(pending, null, 2));
           const factList = facts.map((f, i) => `${i + 1}. ${f}`).join('\n');
           replyText = `Session cleared. I noticed some things worth remembering:\n\n${factList}\n\nReply **!save** to keep or **!discard** to skip.`;
         }
@@ -461,14 +482,18 @@ export class Orchestrator {
         this.config,
       );
       const workspacePath = resolveWorkspacePath(route.agentId, this.config);
-      const pendingFile = this.pendingPath(workspacePath);
+      const pendingFile = this.pendingPath(workspacePath, msg.senderId);
 
       let replyText: string;
       try {
         const raw = readFileSync(pendingFile, 'utf-8');
-        const pending = JSON.parse(raw) as { facts: string[] };
+        const pending = JSON.parse(raw) as { facts: string[]; senderId?: string };
+        const senderId = pending.senderId ?? msg.senderId;
+        const userMemDir = join(workspacePath, 'memory', senderId);
+        mkdirSync(userMemDir, { recursive: true });
+
         const today = new Date().toISOString().slice(0, 10);
-        const datedFile = join(workspacePath, 'memory', `${today}.md`);
+        const datedFile = join(userMemDir, `${today}.md`);
 
         // Append to today's dated file
         const header = `## ${today}\n\n`;
@@ -479,7 +504,7 @@ export class Orchestrator {
         writeFileSync(datedFile, (existsSync(datedFile) ? readFileSync(datedFile, 'utf-8') : '') + entry);
 
         // Rebuild consolidated FACTS.md
-        this.rebuildFactsIndex(workspacePath);
+        this.rebuildFactsIndex(workspacePath, senderId);
 
         // Clean up pending
         unlinkSync(pendingFile);
@@ -508,7 +533,7 @@ export class Orchestrator {
         this.config,
       );
       const workspacePath = resolveWorkspacePath(route.agentId, this.config);
-      const pendingFile = this.pendingPath(workspacePath);
+      const pendingFile = this.pendingPath(workspacePath, msg.senderId);
 
       let replyText: string;
       try {
@@ -612,43 +637,11 @@ export class Orchestrator {
     console.log(`[Orchestrator] ${msg.senderName ?? msg.senderId} → agent:${route.agentId} (${route.matchedBy})`);
 
     try {
-      // Streaming: send a placeholder message, edit it as content arrives
-      let streamMsg: any = null;
-      let streamBuffer = '';
-      let lastEditAt = 0;
-      const EDIT_THROTTLE_MS = 1000; // Discord rate limit friendly
+      const format = this.config.tts.format;
+      const mimeMap: Record<string, string> = { opus: 'audio/ogg', wav: 'audio/wav', mp3: 'audio/mpeg' };
+      const audioMime = mimeMap[format] ?? 'audio/ogg';
 
-      const onStream = async (delta: string) => {
-        streamBuffer += delta;
-        const now = Date.now();
-        if (now - lastEditAt < EDIT_THROTTLE_MS) return;
-        lastEditAt = now;
-
-        try {
-          if (!streamMsg) {
-            // Get the Discord channel and send initial message
-            const adapter = this.channelRegistry.get(msg.channel);
-            if (adapter && 'getClient' in adapter) {
-              const client = (adapter as any).getClient();
-              const ch = await client?.channels.fetch(msg.channelId);
-              if (ch && 'send' in ch) {
-                streamMsg = await (ch as any).send({
-                  content: streamBuffer + ' ...',
-                  reply: { messageReference: msg.id },
-                });
-              }
-            }
-          } else {
-            await streamMsg.edit(streamBuffer + ' ...');
-          }
-        } catch (err) {
-          console.warn('[Orchestrator] Stream edit failed:', err instanceof Error ? err.message : err);
-        }
-      };
-
-      msg.onProgress?.('thinking');
-
-      const result = await dispatchMessage({
+      const dispatchBase = {
         client: this.client,
         registry: this.toolRegistry,
         config: this.config,
@@ -656,60 +649,95 @@ export class Orchestrator {
         agentId: route.agentId,
         sessionKey: route.sessionKey,
         sessionStore: this.sessionStore,
-        ...(hasImageAttachment ? { overrideCategory: 'chat' } : {}),
+        ...(hasImageAttachment ? { overrideCategory: 'chat' as const } : {}),
         sourceContext: {
           channel: msg.channel,
           channelId: msg.channelId ?? '',
           guildId: msg.guildId,
           senderId: msg.senderId,
         },
-        onStream,
         modelOverride: hadAudio ? this.config.voice.model : undefined,
-      });
+      };
 
-      console.log(`[Orchestrator] → ${result.category} (${result.iterations} steps)`);
+      // Voice path: single-shot TTS on full response
+      if (hadAudio && this.ttsService.enabled) {
+        msg.onProgress?.('thinking');
 
-      // TTS post-processing: voice in → voice out (skip if streaming — audio can't attach to edits)
-      let responseAudio: { data: Buffer; mimeType: string } | undefined;
-      if (hadAudio && this.ttsService.enabled && !streamMsg) {
+        const result = await dispatchMessage({ ...dispatchBase });
+
+        console.log(`[Orchestrator] → ${result.category} (${result.iterations} steps, voice)`);
+
         msg.onProgress?.('tts');
         const audioBuffer = await this.ttsService.synthesize(result.answer);
+        const target = { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId, replyToId: msg.id };
+
         if (audioBuffer) {
-          const format = this.config.tts.format;
-          const mimeMap: Record<string, string> = { opus: 'audio/ogg', wav: 'audio/wav', mp3: 'audio/mpeg' };
-          responseAudio = { data: audioBuffer, mimeType: mimeMap[format] ?? 'audio/ogg' };
           console.log(`[Orchestrator] TTS: ${audioBuffer.length} bytes`);
+          await this.channelRegistry.send(target, { text: result.answer, audio: { data: audioBuffer, mimeType: audioMime } });
         } else {
           console.warn('[Orchestrator] TTS synthesis failed');
-        }
-      }
-
-      // Final update: edit the stream message or send a new one
-      if (streamMsg) {
-        const chunks = splitFinalMessage(result.answer, 2000);
-        await streamMsg.edit(chunks[0]);
-        // Send remaining chunks as new messages if needed
-        if (chunks.length > 1) {
-          for (let i = 1; i < chunks.length; i++) {
-            const adapter = this.channelRegistry.get(msg.channel);
-            if (adapter) {
-              await adapter.send(
-                { channel: msg.channel, channelId: msg.channelId! },
-                { text: chunks[i] },
-              );
-            }
-          }
+          await this.channelRegistry.send(target, { text: result.answer });
         }
       } else {
-        await this.channelRegistry.send(
-          {
-            channel: msg.channel,
-            channelId: msg.channelId!,
-            guildId: msg.guildId,
-            replyToId: msg.id,
-          },
-          { text: result.answer, audio: responseAudio },
-        );
+        // Non-voice path: Discord text streaming (existing behavior)
+        let streamMsg: any = null;
+        let streamBuffer = '';
+        let lastEditAt = 0;
+        const EDIT_THROTTLE_MS = 1000;
+
+        const onStream = async (delta: string) => {
+          streamBuffer += delta;
+          const now = Date.now();
+          if (now - lastEditAt < EDIT_THROTTLE_MS) return;
+          lastEditAt = now;
+
+          try {
+            if (!streamMsg) {
+              const adapter = this.channelRegistry.get(msg.channel);
+              if (adapter && 'getClient' in adapter) {
+                const client = (adapter as any).getClient();
+                const ch = await client?.channels.fetch(msg.channelId);
+                if (ch && 'send' in ch) {
+                  streamMsg = await (ch as any).send({
+                    content: streamBuffer + ' ...',
+                    reply: { messageReference: msg.id },
+                  });
+                }
+              }
+            } else {
+              await streamMsg.edit(streamBuffer + ' ...');
+            }
+          } catch (err) {
+            console.warn('[Orchestrator] Stream edit failed:', err instanceof Error ? err.message : err);
+          }
+        };
+
+        msg.onProgress?.('thinking');
+
+        const result = await dispatchMessage({ ...dispatchBase, onStream });
+
+        console.log(`[Orchestrator] → ${result.category} (${result.iterations} steps)`);
+
+        if (streamMsg) {
+          const chunks = splitFinalMessage(result.answer, 2000);
+          await streamMsg.edit(chunks[0]);
+          if (chunks.length > 1) {
+            for (let i = 1; i < chunks.length; i++) {
+              const adapter = this.channelRegistry.get(msg.channel);
+              if (adapter) {
+                await adapter.send(
+                  { channel: msg.channel, channelId: msg.channelId! },
+                  { text: chunks[i] },
+                );
+              }
+            }
+          }
+        } else {
+          await this.channelRegistry.send(
+            { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId, replyToId: msg.id },
+            { text: result.answer },
+          );
+        }
       }
     } catch (err) {
       const wrapped = err instanceof LocalClawError ? err : new LocalClawError('TOOL_EXECUTION_ERROR', 'Message handling failed', err);

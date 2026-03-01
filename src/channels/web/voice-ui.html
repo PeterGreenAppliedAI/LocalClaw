@@ -276,6 +276,11 @@
           const decoder = new TextDecoder();
           let buffer = '';
 
+          // Streaming audio chunk queue for gapless playback
+          var audioCtx = null;
+          var nextPlayTime = 0;
+          var chunkCount = 0;
+
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -286,7 +291,8 @@
 
             for (const line of lines) {
               if (!line.startsWith('data: ')) continue;
-              const event = JSON.parse(line.slice(6));
+              var event;
+              try { event = JSON.parse(line.slice(6)); } catch { continue; }
 
               if (event.stage === 'stt') {
                 setStatus('Transcribed');
@@ -295,16 +301,52 @@
                 setStatus('Thinking...');
               } else if (event.stage === 'tts') {
                 setStatus('Generating speech...');
+              } else if (event.stage === 'audio-chunk' && event.data) {
+                // Streaming TTS: decode and schedule for gapless playback
+                if (!audioCtx) {
+                  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                  nextPlayTime = audioCtx.currentTime;
+                  setStatus('Playing...');
+                }
+                chunkCount++;
+                var bytes = atob(event.data);
+                var arr = new Uint8Array(bytes.length);
+                for (var bi = 0; bi < bytes.length; bi++) arr[bi] = bytes.charCodeAt(bi);
+                audioCtx.decodeAudioData(arr.buffer.slice(0)).then(function(audioBuffer) {
+                  var source = audioCtx.createBufferSource();
+                  source.buffer = audioBuffer;
+                  source.connect(audioCtx.destination);
+                  var startTime = Math.max(audioCtx.currentTime, nextPlayTime);
+                  source.start(startTime);
+                  nextPlayTime = startTime + audioBuffer.duration;
+                }).catch(function(err) {
+                  console.warn('Audio chunk decode error:', err);
+                });
+              } else if (event.stage === 'audio-done') {
+                // All audio chunks delivered — reset after last chunk finishes
+                var remaining = Math.max(0, nextPlayTime - (audioCtx ? audioCtx.currentTime : 0));
+                setTimeout(function() {
+                  setStatus('Click and hold to talk');
+                  audioCtx = null;
+                  nextPlayTime = 0;
+                  chunkCount = 0;
+                }, remaining * 1000 + 500);
               } else if (event.stage === 'done') {
                 if (event.response) addTurn('bot', event.response);
-                if (event.audio && event.audio.data) {
+                // Only play audio from done event if no streaming chunks arrived
+                if (event.audio && event.audio.data && chunkCount === 0) {
                   playAudio(event.audio.data, event.audio.mimeType);
+                }
+                if (chunkCount === 0) {
+                  setStatus('Click and hold to talk');
                 }
               }
             }
           }
 
-          setStatus('Click and hold to talk');
+          if (chunkCount === 0) {
+            setStatus('Click and hold to talk');
+          }
         } catch (err) {
           setStatus('Request failed');
           console.error('Voice error:', err);

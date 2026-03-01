@@ -1,5 +1,6 @@
-import { appendFileSync, mkdirSync, existsSync } from 'node:fs';
+import { appendFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 import type { OllamaClient } from '../ollama/client.js';
 import type { OllamaMessage } from '../ollama/types.js';
 import type { SessionStore } from '../sessions/store.js';
@@ -122,8 +123,24 @@ export async function buildCompactedHistory(params: BuildCompactedHistoryParams)
   return { messages: result, compacted: true };
 }
 
+/** Normalize a bullet point for dedup comparison: lowercase, strip whitespace and punctuation. */
+function normalizeBullet(line: string): string {
+  return line
+    .replace(/^[-*]\s*/, '')   // strip bullet prefix
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')   // strip punctuation
+    .replace(/\s+/g, ' ')      // collapse whitespace
+    .trim();
+}
+
+/** Hash a normalized string for fast Set lookup. */
+function bulletHash(normalized: string): string {
+  return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+}
+
 /**
  * Extract key facts from archive turns and append to MEMORY.md.
+ * Uses hash-based dedup to prevent duplicate entries (fixes #9).
  */
 async function flushToMemory(
   client: OllamaClient,
@@ -152,15 +169,37 @@ Output ONLY a bullet-point list of facts. If there are no notable facts, output 
   const facts = response.message?.content ?? '';
   if (!facts || facts.toLowerCase().includes('no notable facts')) return;
 
-  // Append to MEMORY.md
   const memoryPath = join(workspacePath, 'MEMORY.md');
   const dir = dirname(memoryPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
 
+  // Build hash set of existing bullets for dedup
+  const existingHashes = new Set<string>();
+  if (existsSync(memoryPath)) {
+    const existing = readFileSync(memoryPath, 'utf-8');
+    for (const line of existing.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('-') || trimmed.startsWith('*')) {
+        existingHashes.add(bulletHash(normalizeBullet(trimmed)));
+      }
+    }
+  }
+
+  // Filter out duplicates
+  const newBullets = facts
+    .split('\n')
+    .filter(line => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('-') && !trimmed.startsWith('*')) return false;
+      return !existingHashes.has(bulletHash(normalizeBullet(trimmed)));
+    });
+
+  if (newBullets.length === 0) return;
+
   const dateHeader = `\n\n## Compaction — ${new Date().toISOString().split('T')[0]}\n`;
-  appendFileSync(memoryPath, dateHeader + facts + '\n');
+  appendFileSync(memoryPath, dateHeader + newBullets.join('\n') + '\n');
 }
 
 /**

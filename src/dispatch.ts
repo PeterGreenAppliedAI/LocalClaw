@@ -35,6 +35,8 @@ export interface DispatchParams {
   onStream?: (delta: string) => void;
   /** Override model — used by voice for faster responses */
   modelOverride?: string;
+  /** Cron mode — strips write_file from tool set so automated tasks can't create files */
+  cronMode?: boolean;
 }
 
 export interface DispatchResult {
@@ -75,8 +77,8 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       : null;
     const outputReserve = tempSpecialist?.maxTokens ?? 4096;
 
-    // Build workspace context for budget estimation
-    const wsCtx = buildWorkspaceContext(workspacePath, { category: 'tool' });
+    // Build workspace context for budget estimation (use minimal for tool specialists)
+    const wsCtx = buildWorkspaceContext(workspacePath, { category: 'minimal' });
     const budget = computeBudget({
       contextSize: config.session.contextSize,
       systemPrompt: tempSpecialist?.systemPrompt ?? '',
@@ -187,10 +189,10 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   const dispatchStart = Date.now();
 
   if (!specialistConfig) {
-    result = await runAsBareChat(client, config, message, classification, history, undefined, params.onStream, agentId, params.sourceContext);
+    result = await runAsBareChat(client, config, message, classification, history, undefined, params.onStream, agentId, params.sourceContext, !!params.modelOverride);
   } else if (specialistConfig.tools.length === 0) {
     // No tools — skip ReAct loop, just chat directly
-    result = await runAsBareChat(client, config, message, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext);
+    result = await runAsBareChat(client, config, message, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext, !!params.modelOverride);
   } else if (effectiveCategory === 'multi') {
     result = await runMultiOrchestration(params, classification, specialistConfig, history);
   } else {
@@ -239,18 +241,35 @@ async function runSpecialist(
   const { client, registry, message, agentId = 'main', sessionKey = 'default', config } = params;
   const { category } = classification;
 
-  const toolDefs = registry.getDefinitions(specialist.tools);
+  // Cron mode: strip write_file so automated tasks can't pollute the workspace
+  const tools = params.cronMode
+    ? specialist.tools.filter(t => t !== 'write_file')
+    : specialist.tools;
+  if (params.cronMode && tools.length !== specialist.tools.length) {
+    console.log('[Dispatch] Cron mode: stripped write_file from tool set');
+  }
+
+  const toolDefs = registry.getDefinitions(tools);
   const executor = registry.createExecutor();
   const workspacePath = resolveWorkspacePath(agentId, config);
   const toolContext: ToolContext = {
     agentId,
     sessionKey,
     workspacePath,
+    senderId: params.sourceContext?.senderId,
   };
 
-  // Build workspace context — only inject files relevant to this specialist category
-  const wsCategory = category === 'cron' ? 'cron' as const : 'tool' as const;
-  const workspaceContext = buildWorkspaceContext(workspacePath, { category: wsCategory });
+  // Build workspace context — tool-using specialists get minimal context (SOUL+IDENTITY)
+  // to preserve token budget for tool results. Chat gets full context.
+  const wsCategory = category === 'cron'
+    ? 'cron' as const
+    : specialist.contextLevel === 'full'
+      ? 'chat' as const
+      : 'minimal' as const;
+  const workspaceContext = buildWorkspaceContext(workspacePath, {
+    category: wsCategory,
+    channel: params.sourceContext?.channel,
+  });
 
   // Inject source context into system prompt so specialists know which channel the user is on
   let systemPrompt = specialist.systemPrompt;
@@ -263,6 +282,11 @@ async function runSpecialist(
   // Tell tool-using specialists where user scripts and workspace files live
   systemPrompt = (systemPrompt ?? '') +
     `\n\nWorkspace directory: "${workspacePath}" — user scripts, notes, and workspace files are stored here. Check this directory first when looking for user-created files.`;
+
+  // Voice messages: keep responses concise and TTS-friendly
+  if (params.modelOverride) {
+    systemPrompt += '\n\nIMPORTANT: This is a voice conversation. Your response will be spoken aloud via TTS. Keep responses concise. Do NOT use emojis, markdown formatting, bullet points, or special characters — they will be verbalized. Use plain conversational English only.';
+  }
 
   const result = await runToolLoop({
     client,
@@ -434,6 +458,7 @@ async function runAsBareChat(
   onStream?: (delta: string) => void,
   agentId = 'main',
   sourceContext?: DispatchParams['sourceContext'],
+  isVoice = false,
 ): Promise<DispatchResult> {
   const chatModel = specialist?.model ?? config.specialists.chat?.model ?? config.router.model;
   const temperature = specialist?.temperature ?? 0.8;
@@ -441,13 +466,16 @@ async function runAsBareChat(
 
   // Inject workspace context — chat gets TOOLS.md for self-awareness
   const workspacePath = resolveWorkspacePath(agentId, config);
-  const workspaceContext = buildWorkspaceContext(workspacePath, { category: 'chat' });
+  const workspaceContext = buildWorkspaceContext(workspacePath, { category: 'chat', channel: sourceContext?.channel });
   let systemContent = specialist?.systemPrompt ?? 'You are a helpful AI assistant. Respond naturally and concisely.';
   if (workspaceContext) {
     systemContent += '\n\n' + workspaceContext;
   }
   if (sourceContext) {
     systemContent += `\n\nCurrent message context: The user is messaging from channel="${sourceContext.channel}"${sourceContext.guildId ? `, guildId="${sourceContext.guildId}"` : ''}.`;
+  }
+  if (isVoice) {
+    systemContent += '\n\nIMPORTANT: This is a voice conversation. Your response will be spoken aloud via TTS. Keep responses concise. Do NOT use emojis, markdown formatting, bullet points, or special characters — they will be verbalized. Use plain conversational English only.';
   }
 
   const messages: OllamaMessage[] = [

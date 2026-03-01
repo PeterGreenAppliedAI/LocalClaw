@@ -2,6 +2,7 @@ export interface ToolContext {
   agentId: string;
   sessionKey: string;
   workspacePath?: string;
+  senderId?: string;
   config?: Record<string, unknown>;
 }
 

@@ -192,49 +192,47 @@ export function truncateBootstrapContent(content: string, maxChars = 20_000): st
  * - BOOTSTRAP.md: only if it exists (first-run only)
  * - MEMORY.md: never (use memory_search tool)
  */
-export type WorkspaceCategory = 'chat' | 'tool' | 'cron' | 'subagent';
+export type WorkspaceCategory = 'chat' | 'tool' | 'minimal' | 'cron' | 'subagent';
 
 export function buildWorkspaceContext(
   workspacePath: string,
-  options?: { category?: WorkspaceCategory; maxCharsPerFile?: number },
+  options?: { category?: WorkspaceCategory; maxCharsPerFile?: number; channel?: string },
 ): string {
   const files = loadBootstrapFiles(workspacePath);
   if (files.size === 0) return '';
 
   const maxChars = options?.maxCharsPerFile ?? 20_000;
   const category = options?.category ?? 'tool';
+  const channel = options?.channel;
 
-  // Determine which files to inject based on category
-  const always = new Set([
-    BOOTSTRAP_FILES.SOUL,
-    BOOTSTRAP_FILES.IDENTITY,
-    BOOTSTRAP_FILES.AGENTS,
-  ]);
+  // Determine which files to inject based on category.
+  // Priority ordering: tool results > conversation history > workspace context.
+  // Tool-using specialists get minimal context to preserve token budget for tool results.
+  const allowed = new Set<string>();
 
-  const allowed: Set<string> = new Set(always);
-
-  // USER.md — always but will be truncated more aggressively
-  allowed.add(BOOTSTRAP_FILES.USER);
-
-  // TOOLS.md — only for chat (tool specialists already have tool schemas)
-  if (category === 'chat') {
-    allowed.add(BOOTSTRAP_FILES.TOOLS);
-  }
-
-  // HEARTBEAT.md — only for cron
-  if (category === 'cron') {
-    allowed.add(BOOTSTRAP_FILES.HEARTBEAT);
-  }
-
-  // BOOTSTRAP.md — include if it exists (first-run ritual)
-  if (files.has(BOOTSTRAP_FILES.BOOTSTRAP)) {
-    allowed.add(BOOTSTRAP_FILES.BOOTSTRAP);
-  }
-
-  // Subagents: minimal context
   if (category === 'subagent') {
-    allowed.clear();
+    // Subagents: operating instructions only
     allowed.add(BOOTSTRAP_FILES.AGENTS);
+  } else if (category === 'minimal') {
+    // Minimal: persona grounding only (for tool-using specialists)
+    allowed.add(BOOTSTRAP_FILES.SOUL);
+    allowed.add(BOOTSTRAP_FILES.IDENTITY);
+  } else {
+    // Full context: chat, tool (legacy), cron
+    allowed.add(BOOTSTRAP_FILES.SOUL);
+    allowed.add(BOOTSTRAP_FILES.IDENTITY);
+    allowed.add(BOOTSTRAP_FILES.AGENTS);
+    allowed.add(BOOTSTRAP_FILES.USER);
+
+    if (category === 'chat') {
+      allowed.add(BOOTSTRAP_FILES.TOOLS);
+    }
+    if (category === 'cron') {
+      allowed.add(BOOTSTRAP_FILES.HEARTBEAT);
+    }
+    if (files.has(BOOTSTRAP_FILES.BOOTSTRAP)) {
+      allowed.add(BOOTSTRAP_FILES.BOOTSTRAP);
+    }
   }
 
   const sections: string[] = ['# Workspace Context\n'];
@@ -253,8 +251,14 @@ export function buildWorkspaceContext(
   for (const filename of order) {
     if (!allowed.has(filename)) continue;
 
-    const content = files.get(filename);
+    let content = files.get(filename);
     if (!content) continue;
+
+    // Channel-specific SOUL.md filtering — strip irrelevant channel personas
+    // so the model only sees the rules for the current channel
+    if (filename === BOOTSTRAP_FILES.SOUL && channel) {
+      content = filterSoulByChannel(content, channel);
+    }
 
     // USER.md gets truncated more aggressively (summarized)
     const limit = filename === BOOTSTRAP_FILES.USER ? Math.min(maxChars, 500) : maxChars;
@@ -271,6 +275,61 @@ export function buildWorkspaceContext(
   );
 
   return sections.join('\n');
+}
+
+/**
+ * Filter SOUL.md to only include sections relevant to the current channel.
+ * Strips other channel's persona rules so the model doesn't blend personas.
+ *
+ * Recognizes markdown sections with channel names in headings:
+ *   ## WhatsApp Rules ...
+ *   ### WhatsApp Capability Limits ...
+ *   ## Discord Rules ...
+ */
+function filterSoulByChannel(content: string, channel: string): string {
+  const lines = content.split('\n');
+  const result: string[] = [];
+  let skipping = false;
+  let skipLevel = 0;
+
+  for (const line of lines) {
+    // Detect markdown headings (## or ###)
+    const headingMatch = line.match(/^(#{2,3})\s+(.*)/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const title = headingMatch[2].toLowerCase();
+
+      // Check if this heading is for a specific channel
+      const isWhatsApp = title.includes('whatsapp');
+      const isDiscord = title.includes('discord');
+
+      if (isWhatsApp || isDiscord) {
+        // Determine if this section belongs to the current channel
+        const sectionChannel = isWhatsApp ? 'whatsapp' : 'discord';
+        if (sectionChannel !== channel) {
+          skipping = true;
+          skipLevel = level;
+          continue;
+        } else {
+          skipping = false;
+        }
+      } else if (skipping && level <= skipLevel) {
+        // New section at same or higher level — stop skipping
+        skipping = false;
+      }
+    }
+
+    if (!skipping) {
+      // Also strip inline bullet points for the wrong channel
+      // e.g. "- On WhatsApp: you ARE Peter's phone" when channel is discord
+      const bulletLower = line.trimStart().toLowerCase();
+      if (channel !== 'whatsapp' && bulletLower.startsWith('- on whatsapp:')) continue;
+      if (channel !== 'discord' && bulletLower.startsWith('- on discord:')) continue;
+      result.push(line);
+    }
+  }
+
+  return result.join('\n');
 }
 
 function writeIfMissing(path: string, content: string): void {

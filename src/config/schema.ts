@@ -25,6 +25,9 @@ export const SpecialistConfigSchema = z.object({
   temperature: z.number().default(0.7),
   maxIterations: z.number().default(10),
   tools: z.array(z.string()).default([]),
+  /** Workspace context level: 'full' injects all workspace files, 'minimal' injects SOUL+IDENTITY only.
+   *  Defaults to 'minimal' for tool-using specialists, 'full' for chat. */
+  contextLevel: z.enum(['full', 'minimal']).optional(),
 });
 
 export const ChannelAllowFromSchema = z.object({

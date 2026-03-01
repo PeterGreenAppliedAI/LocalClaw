@@ -269,6 +269,49 @@ describe('buildCompactedHistory', () => {
     expect(memoryContent).toContain('User name is Alice');
   });
 
+  it('deduplicates facts when flushing to MEMORY.md', async () => {
+    const store = new SessionStore(join(testDir, 'sessions'));
+    for (let i = 0; i < 20; i++) {
+      store.appendTurn('main', 'test', {
+        role: 'user',
+        content: `Q${i}: ${'x'.repeat(200)}`,
+        timestamp: new Date().toISOString(),
+      });
+      store.appendTurn('main', 'test', {
+        role: 'assistant',
+        content: `A${i}: ${'y'.repeat(200)}`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const facts = '- User prefers dark mode\n- User name is Alice';
+    const client = createMockClient('Summary text.', facts);
+
+    // First compaction — writes facts
+    await buildCompactedHistory({
+      store, client, agentId: 'main', sessionKey: 'test',
+      budgetTokens: 500, recentTurnsToKeep: 6,
+      model: 'test-model', workspacePath,
+    });
+
+    // Clear summary so second compaction re-processes same archive
+    store.saveSummary('main', 'test', null as any);
+
+    // Second compaction with same facts — should NOT duplicate
+    await buildCompactedHistory({
+      store, client, agentId: 'main', sessionKey: 'test2',
+      budgetTokens: 500, recentTurnsToKeep: 6,
+      model: 'test-model', workspacePath,
+    });
+
+    const memoryPath = join(workspacePath, 'MEMORY.md');
+    const content = readFileSync(memoryPath, 'utf-8');
+    const darkModeCount = (content.match(/User prefers dark mode/g) || []).length;
+    const aliceCount = (content.match(/User name is Alice/g) || []).length;
+    expect(darkModeCount).toBe(1);
+    expect(aliceCount).toBe(1);
+  });
+
   it('returns empty messages for empty transcript', async () => {
     const store = new SessionStore(join(testDir, 'sessions'));
     const client = createMockClient('summary');

@@ -33,7 +33,7 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 | Capability | Tools | Description |
 |-----------|-------|-------------|
 | Web Search | `web_search`, `web_fetch`, `browser` | Brave Search, Readability extraction, headless Chromium |
-| Memory | `memory_save`, `memory_search`, `memory_get` | Vector embeddings + keyword fallback, persisted in SQLite |
+| Memory | `memory_save`, `memory_search`, `memory_get` | Per-user markdown files + keyword search, with `!reset`/`!save` fact extraction |
 | Execution | `exec`, `read_file`, `write_file` | Allowlisted shell commands, safe file I/O |
 | Scheduling | `cron_add`, `cron_list`, `cron_remove`, `cron_edit` | Real cron expressions, timezone-aware, persistent |
 | Task Board | `task_add`, `task_list`, `task_update`, `task_done`, `task_remove` | Persistent kanban-style task system with TASKS.md rendering |
@@ -42,9 +42,10 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 | Messaging | `send_message` | Cross-channel message delivery |
 | Browsing | `browser` | Playwright headless Chromium — navigate, snapshot, screenshot |
 | Vision | *(automatic)* | Image analysis via multimodal model — descriptions injected into context for natural Q&A |
-| Voice | TTS/STT | QwenTTS + faster-whisper STT — voice in, voice out |
+| Voice | TTS/STT | Kokoro TTS + faster-whisper STT — voice in, voice out |
 | Multi-task | *(decomposed)* | Complex requests split into sub-tasks across specialists |
 | Heartbeat | *(autonomous)* | Scheduled autonomous task checks, memory cleanup, and status reports |
+| Knowledge Import | `knowledge_import` | Import PDFs, CSVs, markdown into vector-searchable knowledge base |
 | Context Compaction | *(automatic)* | Budget-aware history summarization with memory flush |
 
 ## Quick Start
@@ -119,16 +120,16 @@ localclaw/
 │   ├── tool-loop/            # Tool-calling loop engine
 │   ├── ollama/               # Ollama HTTP client (chat, stream, embed)
 │   ├── channels/             # Pluggable adapters (Discord, Telegram, Web, Slack, Gmail, Microsoft Graph, WhatsApp)
-│   ├── services/             # TTS (QwenTTS) and STT (Whisper) services
+│   ├── services/             # TTS (Kokoro) and STT (Whisper) services
 │   ├── tasks/                # Task board (types + JSON/Markdown store)
-│   ├── tools/                # 22 tool implementations
+│   ├── tools/                # 27 tool implementations
 │   ├── agents/               # Workspace files + routing
 │   ├── context/              # Token estimation, budget calculator, history compaction
 │   ├── sessions/             # Transcript persistence + compaction summaries
 │   ├── cron/                 # Scheduling service
-│   ├── memory/               # Vector + keyword search (SQLite)
+│   ├── memory/               # Keyword search on markdown files, vector search for knowledge imports
 │   └── browser/              # Playwright wrapper
-├── test/                     # 94 tests across 9 suites
+├── test/                     # 174 tests across 15 suites
 ├── CLAUDE.md                 # AI code generation guidelines (for Claude Code)
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens
@@ -163,7 +164,7 @@ Adding a new adapter requires zero core code changes — implement the interface
 LocalClaw supports voice input and output through an optional TTS/STT service layer:
 
 - **STT (Speech-to-Text)** — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) server on your inference node. Incoming voice messages are automatically transcribed before processing.
-- **TTS (Text-to-Speech)** — [QwenTTS](https://github.com/QwenLM/Qwen2.5-Omni) on your inference node. When a user sends a voice message, the response is synthesized back as audio.
+- **TTS (Text-to-Speech)** — [Kokoro](https://github.com/remsky/Kokoro-FastAPI) on your inference node. Near-real-time synthesis (~150ms per sentence). When a user sends a voice message, the response is synthesized back as audio. Voice responses get a TTS-friendly prompt injection (no emojis, no markdown, plain conversational English).
 
 Both use OpenAI-compatible HTTP APIs (no extra npm packages). The rule is simple: **voice in → voice out, text in → text out**. Adapters that don't support audio (Gmail, Microsoft Graph) gracefully ignore it.
 
@@ -183,16 +184,15 @@ Voice interactions use a faster, lighter model (`qwen2.5:7b` by default) for cha
 
 **Voice setup requires two services on your inference node:**
 
-1. **QwenTTS** — OpenAI-compatible TTS endpoint (port 5005)
+1. **Kokoro TTS** — OpenAI-compatible TTS endpoint (port 5005)
    ```bash
-   python -m qwen_tts.server --port 5005
+   # Via Kokoro-FastAPI (recommended)
+   docker run -p 5005:8880 ghcr.io/remsky/kokoro-fastapi
    ```
 2. **faster-whisper** — OpenAI-compatible STT endpoint (port 8000)
    ```bash
    faster-whisper-server --model large-v3 --device cuda
    ```
-
-**Important:** The QwenTTS server must convert output to OGG Opus format (required for WhatsApp voice notes). Ensure ffmpeg is installed on the inference node for the WAV→Opus conversion.
 
 Configure in `.env`:
 ```env
@@ -202,7 +202,7 @@ WHISPER_URL=http://your-gpu-node:8000
 
 Enable in `localclaw.config.json5`:
 ```json5
-tts: { enabled: true, url: "${QWEN_TTS_URL}", voice: "serena", format: "opus" },
+tts: { enabled: true, url: "${QWEN_TTS_URL}", voice: "af_bella", format: "mp3" },
 stt: { enabled: true, url: "${WHISPER_URL}", model: "whisper-large-v3", language: "en" },
 ```
 
@@ -280,7 +280,7 @@ Long conversations hit context limits quickly. Instead of simply dropping old tu
 3. **Long conversations** — When over budget, the transcript is split into two zones:
    - **Recent zone** — The last N turns (default 6) are kept verbatim for immediate conversational context
    - **Archive zone** — Everything older gets processed:
-     - **Memory flush** — Key facts (user preferences, names, dates, decisions) are extracted and appended to MEMORY.md for long-term persistence
+     - **Memory flush** — Key facts are extracted and appended to MEMORY.md (hash-based dedup prevents duplicates)
      - **Summary** — The archive is condensed into a compact summary that preserves conversational flow
 4. **Tool loop trimming** — During multi-step tool calls, older tool observations are truncated in-place to prevent within-request overflow
 
@@ -412,6 +412,9 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 - **SSRF protection** — Scheme whitelist, DNS pre-flight, redirect hop checking
 - **Path traversal prevention** — Writes validated to stay within workspace
 - **Rate limiting** — 10 messages per minute per user
+- **Cron safety** — Automated tasks run in `cronMode` which strips `write_file` — cron jobs execute, they don't create
+- **Channel security** — Per-channel category restrictions, tool blocking, and per-user trust levels
+- **Web API auth** — Bearer token validation on HTTP endpoints
 - **TLS safety** — Verification enabled by default, opt-in override only
 - **Atomic writes** — tmp + rename for crash safety
 
@@ -430,9 +433,9 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Discord | discord.js 14 |
 | Browser | playwright-core |
 | Scheduling | croner |
-| Vector Store | better-sqlite3 |
+| Knowledge Store | better-sqlite3 (vector embeddings for imported documents) |
 | WhatsApp | @whiskeysockets/baileys |
-| TTS | QwenTTS (HTTP) |
+| TTS | Kokoro TTS (HTTP, OpenAI-compatible) |
 | STT | faster-whisper (HTTP) |
 | Config | JSON5 + Zod |
 | Testing | Vitest |
