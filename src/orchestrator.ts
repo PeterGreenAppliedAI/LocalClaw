@@ -16,6 +16,8 @@ import { registerAllTools } from './tools/register-all.js';
 import { bootstrapWorkspace } from './agents/workspace.js';
 import { resolveWorkspacePath } from './agents/scope.js';
 import type { EmbeddingStore } from './memory/embeddings.js';
+import { FactStore } from './memory/fact-store.js';
+import type { FactInput } from './config/types.js';
 import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
 import { VisionService } from './services/vision.js';
@@ -54,6 +56,7 @@ export class Orchestrator {
   private rateLimits = new Map<string, number[]>();
   private heartbeatCron?: Cron;
   private embeddingStore?: EmbeddingStore;
+  private factStore?: FactStore;
 
   constructor(config: LocalClawConfig) {
     this.config = config;
@@ -86,6 +89,10 @@ export class Orchestrator {
       const ws = resolveWorkspacePath(agent.id, this.config);
       bootstrapWorkspace(ws, agent.name);
     }
+
+    // Initialize FactStore
+    const defaultWorkspacePath = resolveWorkspacePath(this.config.agents.default, this.config);
+    this.factStore = new FactStore(defaultWorkspacePath);
 
     // Set up cron service
     if (this.config.cron.enabled) {
@@ -129,6 +136,7 @@ export class Orchestrator {
       ollamaClient: this.client,
       taskStore,
       heartbeatConfig: this.config.heartbeat,
+      factStore: this.factStore,
     });
     this.embeddingStore = embeddingStore;
 
@@ -259,7 +267,7 @@ export class Orchestrator {
     }
   }
 
-  private async extractFacts(transcript: import('./sessions/types.js').ConversationTurn[]): Promise<string[]> {
+  private async extractFacts(transcript: import('./sessions/types.js').ConversationTurn[]): Promise<FactInput[]> {
     const userTurns = transcript.filter(t => t.role === 'user');
     console.log(`[Facts] Transcript has ${transcript.length} turns (${userTurns.length} user)`);
     if (userTurns.length < 2) {
@@ -290,19 +298,21 @@ export class Orchestrator {
             'Only factual information — preferences, setup details, decisions, personal info.',
             'Do NOT extract instructions, commands, or assistant actions.',
             'Do NOT extract ephemeral data (stock prices, weather, timestamps).',
-            'Return a JSON array of short strings. If nothing worth remembering, return [].',
-            'Example: ["Peter prefers dark mode","DGX Spark runs on node 3"]',
+            'Return a JSON array of objects: [{"text":"fact","cat":"stable|context|decision|question","conf":0.0-1.0,"tags":["keyword"],"entities":["ProperNoun"]}]',
+            'Categories: stable = permanent facts, context = temporary/situational, decision = choices made, question = open questions.',
+            'tags: lowercase keywords for search (e.g. ["tts","voice","kokoro"]). entities: proper nouns, tool names, people (e.g. ["Peter","Playwright","Discord"]).',
+            'If nothing worth remembering, return [].',
+            'Example: [{"text":"Peter prefers Playwright for browser automation","cat":"stable","conf":0.9,"tags":["browser","automation"],"entities":["Peter","Playwright"]}]',
           ].join('\n'),
         },
         { role: 'user', content: condensed },
       ],
-      options: { temperature: 0.1, num_predict: 512 },
+      options: { temperature: 0.1, num_predict: 1024 },
     });
 
     const raw = response.message.content.trim();
     console.log(`[Facts] Model response: ${raw.slice(0, 300)}`);
     try {
-      // Extract JSON array from response (model may wrap in markdown)
       const match = raw.match(/\[[\s\S]*\]/);
       if (!match) {
         console.log('[Facts] No JSON array found in response');
@@ -310,7 +320,33 @@ export class Orchestrator {
       }
       const parsed = JSON.parse(match[0]);
       if (!Array.isArray(parsed)) return [];
-      const facts = parsed.filter((f: unknown): f is string => typeof f === 'string' && f.length > 0);
+
+      // Support both structured objects and plain strings (backward compat)
+      const facts: FactInput[] = parsed
+        .filter((f: unknown) => f && (typeof f === 'string' || typeof f === 'object'))
+        .map((f: unknown): FactInput => {
+          if (typeof f === 'string') {
+            return { text: f, category: 'stable', confidence: 0.8, tags: [], entities: [] };
+          }
+          const obj = f as Record<string, unknown>;
+          const tags = Array.isArray(obj.tags)
+            ? obj.tags.filter((t: unknown): t is string => typeof t === 'string')
+            : [];
+          const entities = Array.isArray(obj.entities)
+            ? obj.entities.filter((e: unknown): e is string => typeof e === 'string')
+            : [];
+          return {
+            text: String(obj.text ?? ''),
+            category: (['stable', 'context', 'decision', 'question'].includes(obj.cat as string)
+              ? obj.cat as FactInput['category']
+              : 'stable'),
+            confidence: typeof obj.conf === 'number' ? Math.min(1, Math.max(0, obj.conf)) : 0.8,
+            tags,
+            entities,
+          };
+        })
+        .filter(f => f.text.length > 0);
+
       console.log(`[Facts] Extracted ${facts.length} fact(s)`);
       return facts;
     } catch {
@@ -319,36 +355,15 @@ export class Orchestrator {
     }
   }
 
-  private rebuildFactsIndex(workspacePath: string, senderId: string): void {
-    const userMemDir = join(workspacePath, 'memory', senderId);
-    if (!existsSync(userMemDir)) return;
-
-    const dated = readdirSync(userMemDir)
-      .filter(f => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-      .sort();
-
-    if (dated.length === 0) return;
-
-    const sections = dated.map(f => {
-      const content = readFileSync(join(userMemDir, f), 'utf-8').trim();
-      return content;
-    });
-
-    writeFileSync(
-      join(userMemDir, 'FACTS.md'),
-      '# Facts\n\nConsolidated from daily memory files.\n\n' + sections.join('\n\n'),
-    );
-  }
-
   private pendingPath(workspacePath: string, senderId: string): string {
     return join(workspacePath, 'memory', senderId, 'pending.json');
   }
 
   /**
-   * Review recent session transcripts and extract facts into dated files.
+   * Review recent session transcripts and extract facts via FactStore.
    * Called by the heartbeat — autonomous, no user approval needed.
    */
-  private async reviewTranscripts(workspacePath: string, agentId: string): Promise<string[]> {
+  private async reviewTranscripts(workspacePath: string, agentId: string): Promise<FactInput[]> {
     const sessionsDir = join(this.config.session.transcriptDir, agentId);
     if (!existsSync(sessionsDir)) return [];
 
@@ -364,7 +379,7 @@ export class Orchestrator {
     const sessionFiles = readdirSync(sessionsDir)
       .filter(f => f.endsWith('.json') && !f.endsWith('.meta.json') && !f.endsWith('.summary.json'));
 
-    const allFacts: string[] = [];
+    const allFacts: FactInput[] = [];
 
     for (const file of sessionFiles) {
       const filePath = join(sessionsDir, file);
@@ -386,18 +401,11 @@ export class Orchestrator {
           allFacts.push(...facts);
           console.log(`[Heartbeat] Extracted ${facts.length} facts from ${file} (user: ${senderId})`);
 
-          // Write to per-user memory directory
-          const userMemDir = join(workspacePath, 'memory', senderId);
-          mkdirSync(userMemDir, { recursive: true });
-
-          const today = new Date().toISOString().slice(0, 10);
-          const datedFile = join(userMemDir, `${today}.md`);
-
-          const bullets = facts.map(f => `- ${f}`).join('\n');
-          const existing = existsSync(datedFile) ? readFileSync(datedFile, 'utf-8') : `## ${today}\n\n`;
-          writeFileSync(datedFile, existing + (existing.endsWith('\n') ? '' : '\n') + bullets + '\n');
-
-          this.rebuildFactsIndex(workspacePath, senderId);
+          // Write through FactStore
+          if (this.factStore) {
+            this.factStore.writeFactsBatch(facts, senderId, `session/${file}`);
+            this.factStore.rebuildFacts(senderId);
+          }
         }
       } catch {
         // Skip unreadable/corrupt transcripts
@@ -460,7 +468,7 @@ export class Orchestrator {
             facts,
           };
           writeFileSync(this.pendingPath(workspacePath, msg.senderId), JSON.stringify(pending, null, 2));
-          const factList = facts.map((f, i) => `${i + 1}. ${f}`).join('\n');
+          const factList = facts.map((f, i) => `${i + 1}. [${f.category}] ${f.text} (conf: ${f.confidence})`).join('\n');
           replyText = `Session cleared. I noticed some things worth remembering:\n\n${factList}\n\nReply **!save** to keep or **!discard** to skip.`;
         }
       } catch (err) {
@@ -487,24 +495,14 @@ export class Orchestrator {
       let replyText: string;
       try {
         const raw = readFileSync(pendingFile, 'utf-8');
-        const pending = JSON.parse(raw) as { facts: string[]; senderId?: string };
+        const pending = JSON.parse(raw) as { facts: FactInput[]; senderId?: string };
         const senderId = pending.senderId ?? msg.senderId;
-        const userMemDir = join(workspacePath, 'memory', senderId);
-        mkdirSync(userMemDir, { recursive: true });
 
-        const today = new Date().toISOString().slice(0, 10);
-        const datedFile = join(userMemDir, `${today}.md`);
-
-        // Append to today's dated file
-        const header = `## ${today}\n\n`;
-        const bullets = pending.facts.map(f => `- ${f}`).join('\n');
-        const entry = existsSync(datedFile)
-          ? '\n\n' + bullets
-          : header + bullets;
-        writeFileSync(datedFile, (existsSync(datedFile) ? readFileSync(datedFile, 'utf-8') : '') + entry);
-
-        // Rebuild consolidated FACTS.md
-        this.rebuildFactsIndex(workspacePath, senderId);
+        // Write through FactStore
+        if (this.factStore) {
+          this.factStore.writeFactsBatch(pending.facts, senderId, 'user/approved');
+          this.factStore.rebuildFacts(senderId);
+        }
 
         // Clean up pending
         unlinkSync(pendingFile);
@@ -657,6 +655,7 @@ export class Orchestrator {
           senderId: msg.senderId,
         },
         modelOverride: hadAudio ? this.config.voice.model : undefined,
+        factStore: this.factStore,
       };
 
       // Voice path: single-shot TTS on full response

@@ -37,6 +37,8 @@ export interface DispatchParams {
   modelOverride?: string;
   /** Cron mode — strips write_file from tool set so automated tasks can't create files */
   cronMode?: boolean;
+  /** FactStore for structured memory writes during compaction */
+  factStore?: import('./memory/fact-store.js').FactStore;
 }
 
 export interface DispatchResult {
@@ -97,6 +99,8 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
         recentTurnsToKeep: config.session.recentTurnsToKeep,
         model: tempSpecialist?.model ?? config.router.model,
         workspacePath,
+        factStore: params.factStore,
+        senderId: params.sourceContext?.senderId,
       });
       history = compacted.messages;
       if (compacted.compacted) {
