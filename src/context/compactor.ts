@@ -1,11 +1,9 @@
-import { appendFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { createHash } from 'node:crypto';
 import type { OllamaClient } from '../ollama/client.js';
 import type { OllamaMessage } from '../ollama/types.js';
 import type { SessionStore } from '../sessions/store.js';
 import type { CompactionSummary } from '../sessions/types.js';
-import { estimateTokens, estimateMessagesTokens } from './tokens.js';
+import type { FactStore } from '../memory/fact-store.js';
+import { estimateMessagesTokens } from './tokens.js';
 
 export interface CompactedHistory {
   messages: OllamaMessage[];  // [summary_msg?, ...recent_turns]
@@ -21,6 +19,8 @@ export interface BuildCompactedHistoryParams {
   recentTurnsToKeep: number;
   model: string;
   workspacePath: string;
+  factStore?: FactStore;
+  senderId?: string;
 }
 
 /**
@@ -37,7 +37,7 @@ export interface BuildCompactedHistoryParams {
  *    d. Return [summary_msg, ...recent_turns]
  */
 export async function buildCompactedHistory(params: BuildCompactedHistoryParams): Promise<CompactedHistory> {
-  const { store, client, agentId, sessionKey, budgetTokens, recentTurnsToKeep, model, workspacePath } = params;
+  const { store, client, agentId, sessionKey, budgetTokens, recentTurnsToKeep, model, workspacePath, factStore, senderId } = params;
 
   // Load full transcript (use a large maxTurns since compaction handles size)
   const transcript = store.loadTranscript(agentId, sessionKey);
@@ -83,9 +83,9 @@ export async function buildCompactedHistory(params: BuildCompactedHistoryParams)
     .map(m => `${m.role}: ${m.content}`)
     .join('\n\n');
 
-  // Step 1: Flush key facts to MEMORY.md
+  // Step 1: Flush key facts to FactStore (or MEMORY.md fallback)
   try {
-    await flushToMemory(client, model, archiveText, workspacePath);
+    await flushToMemory(client, model, archiveText, workspacePath, factStore, senderId);
   } catch (err) {
     console.warn('[Compactor] Memory flush failed, continuing with summary only:', err);
   }
@@ -123,30 +123,17 @@ export async function buildCompactedHistory(params: BuildCompactedHistoryParams)
   return { messages: result, compacted: true };
 }
 
-/** Normalize a bullet point for dedup comparison: lowercase, strip whitespace and punctuation. */
-function normalizeBullet(line: string): string {
-  return line
-    .replace(/^[-*]\s*/, '')   // strip bullet prefix
-    .toLowerCase()
-    .replace(/[^\w\s]/g, '')   // strip punctuation
-    .replace(/\s+/g, ' ')      // collapse whitespace
-    .trim();
-}
-
-/** Hash a normalized string for fast Set lookup. */
-function bulletHash(normalized: string): string {
-  return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
-}
-
 /**
- * Extract key facts from archive turns and append to MEMORY.md.
- * Uses hash-based dedup to prevent duplicate entries (fixes #9).
+ * Extract key facts from archive turns and write through FactStore.
+ * Dedup is handled by FactStore's hash-based deduplication.
  */
 async function flushToMemory(
   client: OllamaClient,
   model: string,
   archiveText: string,
   workspacePath: string,
+  factStore?: FactStore,
+  senderId?: string,
 ): Promise<void> {
   const response = await client.chat({
     model,
@@ -169,37 +156,32 @@ Output ONLY a bullet-point list of facts. If there are no notable facts, output 
   const facts = response.message?.content ?? '';
   if (!facts || facts.toLowerCase().includes('no notable facts')) return;
 
-  const memoryPath = join(workspacePath, 'MEMORY.md');
-  const dir = dirname(memoryPath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-
-  // Build hash set of existing bullets for dedup
-  const existingHashes = new Set<string>();
-  if (existsSync(memoryPath)) {
-    const existing = readFileSync(memoryPath, 'utf-8');
-    for (const line of existing.split('\n')) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('-') || trimmed.startsWith('*')) {
-        existingHashes.add(bulletHash(normalizeBullet(trimmed)));
-      }
-    }
-  }
-
-  // Filter out duplicates
-  const newBullets = facts
+  const bullets = facts
     .split('\n')
     .filter(line => {
       const trimmed = line.trim();
-      if (!trimmed.startsWith('-') && !trimmed.startsWith('*')) return false;
-      return !existingHashes.has(bulletHash(normalizeBullet(trimmed)));
-    });
+      return trimmed.startsWith('-') || trimmed.startsWith('*');
+    })
+    .map(line => line.trim().replace(/^[-*]\s*/, ''));
 
-  if (newBullets.length === 0) return;
+  if (bullets.length === 0) return;
 
-  const dateHeader = `\n\n## Compaction — ${new Date().toISOString().split('T')[0]}\n`;
-  appendFileSync(memoryPath, dateHeader + newBullets.join('\n') + '\n');
+  const today = new Date().toISOString().slice(0, 10);
+  const source = `compaction/${today}`;
+
+  if (factStore) {
+    const inputs = bullets.map(text => ({
+      text,
+      category: 'stable' as const,
+      confidence: 0.7,
+      source,
+    }));
+    factStore.writeFactsBatch(inputs, senderId, source);
+    factStore.rebuildFacts(senderId);
+  } else {
+    // Fallback: no FactStore available (shouldn't happen in normal operation)
+    console.warn('[Compactor] No FactStore available, skipping memory flush');
+  }
 }
 
 /**

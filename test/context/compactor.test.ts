@@ -6,6 +6,7 @@ import { buildCompactedHistory } from '../../src/context/compactor.js';
 import type { OllamaMessage } from '../../src/ollama/types.js';
 import type { OllamaClient } from '../../src/ollama/client.js';
 import { SessionStore } from '../../src/sessions/store.js';
+import { FactStore } from '../../src/memory/fact-store.js';
 import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -239,8 +240,9 @@ describe('buildCompactedHistory', () => {
     expect(summary!.model).toBe('test-model');
   });
 
-  it('flushes facts to MEMORY.md when compacting', async () => {
+  it('flushes facts to FactStore when compacting', async () => {
     const store = new SessionStore(join(testDir, 'sessions'));
+    const factStore = new FactStore(workspacePath);
     for (let i = 0; i < 20; i++) {
       store.appendTurn('main', 'test', {
         role: 'user',
@@ -260,17 +262,21 @@ describe('buildCompactedHistory', () => {
       store, client, agentId: 'main', sessionKey: 'test',
       budgetTokens: 500, recentTurnsToKeep: 6,
       model: 'test-model', workspacePath,
+      factStore, senderId: 'test-user',
     });
 
-    const memoryPath = join(workspacePath, 'MEMORY.md');
-    expect(existsSync(memoryPath)).toBe(true);
-    const memoryContent = readFileSync(memoryPath, 'utf-8');
-    expect(memoryContent).toContain('User prefers dark mode');
-    expect(memoryContent).toContain('User name is Alice');
+    // Facts should be in FactStore
+    const factsPath = join(workspacePath, 'memory', 'test-user', 'facts', 'facts.json');
+    expect(existsSync(factsPath)).toBe(true);
+    const factsContent = JSON.parse(readFileSync(factsPath, 'utf-8'));
+    const texts = factsContent.map((f: any) => f.text);
+    expect(texts).toContain('User prefers dark mode');
+    expect(texts).toContain('User name is Alice');
   });
 
-  it('deduplicates facts when flushing to MEMORY.md', async () => {
+  it('deduplicates facts when flushing to FactStore', async () => {
     const store = new SessionStore(join(testDir, 'sessions'));
+    const factStore = new FactStore(workspacePath);
     for (let i = 0; i < 20; i++) {
       store.appendTurn('main', 'test', {
         role: 'user',
@@ -292,6 +298,7 @@ describe('buildCompactedHistory', () => {
       store, client, agentId: 'main', sessionKey: 'test',
       budgetTokens: 500, recentTurnsToKeep: 6,
       model: 'test-model', workspacePath,
+      factStore, senderId: 'test-user',
     });
 
     // Clear summary so second compaction re-processes same archive
@@ -302,12 +309,13 @@ describe('buildCompactedHistory', () => {
       store, client, agentId: 'main', sessionKey: 'test2',
       budgetTokens: 500, recentTurnsToKeep: 6,
       model: 'test-model', workspacePath,
+      factStore, senderId: 'test-user',
     });
 
-    const memoryPath = join(workspacePath, 'MEMORY.md');
-    const content = readFileSync(memoryPath, 'utf-8');
-    const darkModeCount = (content.match(/User prefers dark mode/g) || []).length;
-    const aliceCount = (content.match(/User name is Alice/g) || []).length;
+    const factsPath = join(workspacePath, 'memory', 'test-user', 'facts', 'facts.json');
+    const content = JSON.parse(readFileSync(factsPath, 'utf-8'));
+    const darkModeCount = content.filter((f: any) => f.text === 'User prefers dark mode').length;
+    const aliceCount = content.filter((f: any) => f.text === 'User name is Alice').length;
     expect(darkModeCount).toBe(1);
     expect(aliceCount).toBe(1);
   });

@@ -1,27 +1,34 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import type { LocalClawTool } from './types.js';
 import type { OllamaClient } from '../ollama/client.js';
 import { searchMarkdownFiles } from '../memory/search.js';
 import type { EmbeddingStore } from '../memory/embeddings.js';
 import { generateEmbedding } from '../memory/embeddings.js';
+import type { FactStore } from '../memory/fact-store.js';
+
+const CATEGORY_LABELS: Record<string, string> = {
+  stable: 'STABLE',
+  context: 'CONTEXT',
+  decision: 'DECISION',
+  question: 'QUESTION',
+};
 
 export function createMemorySearchTool(
   workspacePath: string,
   ollamaClient?: OllamaClient,
   embeddingStore?: EmbeddingStore,
+  factStore?: FactStore,
 ): LocalClawTool {
 
   return {
     name: 'memory_search',
-    description: 'Search through stored memories and knowledge base. Use source="knowledge" to search imported documents (vector search). Default searches markdown memory files (keyword search).',
+    description: 'Search through stored memories and knowledge base. Use source="knowledge" to search imported documents (vector search). Default searches structured fact memory first, then falls back to markdown files.',
     parameterDescription: 'query (required): What to search for. maxResults (optional): Max results (default 5). source (optional): "memory" or "knowledge" (default "memory").',
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'What to search for in memories' },
         maxResults: { type: 'string', description: 'Maximum number of results to return (default 5)' },
-        source: { type: 'string', description: 'Filter: "memory" (markdown files) or "knowledge" (imported documents)', enum: ['memory', 'knowledge'] },
+        source: { type: 'string', description: 'Filter: "memory" (structured facts + markdown) or "knowledge" (imported documents)', enum: ['memory', 'knowledge'] },
       },
       required: ['query'],
     },
@@ -52,26 +59,36 @@ export function createMemorySearchTool(
         }
       }
 
-      // Memory: keyword search on markdown files
-      // Check per-user FACTS.md first, then shared FACTS.md
-      const factsFiles: string[] = [];
-      if (ctx.senderId) {
-        const userFacts = join(workspacePath, 'memory', ctx.senderId, 'FACTS.md');
-        if (existsSync(userFacts)) factsFiles.push(userFacts);
-      }
-      const sharedFacts = join(workspacePath, 'FACTS.md');
-      if (existsSync(sharedFacts)) factsFiles.push(sharedFacts);
+      // Tier 1: Search structured facts via FactStore
+      if (factStore) {
+        const allResults = [];
 
-      if (factsFiles.length > 0) {
-        const factsResults = searchMarkdownFiles(workspacePath, query, maxResults, factsFiles);
-        if (factsResults.length > 0) {
-          return factsResults
-            .map((r, i) => `${i + 1}. [${r.file}] ${r.section} (score: ${r.score})\n   ${r.content}`)
+        // Per-user facts first
+        if (ctx.senderId) {
+          const userFacts = factStore.searchFacts(query, ctx.senderId, maxResults);
+          allResults.push(...userFacts);
+        }
+
+        // Shared facts
+        const sharedFacts = factStore.searchFacts(query, undefined, maxResults);
+        allResults.push(...sharedFacts);
+
+        if (allResults.length > 0) {
+          // Deduplicate by hash
+          const seen = new Set<string>();
+          const unique = allResults.filter(f => {
+            if (seen.has(f.hash)) return false;
+            seen.add(f.hash);
+            return true;
+          }).slice(0, maxResults);
+
+          return unique
+            .map((f, i) => `${i + 1}. [${CATEGORY_LABELS[f.category] ?? f.category}] ${f.text} (conf: ${f.confidence}, src: ${f.source})`)
             .join('\n\n');
         }
       }
 
-      // Fallback: general keyword search across all workspace markdown files
+      // Tier 2: Fallback to general keyword search across workspace markdown files
       const results = searchMarkdownFiles(workspacePath, query, maxResults);
 
       if (results.length === 0) {

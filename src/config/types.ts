@@ -29,6 +29,9 @@ import type {
   VisionConfigSchema,
   HeartbeatConfigSchema,
   VoiceConfigSchema,
+  FactCategorySchema,
+  FactEntrySchema,
+  FactInputSchema,
 } from './schema.js';
 
 export type LocalClawConfig = z.infer<typeof LocalClawConfigSchema>;
@@ -60,3 +63,6 @@ export type STTConfig = z.infer<typeof STTConfigSchema>;
 export type VisionConfig = z.infer<typeof VisionConfigSchema>;
 export type HeartbeatConfig = z.infer<typeof HeartbeatConfigSchema>;
 export type VoiceConfig = z.infer<typeof VoiceConfigSchema>;
+export type FactCategory = z.infer<typeof FactCategorySchema>;
+export type FactEntry = z.infer<typeof FactEntrySchema>;
+export type FactInput = z.input<typeof FactInputSchema>;

@@ -43,6 +43,7 @@ export interface RegisterToolsOptions {
   ollamaClient?: OllamaClient;
   taskStore?: TaskStore;
   heartbeatConfig?: import('../config/types.js').HeartbeatConfig;
+  factStore?: import('../memory/fact-store.js').FactStore;
 }
 
 export interface RegisterToolsResult {
@@ -69,9 +70,9 @@ export async function registerAllTools(
   // Create a single shared EmbeddingStore so all memory tools share one DB connection
   const embeddingStore = new EmbeddingStore();
 
-  registry.register(createMemorySearchTool(workspace, options?.ollamaClient, embeddingStore));
+  registry.register(createMemorySearchTool(workspace, options?.ollamaClient, embeddingStore, options?.factStore));
   registry.register(createMemoryGetTool(workspace));
-  registry.register(createMemorySaveTool(workspace));
+  registry.register(createMemorySaveTool(workspace, options?.factStore));
 
   // Knowledge import tool (requires Ollama for embeddings)
   if (options?.ollamaClient) {

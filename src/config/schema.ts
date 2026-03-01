@@ -203,6 +203,35 @@ export const HeartbeatConfigSchema = z.object({
   }),
 });
 
+// --- Fact / Memory schemas ---
+
+export const FactCategorySchema = z.enum(['stable', 'context', 'decision', 'question']);
+
+export const FactEntrySchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  category: FactCategorySchema.default('stable'),
+  confidence: z.number().min(0).max(1).default(0.8),
+  source: z.string(),
+  createdAt: z.string(),
+  expiresAt: z.string().optional(),
+  hash: z.string(),
+  senderId: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+  entities: z.array(z.string()).default([]),
+});
+
+/** Input shape for creating a new fact (id/hash/createdAt auto-generated). */
+export const FactInputSchema = z.object({
+  text: z.string(),
+  category: FactCategorySchema.default('stable'),
+  confidence: z.number().min(0).max(1).default(0.8),
+  source: z.string().optional(),
+  expiresAt: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+  entities: z.array(z.string()).default([]),
+});
+
 export const LocalClawConfigSchema = z.object({
   timezone: z.string().default('America/New_York'),
   ollama: OllamaConfigSchema.default({}),
