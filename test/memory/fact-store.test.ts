@@ -181,8 +181,10 @@ describe('FactStore.searchFacts', () => {
     store.writeFact({ text: 'Some fact', category: 'stable', confidence: 0.8 }, 'u1');
     store.rebuildFacts('u1');
 
+    // When keyword matching fails but facts exist, returns recent facts as fallback
     const results = store.searchFacts('nonexistent', 'u1');
-    expect(results.length).toBe(0);
+    expect(results.length).toBe(1);
+    expect(results[0].text).toBe('Some fact');
   });
 
   it('boosts results by confidence', () => {
@@ -249,10 +251,10 @@ describe('FactStore.migrateFromLegacy', () => {
     expect(facts.every(f => f.confidence === 0.7)).toBe(true);
   });
 
-  it('does not re-migrate when facts/ already exists', () => {
+  it('does not re-migrate when .migrated marker exists', () => {
     const userDir = join(workspacePath, 'memory', 'migrated-user');
-    mkdirSync(join(userDir, 'facts'), { recursive: true });
-    writeFileSync(join(userDir, 'facts', 'facts.json'), '[]');
+    mkdirSync(userDir, { recursive: true });
+    writeFileSync(join(userDir, '.migrated'), new Date().toISOString());
     writeFileSync(join(userDir, '2026-02-28.md'), '## 2026-02-28\n\n- Some fact\n');
 
     const store = new FactStore(workspacePath);

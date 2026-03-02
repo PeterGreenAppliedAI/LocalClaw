@@ -86,7 +86,27 @@ export class TelegramAdapter implements ChannelAdapter {
         }
       }
 
-      if (!content && attachments.length === 0) return;
+      // Download voice messages (OGG/Opus) for STT processing
+      let audio: { data: Buffer; mimeType: string } | undefined;
+      const voiceFile = msg.voice ?? msg.video_note;
+      if (voiceFile) {
+        try {
+          const file = await bot.api.getFile(voiceFile.file_id);
+          const url = `https://api.telegram.org/file/bot${config.token}/${file.file_path}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            audio = {
+              data: Buffer.from(await res.arrayBuffer()),
+              mimeType: 'audio/ogg',
+            };
+            console.log(`[Telegram] Voice message: ${audio.data.length} bytes (${voiceFile.duration}s)`);
+          }
+        } catch (err) {
+          console.warn('[Telegram] Failed to download voice message:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      if (!content && !audio && attachments.length === 0) return;
 
       const inbound: InboundMessage = {
         id: String(msg.message_id),
@@ -97,6 +117,7 @@ export class TelegramAdapter implements ChannelAdapter {
         channelId: String(msg.chat.id),
         timestamp: new Date(msg.date * 1000),
         raw: msg,
+        audio,
         attachments: attachments.length > 0 ? attachments : undefined,
       };
 
@@ -126,19 +147,25 @@ export class TelegramAdapter implements ChannelAdapter {
     }
 
     try {
-      // Send voice message if audio is present
+      // Send voice/audio message if present
       if (content.audio) {
         try {
           const mod = 'grammy';
           const grammy = await import(/* webpackIgnore: true */ mod);
-          const inputFile = new grammy.InputFile(content.audio.data, 'response.ogg');
-          await this.bot.api.sendVoice(
-            target.channelId,
-            inputFile,
-            { reply_to_message_id: target.replyToId ? Number(target.replyToId) : undefined },
-          );
-        } catch {
-          // Ignore audio send failure, text will still be sent
+          const replyOpts = { reply_to_message_id: target.replyToId ? Number(target.replyToId) : undefined };
+
+          if (content.audio.mimeType === 'audio/ogg') {
+            // OGG/Opus → sendVoice (plays inline as voice note)
+            const inputFile = new grammy.InputFile(content.audio.data, 'response.ogg');
+            await this.bot.api.sendVoice(target.channelId, inputFile, replyOpts);
+          } else {
+            // MP3/WAV → sendAudio (plays as audio file)
+            const ext = content.audio.mimeType === 'audio/mpeg' ? 'mp3' : 'wav';
+            const inputFile = new grammy.InputFile(content.audio.data, `response.${ext}`);
+            await this.bot.api.sendAudio(target.channelId, inputFile, replyOpts);
+          }
+        } catch (err) {
+          console.warn('[Telegram] Audio send failed:', err instanceof Error ? err.message : err);
         }
       }
 

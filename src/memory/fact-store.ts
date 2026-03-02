@@ -140,8 +140,14 @@ export class FactStore {
     this.invalidateCache(senderId);
   }
 
+  /** Generic/recency queries that should return recent facts instead of keyword matching */
+  private static readonly RECENCY_QUERIES = new Set([
+    'recent', 'latest', 'all', 'summary', 'everything', 'list', 'show',
+  ]);
+
   /**
    * Search facts by keyword matching against text field.
+   * Falls back to returning most recent facts when keywords produce no matches.
    */
   searchFacts(query: string, senderId?: string, maxResults = 10): FactEntry[] {
     const entries = this.loadFactsJson(senderId);
@@ -152,7 +158,12 @@ export class FactStore {
       .split(/\s+/)
       .filter(w => w.length > 2);
 
-    if (keywords.length === 0) return entries.slice(0, maxResults);
+    // Generic/recency queries: return most recent facts by createdAt
+    if (keywords.length === 0 || keywords.every(kw => FactStore.RECENCY_QUERIES.has(kw))) {
+      return [...entries]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, maxResults);
+    }
 
     const scored = entries.map(entry => {
       const lower = entry.text.toLowerCase();
@@ -181,23 +192,33 @@ export class FactStore {
       return { entry, score };
     });
 
-    return scored
+    const keywordResults = scored
       .filter(s => s.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, maxResults)
       .map(s => s.entry);
+
+    // If keyword matching produced no results but facts exist, return most recent
+    if (keywordResults.length === 0) {
+      return [...entries]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, maxResults);
+    }
+
+    return keywordResults;
   }
 
   /**
    * Migrate legacy dated .md files into the new FactStore format.
-   * Called lazily on first rebuildFacts() when facts/ dir doesn't exist.
+   * Uses a marker file (.migrated) to track whether migration has already run,
+   * independent of whether the facts/ dir exists.
    */
   migrateFromLegacy(senderId: string): number {
     const memDir = this.memDir(senderId);
-    const factsDir = join(memDir, 'facts');
+    const markerPath = join(memDir, '.migrated');
 
     // Already migrated?
-    if (existsSync(factsDir)) return 0;
+    if (existsSync(markerPath)) return 0;
 
     // Find old dated .md files
     if (!existsSync(memDir)) return 0;
@@ -206,11 +227,15 @@ export class FactStore {
       .filter(f => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
       .sort();
 
-    if (datedFiles.length === 0) return 0;
+    if (datedFiles.length === 0) {
+      // No legacy files — mark as migrated so we don't check again
+      mkdirSync(memDir, { recursive: true });
+      writeFileSync(markerPath, new Date().toISOString());
+      return 0;
+    }
 
     let migrated = 0;
     for (const file of datedFiles) {
-      const date = file.replace(/\.md$/, '');
       const content = readFileSync(join(memDir, file), 'utf-8');
       const bullets = content
         .split('\n')
@@ -235,11 +260,15 @@ export class FactStore {
       console.log(`[FactStore] Migrated ${migrated} facts from legacy files for user ${senderId}`);
     }
 
+    // Mark migration complete
+    writeFileSync(markerPath, new Date().toISOString());
+
     return migrated;
   }
 
   /**
    * Load facts.json entries, with caching.
+   * Triggers legacy migration on first access for a sender.
    */
   loadFactsJson(senderId?: string): FactEntry[] {
     const cacheKey = senderId ?? '__shared__';
@@ -248,19 +277,15 @@ export class FactStore {
       return cached.entries;
     }
 
+    // Always attempt legacy migration (uses .migrated marker to avoid repeat work)
+    if (senderId) {
+      this.migrateFromLegacy(senderId);
+    }
+
     const memDir = this.memDir(senderId);
     const factsPath = join(memDir, 'facts', 'facts.json');
 
-    if (!existsSync(factsPath)) {
-      // Try migration for sender-specific dirs
-      if (senderId) {
-        const migrated = this.migrateFromLegacy(senderId);
-        if (migrated > 0 && existsSync(factsPath)) {
-          return this.loadFactsJson(senderId);
-        }
-      }
-      return [];
-    }
+    if (!existsSync(factsPath)) return [];
 
     try {
       const raw = readFileSync(factsPath, 'utf-8');

@@ -73,26 +73,30 @@ export function createMemorySearchTool(
         const sharedFacts = factStore.searchFacts(query, undefined, maxResults);
         allResults.push(...sharedFacts);
 
-        if (allResults.length > 0) {
-          // Deduplicate by hash
-          const seen = new Set<string>();
-          const unique = allResults.filter(f => {
-            if (seen.has(f.hash)) return false;
-            seen.add(f.hash);
-            return true;
-          }).slice(0, maxResults);
+        // Deduplicate by hash
+        const seen = new Set<string>();
+        const unique = allResults.filter(f => {
+          if (seen.has(f.hash)) return false;
+          seen.add(f.hash);
+          return true;
+        }).slice(0, maxResults);
 
+        if (unique.length > 0) {
           return unique
             .map((f, i) => `${i + 1}. [${CATEGORY_LABELS[f.category] ?? f.category}] ${f.text} (conf: ${f.confidence}, src: ${f.source})`)
             .join('\n\n');
         }
+
+        // FactStore exists but has zero facts for this user — report empty
+        // Do NOT fall through to workspace markdown search (that produces garbage)
+        return 'No memories found.';
       }
 
-      // Tier 2: Fallback to general keyword search across workspace markdown files
+      // Tier 2: Only when FactStore is not available — legacy keyword search across workspace markdown files
       const results = searchMarkdownFiles(workspacePath, query, maxResults);
 
       if (results.length === 0) {
-        return `No memories found matching "${query}"`;
+        return 'No memories found.';
       }
 
       return results

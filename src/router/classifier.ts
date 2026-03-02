@@ -13,7 +13,7 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(search|find).*(save|send|remind)/i, category: 'multi' },
   // Specific action categories before broad ones
   { pattern: /\b(config|configure|setting|settings|preference|edit.*cron|modify.*cron|update.*cron|change.*cron|enable|disable|workspace|tools\.md)\b/i, category: 'config' },
-  { pattern: /\b(heartbeat|heartbeat task|periodic check|periodic task|autonomous check|add.*heartbeat|remove.*heartbeat|list.*heartbeat)\b/i, category: 'cron' },
+  { pattern: /\b(add.*heartbeat|remove.*heartbeat|list.*heartbeat|periodic check|periodic task|autonomous check)\b/i, category: 'cron' },
   { pattern: /\b(run|execute|compile|build|deploy|install|sudo|npm|pip|git|ls|cat|mkdir|rm)\b/i, category: 'exec' },
   { pattern: /\b(task|todo|to-do|kanban|checklist|add task|my tasks|pending|mark done|complete task)\b/i, category: 'task' },
   { pattern: /\b(remind|schedule|every day|at \d+\s*(am|pm)|cron|cronjob|cronjobs|cron\s*job|recurring|scheduled task|morning report|daily report)\b/i, category: 'cron' },

@@ -243,6 +243,13 @@ export class Orchestrator {
         config: this.config,
         message: prompt,
         overrideCategory: 'multi',
+        // Pass delivery target as senderId so tools (memory_search etc.) know whose data to access
+        sourceContext: hb.delivery.target ? {
+          channel: hb.delivery.channel,
+          channelId: hb.delivery.target,
+          senderId: hb.delivery.target,
+        } : undefined,
+        factStore: this.factStore,
       });
 
       console.log(`[Heartbeat] Completed (${result.iterations} steps)`);
