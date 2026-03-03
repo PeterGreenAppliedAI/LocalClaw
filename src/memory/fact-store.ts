@@ -27,6 +27,7 @@ export class FactStore {
   private readonly basePath: string;
   private factsCache = new Map<string, { entries: FactEntry[]; loadedAt: number }>();
   private static readonly CACHE_TTL_MS = 30_000;
+  private migrating = false;
 
   constructor(workspacePath: string) {
     this.basePath = join(workspacePath, 'memory');
@@ -40,8 +41,19 @@ export class FactStore {
     const hash = this.hashText(parsed.text);
     const memDir = this.memDir(senderId);
 
-    // Dedup: check if hash already in any index file
+    // Dedup: exact hash match
     if (this.hashExistsInIndex(memDir, hash)) return null;
+
+    // Dedup: substring match — skip if an existing fact already covers this meaning
+    // (Skip during migration to avoid recursive loadFactsJson → migrateFromLegacy loop)
+    if (!this.migrating) {
+      const normalized = this.normalizeText(parsed.text);
+      const existing = this.loadFactsJson(senderId);
+      for (const e of existing) {
+        const existingNorm = this.normalizeText(e.text);
+        if (existingNorm.includes(normalized) || normalized.includes(existingNorm)) return null;
+      }
+    }
 
     const now = new Date();
     const createdAt = createdAtOverride ?? now.toISOString();
@@ -234,27 +246,32 @@ export class FactStore {
     }
 
     let migrated = 0;
-    for (const file of datedFiles) {
-      const date = file.replace(/\.md$/, '');
-      const content = readFileSync(join(memDir, file), 'utf-8');
-      const bullets = content
-        .split('\n')
-        .filter(l => l.trim().startsWith('-') || l.trim().startsWith('*'))
-        .map(l => l.trim().replace(/^[-*]\s*/, ''));
+    this.migrating = true;
+    try {
+      for (const file of datedFiles) {
+        const date = file.replace(/\.md$/, '');
+        const content = readFileSync(join(memDir, file), 'utf-8');
+        const bullets = content
+          .split('\n')
+          .filter(l => l.trim().startsWith('-') || l.trim().startsWith('*'))
+          .map(l => l.trim().replace(/^[-*]\s*/, ''));
 
-      if (bullets.length === 0) continue;
+        if (bullets.length === 0) continue;
 
-      const inputs: FactInput[] = bullets.map(text => ({
-        text,
-        category: 'stable' as const,
-        confidence: 0.7,
-        source: `legacy/${file}`,
-      }));
+        const inputs: FactInput[] = bullets.map(text => ({
+          text,
+          category: 'stable' as const,
+          confidence: 0.7,
+          source: `legacy/${file}`,
+        }));
 
-      // Preserve original date from filename so legacy facts don't appear "newest"
-      const legacyCreatedAt = `${date}T00:00:00.000Z`;
-      const written = this.writeFactsBatch(inputs, senderId, `legacy/${file}`, legacyCreatedAt);
-      migrated += written.length;
+        // Preserve original date from filename so legacy facts don't appear "newest"
+        const legacyCreatedAt = `${date}T00:00:00.000Z`;
+        const written = this.writeFactsBatch(inputs, senderId, `legacy/${file}`, legacyCreatedAt);
+        migrated += written.length;
+      }
+    } finally {
+      this.migrating = false;
     }
 
     if (migrated > 0) {
@@ -309,13 +326,16 @@ export class FactStore {
     return senderId ? join(this.basePath, senderId) : this.basePath;
   }
 
-  private hashText(text: string): string {
-    const normalized = text
+  private normalizeText(text: string): string {
+    return text
       .toLowerCase()
       .replace(/[^\w\s]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
-    return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+  }
+
+  private hashText(text: string): string {
+    return createHash('sha256').update(this.normalizeText(text)).digest('hex').slice(0, 16);
   }
 
   private hashExistsInIndex(memDir: string, hash: string): boolean {
