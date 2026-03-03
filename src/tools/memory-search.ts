@@ -82,9 +82,9 @@ export function createMemorySearchTool(
         }).slice(0, maxResults);
 
         if (unique.length > 0) {
-          return unique
-            .map((f, i) => `${i + 1}. [${CATEGORY_LABELS[f.category] ?? f.category}] ${f.text} (conf: ${f.confidence}, src: ${f.source})`)
-            .join('\n\n');
+          const lines = unique
+            .map((f, i) => `${i + 1}. [${CATEGORY_LABELS[f.category] ?? f.category}] ${f.text} (conf: ${f.confidence}, src: ${f.source})`);
+          return `Found ${unique.length} memories:\n${lines.join('\n')}`;
         }
 
         // FactStore exists but has zero facts for this user — report empty

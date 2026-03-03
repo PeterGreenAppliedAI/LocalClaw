@@ -35,7 +35,7 @@ export class FactStore {
   /**
    * Write a single fact. Returns the created entry, or null if deduplicated.
    */
-  writeFact(input: FactInput, senderId?: string, sourceOverride?: string): FactEntry | null {
+  writeFact(input: FactInput, senderId?: string, sourceOverride?: string, createdAtOverride?: string): FactEntry | null {
     const parsed = FactInputSchema.parse(input);
     const hash = this.hashText(parsed.text);
     const memDir = this.memDir(senderId);
@@ -44,6 +44,7 @@ export class FactStore {
     if (this.hashExistsInIndex(memDir, hash)) return null;
 
     const now = new Date();
+    const createdAt = createdAtOverride ?? now.toISOString();
     const dateStr = now.toISOString().slice(0, 10);
     const ts = now.toISOString().replace(/[:.]/g, '-');
 
@@ -53,7 +54,7 @@ export class FactStore {
       category: parsed.category,
       confidence: parsed.confidence,
       source: sourceOverride ?? parsed.source ?? `${dateStr}/mem_${ts}.md`,
-      createdAt: now.toISOString(),
+      createdAt,
       expiresAt: parsed.expiresAt,
       hash,
       senderId,
@@ -79,10 +80,10 @@ export class FactStore {
   /**
    * Write multiple facts in a batch. Returns created entries (deduped).
    */
-  writeFactsBatch(inputs: FactInput[], senderId?: string, sourceOverride?: string): FactEntry[] {
+  writeFactsBatch(inputs: FactInput[], senderId?: string, sourceOverride?: string, createdAtOverride?: string): FactEntry[] {
     const entries: FactEntry[] = [];
     for (const input of inputs) {
-      const entry = this.writeFact(input, senderId, sourceOverride);
+      const entry = this.writeFact(input, senderId, sourceOverride, createdAtOverride);
       if (entry) entries.push(entry);
     }
     return entries;
@@ -236,6 +237,7 @@ export class FactStore {
 
     let migrated = 0;
     for (const file of datedFiles) {
+      const date = file.replace(/\.md$/, '');
       const content = readFileSync(join(memDir, file), 'utf-8');
       const bullets = content
         .split('\n')
@@ -251,7 +253,9 @@ export class FactStore {
         source: `legacy/${file}`,
       }));
 
-      const written = this.writeFactsBatch(inputs, senderId, `legacy/${file}`);
+      // Preserve original date from filename so legacy facts don't appear "newest"
+      const legacyCreatedAt = `${date}T00:00:00.000Z`;
+      const written = this.writeFactsBatch(inputs, senderId, `legacy/${file}`, legacyCreatedAt);
       migrated += written.length;
     }
 
