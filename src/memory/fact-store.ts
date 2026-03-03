@@ -159,11 +159,9 @@ export class FactStore {
       .split(/\s+/)
       .filter(w => w.length > 2);
 
-    // Generic/recency queries: return most recent facts by createdAt
+    // Generic queries: return all facts (no limit) — this is just a flat list
     if (keywords.length === 0 || keywords.every(kw => FactStore.RECENCY_QUERIES.has(kw))) {
-      return [...entries]
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, maxResults);
+      return [...entries];
     }
 
     const scored = entries.map(entry => {
