@@ -153,6 +153,51 @@ export class FactStore {
     this.invalidateCache(senderId);
   }
 
+  /**
+   * Consolidate facts: remove substring duplicates, keeping the longer/higher-confidence version.
+   * Designed to run nightly via heartbeat, not on every rebuild.
+   */
+  consolidateFacts(senderId?: string): number {
+    const entries = this.loadFactsJson(senderId);
+    if (entries.length < 2) return 0;
+
+    const normalized = entries.map(e => ({ entry: e, norm: this.normalizeText(e.text) }));
+    const removed = new Set<number>();
+
+    for (let i = 0; i < normalized.length; i++) {
+      if (removed.has(i)) continue;
+      for (let j = i + 1; j < normalized.length; j++) {
+        if (removed.has(j)) continue;
+        const a = normalized[i];
+        const b = normalized[j];
+
+        // One is substring of the other
+        if (a.norm.includes(b.norm) || b.norm.includes(a.norm)) {
+          // Keep the longer one; if same length, keep higher confidence
+          if (a.norm.length > b.norm.length || (a.norm.length === b.norm.length && a.entry.confidence >= b.entry.confidence)) {
+            removed.add(j);
+          } else {
+            removed.add(i);
+            break; // i is removed, stop comparing it
+          }
+        }
+      }
+    }
+
+    if (removed.size === 0) return 0;
+
+    const kept = entries.filter((_, i) => !removed.has(i));
+    const memDir = this.memDir(senderId);
+    const factsDir = join(memDir, 'facts');
+    mkdirSync(factsDir, { recursive: true });
+    writeFileSync(join(factsDir, 'facts.json'), JSON.stringify(kept, null, 2));
+    writeFileSync(join(factsDir, 'facts.md'), this.formatFactsMd(kept));
+    this.invalidateCache(senderId);
+
+    console.log(`[FactStore] Consolidated: removed ${removed.size} duplicate(s), ${kept.length} facts remain`);
+    return removed.size;
+  }
+
   /** Generic/recency queries that should return recent facts instead of keyword matching */
   private static readonly RECENCY_QUERIES = new Set([
     'recent', 'latest', 'all', 'summary', 'everything', 'list', 'show',

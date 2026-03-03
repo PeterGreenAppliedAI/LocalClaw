@@ -36,6 +36,7 @@ import { createTaskUpdateTool } from './task-update.js';
 import { createTaskDoneTool } from './task-done.js';
 import { createTaskRemoveTool } from './task-remove.js';
 import { createReasonTool } from './reason.js';
+import { createMemoryCleanupTool } from './memory-cleanup.js';
 
 export interface RegisterToolsOptions {
   cronService?: CronService;
@@ -73,6 +74,7 @@ export async function registerAllTools(
   registry.register(createMemorySearchTool(workspace, options?.ollamaClient, embeddingStore, options?.factStore));
   registry.register(createMemoryGetTool(workspace));
   registry.register(createMemorySaveTool(workspace, options?.factStore));
+  registry.register(createMemoryCleanupTool(options?.factStore));
 
   // Knowledge import tool (requires Ollama for embeddings)
   if (options?.ollamaClient) {
