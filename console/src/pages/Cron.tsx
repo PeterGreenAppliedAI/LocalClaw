@@ -1,8 +1,104 @@
+import { useCronJobs, useRunCronJob, useToggleCronJob, useDeleteCronJob } from '../api/hooks';
+import type { CronJob } from '../types';
+
+function JobCard({ job }: { job: CronJob }) {
+  const runJob = useRunCronJob();
+  const toggleJob = useToggleCronJob();
+  const deleteJob = useDeleteCronJob();
+
+  return (
+    <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4 hover:border-zinc-500 transition-colors">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="font-medium">{job.name}</h3>
+        <div className="flex items-center gap-2">
+          <button
+            className={`relative w-10 h-5 rounded-full transition-colors ${
+              job.enabled ? 'bg-green-600' : 'bg-zinc-600'
+            }`}
+            title={job.enabled ? 'Disable' : 'Enable'}
+            onClick={() => toggleJob.mutate({ id: job.id, enabled: !job.enabled })}
+          >
+            <span
+              className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
+                job.enabled ? 'left-5' : 'left-0.5'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-1 text-sm text-zinc-400">
+        <div className="flex items-center gap-2">
+          <span className="text-xs bg-zinc-700 px-2 py-0.5 rounded">{job.schedule}</span>
+          <span className="text-xs bg-zinc-700 px-2 py-0.5 rounded">{job.category}</span>
+        </div>
+        <p className="text-xs line-clamp-2 text-zinc-500">{job.message}</p>
+        <div className="text-xs text-zinc-500">
+          Deliver to: <span className="text-zinc-400">{job.delivery.channel}</span>
+          {' / '}
+          <span className="text-zinc-400">{job.delivery.target}</span>
+        </div>
+        {job.lastRunAt && (
+          <p className="text-xs text-zinc-500">
+            Last run: {new Date(job.lastRunAt).toLocaleString()}
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-2 mt-3">
+        <button
+          className="text-xs bg-zinc-700 hover:bg-zinc-600 px-3 py-1 rounded"
+          disabled={runJob.isPending}
+          onClick={() => runJob.mutate(job.id)}
+        >
+          {runJob.isPending ? 'Running...' : 'Run Now'}
+        </button>
+        <button
+          className="text-xs text-red-400 hover:text-red-300 px-3 py-1"
+          onClick={() => {
+            if (confirm(`Delete "${job.name}"?`)) deleteJob.mutate(job.id);
+          }}
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Cron() {
+  const { data: jobs = [], isLoading } = useCronJobs();
+
+  const cronJobs = jobs.filter(j => j.type === 'cron');
+  const heartbeats = jobs.filter(j => j.type === 'heartbeat');
+
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-6">Cron</h2>
-      <p className="text-zinc-400">Coming soon</p>
+      <h2 className="text-2xl font-bold mb-6">Cron & Heartbeats</h2>
+
+      {isLoading && <p className="text-zinc-500">Loading...</p>}
+
+      {cronJobs.length > 0 && (
+        <div className="mb-8">
+          <h3 className="text-lg font-semibold mb-3 text-zinc-300">Cron Jobs</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {cronJobs.map(j => <JobCard key={j.id} job={j} />)}
+          </div>
+        </div>
+      )}
+
+      {heartbeats.length > 0 && (
+        <div>
+          <h3 className="text-lg font-semibold mb-3 text-zinc-300">Heartbeats</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {heartbeats.map(j => <JobCard key={j.id} job={j} />)}
+          </div>
+        </div>
+      )}
+
+      {!isLoading && jobs.length === 0 && (
+        <p className="text-zinc-500">No cron jobs or heartbeats configured</p>
+      )}
     </div>
   );
 }

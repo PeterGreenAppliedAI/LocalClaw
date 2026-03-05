@@ -8,7 +8,8 @@ import { handleListTasks, handleCreateTask, handleUpdateTask, handleDeleteTask }
 import { handleListCron, handleCreateCron, handleUpdateCron, handleDeleteCron, handleRunCron } from './handlers/cron.js';
 import { handleSearchFacts, handleAllFacts, handleWriteFact, handleConsolidateFacts, handleMemorySenders } from './handlers/facts.js';
 import { handleTools } from './handlers/tools.js';
-import { handleChat } from './handlers/chat.js';
+import { handleChat, handleChatReset } from './handlers/chat.js';
+import { handleServeFile } from './handlers/files.js';
 
 const API_PREFIX = '/console/api/';
 
@@ -172,6 +173,17 @@ export async function handleConsoleRequest(
     // Chat
     if (path === 'chat' && method === 'POST') {
       await handleChat(req, res, deps);
+      return true;
+    }
+    if (path === 'chat/reset' && method === 'POST') {
+      await handleChatReset(req, res, deps);
+      return true;
+    }
+
+    // File serving (generated charts, workspace files)
+    const fileMatch = path.match(/^files\/(.+)$/);
+    if (fileMatch && method === 'GET') {
+      handleServeFile(req, res, deps, decodeURIComponent(fileMatch[1]));
       return true;
     }
 

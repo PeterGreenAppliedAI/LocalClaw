@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Mic, MicOff, Send, Volume2, Loader2, Paperclip, X, FileText, Image as ImageIcon } from 'lucide-react';
-import { getToken } from '../api/client';
+import { Mic, MicOff, Send, Volume2, Loader2, Paperclip, X, FileText, Image as ImageIcon, RotateCcw } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { getToken, fetchApi } from '../api/client';
 import { useStatus } from '../api/hooks';
 
 interface ChatMessage {
@@ -9,6 +11,7 @@ interface ChatMessage {
   content: string;
   timestamp: string;
   attachments?: { name: string; type: string; preview?: string }[];
+  images?: string[];
 }
 
 interface PendingFile {
@@ -91,6 +94,19 @@ export default function Chat() {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       timestamp: new Date().toISOString(),
     }]);
+  }, []);
+
+  const resetChat = useCallback(async () => {
+    try {
+      await fetchApi('/chat/reset', { method: 'POST' });
+    } catch (err) {
+      console.warn('Session reset failed:', err);
+    }
+    setMessages([]);
+    setInput('');
+    setPendingFiles([]);
+    setStatus('idle');
+    setStatusText('');
   }, []);
 
   // --- File handling ---
@@ -217,7 +233,7 @@ export default function Chat() {
           try {
             const event = JSON.parse(line.slice(6));
             if (event.type === 'done' && event.answer) {
-              addMessage({ role: 'assistant', content: event.answer });
+              addMessage({ role: 'assistant', content: event.answer, images: event.images });
             } else if (event.type === 'error') {
               addMessage({ role: 'assistant', content: `Error: ${event.error}` });
             }
@@ -513,6 +529,20 @@ export default function Chat() {
       onDrop={handleDrop}
       onDragOver={e => e.preventDefault()}
     >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800">
+        <span className="text-sm text-zinc-500">Console Chat</span>
+        <button
+          onClick={resetChat}
+          disabled={isProcessing}
+          className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          title="New chat — clears session history"
+        >
+          <RotateCcw size={14} />
+          New Chat
+        </button>
+      </div>
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.length === 0 && (
@@ -557,7 +587,59 @@ export default function Chat() {
                   ))}
                 </div>
               )}
-              <div className="whitespace-pre-wrap">{msg.content}</div>
+              {msg.role === 'assistant' ? (
+                <div className="chat-markdown text-sm leading-relaxed">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      img: ({ src, alt }) => {
+                        const imgSrc = src?.startsWith('charts/')
+                          ? `/console/api/files/${encodeURIComponent(src)}`
+                          : src;
+                        return (
+                          <img
+                            src={imgSrc}
+                            alt={alt ?? 'chart'}
+                            className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity my-2"
+                            onClick={() => window.open(imgSrc, '_blank')}
+                          />
+                        );
+                      },
+                      table: ({ children }) => (
+                        <table className="border-collapse border border-zinc-600 text-xs my-2">{children}</table>
+                      ),
+                      th: ({ children }) => (
+                        <th className="border border-zinc-600 bg-zinc-700 px-2 py-1 text-left">{children}</th>
+                      ),
+                      td: ({ children }) => (
+                        <td className="border border-zinc-600 px-2 py-1">{children}</td>
+                      ),
+                      a: ({ href, children }) => (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">{children}</a>
+                      ),
+                    }}
+                  >
+                    {msg.content}
+                  </ReactMarkdown>
+                  {msg.images && msg.images.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {msg.images
+                        .filter(url => !msg.content.includes(url.replace('/console/api/files/', '')))
+                        .map((url, i) => (
+                          <img
+                            key={i}
+                            src={url}
+                            alt={`Generated chart ${i + 1}`}
+                            className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity border border-zinc-600"
+                            onClick={() => window.open(url, '_blank')}
+                          />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+              )}
             </div>
           </div>
         ))}

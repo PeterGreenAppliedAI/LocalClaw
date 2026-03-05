@@ -1,9 +1,59 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ConsoleApiDeps } from '../types.js';
-import { sendError } from '../helpers/send-json.js';
+import type { DispatchResult } from '../../dispatch.js';
+import { sendJson, sendError } from '../helpers/send-json.js';
 import { parseBody } from '../helpers/parse-body.js';
 import { resolveRoute } from '../../agents/resolve-route.js';
 import { saveAttachment, isImageMime } from '../../services/attachments.js';
+
+const IMAGE_EXT_RE = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
+
+/** Extract image paths from the dispatch result for inline display */
+function extractImagePaths(result: DispatchResult): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+
+  const addPath = (raw: string) => {
+    // Normalize: strip workspace prefix to get relative path (e.g. "charts/foo.png")
+    const p = raw.replace(/^.*?\/(charts\/)/, '$1');
+    if (!seen.has(p)) { seen.add(p); paths.push(p); }
+  };
+
+  // 1. Markdown image refs in the answer: ![...](path)
+  const mdPattern = /!\[.*?\]\(([^\s)]+\.(?:png|jpg|jpeg|gif|svg|webp))\)/gi;
+  let match;
+  while ((match = mdPattern.exec(result.answer)) !== null) addPath(match[1]);
+
+  // 2. Bare file path mentions in the answer text
+  const barePathPattern = /(?:charts\/[^\s"'<>)]+\.(?:png|jpg|jpeg|gif|svg|webp))/gi;
+  while ((match = barePathPattern.exec(result.answer)) !== null) addPath(match[0]);
+
+  // 3. Scan steps for image paths in tool params, code input, and observations
+  if (result.steps) {
+    for (const step of result.steps) {
+      if (step.tool === 'write_file' && typeof step.params?.path === 'string') {
+        const p = step.params.path as string;
+        if (IMAGE_EXT_RE.test(p)) addPath(p);
+      }
+      if (step.tool === 'code_session') {
+        const texts = [
+          typeof step.params?.code === 'string' ? step.params.code as string : '',
+          step.observation ?? '',
+        ];
+        for (const text of texts) {
+          const sfPattern = /savefig\(['"](.*?\.(?:png|jpg|jpeg|gif|svg|webp))['"]/gi;
+          let sf;
+          while ((sf = sfPattern.exec(text)) !== null) addPath(sf[1]);
+          const bpPattern = /(?:charts\/[^\s"'<>)]+\.(?:png|jpg|jpeg|gif|svg|webp))/gi;
+          let bp;
+          while ((bp = bpPattern.exec(text)) !== null) addPath(bp[0]);
+        }
+      }
+    }
+  }
+
+  return paths;
+}
 
 interface ChatAttachment {
   name: string;
@@ -124,11 +174,13 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
       factStore: deps.factStore,
     });
 
+    const images = extractImagePaths(result);
     res.write(`data: ${JSON.stringify({
       type: 'done',
       answer: result.answer,
       category: result.category,
       iterations: result.iterations,
+      ...(images.length > 0 ? { images: images.map(p => `/console/api/files/${encodeURIComponent(p)}`) } : {}),
     })}\n\n`);
   } catch (err) {
     res.write(`data: ${JSON.stringify({
@@ -138,5 +190,20 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
   } finally {
     clearInterval(keepalive);
     res.end();
+  }
+}
+
+export async function handleChatReset(req: IncomingMessage, res: ServerResponse, deps: ConsoleApiDeps): Promise<void> {
+  const senderId = deps.config.heartbeat?.delivery?.target ?? 'console-user';
+  const route = resolveRoute(
+    { channel: 'console', senderId, channelId: 'console' },
+    deps.config,
+  );
+
+  try {
+    await deps.sessionStore.clearSession(route.agentId, route.sessionKey);
+    sendJson(res, { ok: true, agentId: route.agentId, sessionKey: route.sessionKey });
+  } catch (err) {
+    sendError(res, err instanceof Error ? err.message : 'Failed to reset session');
   }
 }

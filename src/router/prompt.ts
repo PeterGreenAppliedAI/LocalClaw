@@ -26,4 +26,5 @@ const DEFAULT_CATEGORIES = `- chat: Simple conversation, greetings, opinions, qu
 - cron: Schedule, list, or manage recurring tasks
 - message: Send messages to other channels/users
 - website: Teaching materials, courses, assignments
-- multi: Complex requests needing multiple different tools`;
+- multi: Complex requests needing multiple different tools
+- research: Research topics in depth, analyze data, generate charts/visualizations, compare trends`;

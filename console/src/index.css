@@ -1,1 +1,50 @@
 @import "tailwindcss";
+
+/* Minimal prose styles for markdown rendering in chat */
+.chat-markdown h1, .chat-markdown h2, .chat-markdown h3 {
+  font-weight: 600;
+  margin-top: 0.75em;
+  margin-bottom: 0.25em;
+}
+.chat-markdown h1 { font-size: 1.25em; }
+.chat-markdown h2 { font-size: 1.1em; }
+.chat-markdown h3 { font-size: 1em; }
+.chat-markdown p { margin: 0.35em 0; }
+.chat-markdown ul, .chat-markdown ol { margin: 0.35em 0; padding-left: 1.5em; }
+.chat-markdown ul { list-style-type: disc; }
+.chat-markdown ol { list-style-type: decimal; }
+.chat-markdown li { margin: 0.15em 0; }
+.chat-markdown strong { font-weight: 600; }
+.chat-markdown code {
+  background: rgba(255,255,255,0.08);
+  padding: 0.15em 0.35em;
+  border-radius: 0.25em;
+  font-size: 0.85em;
+}
+.chat-markdown pre {
+  background: #18181b;
+  padding: 0.75em;
+  border-radius: 0.5em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.chat-markdown pre code {
+  background: none;
+  padding: 0;
+}
+.chat-markdown blockquote {
+  border-left: 3px solid #3f3f46;
+  padding-left: 0.75em;
+  color: #a1a1aa;
+  margin: 0.5em 0;
+}
+.chat-markdown a {
+  color: #60a5fa;
+  text-decoration: underline;
+}
+.chat-markdown a:hover { color: #93bbfc; }
+.chat-markdown img {
+  max-width: 100%;
+  border-radius: 0.5em;
+  margin: 0.5em 0;
+}

@@ -11,6 +11,8 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   // Multi first (longest match / compound intent)
   { pattern: /\b(save|write file|read file).*(search|send|remind)/i, category: 'multi' },
   { pattern: /\b(search|find).*(save|send|remind)/i, category: 'multi' },
+  // Research — before web_search to catch compound research intent
+  { pattern: /\b(research|analyze|analysis|chart|graph|plot|visualize|compare.*data|trend|stock|stocks|ticker|market data|data science|historical data)\b/i, category: 'research' },
   // Specific action categories before broad ones
   { pattern: /\b(config|configure|setting|settings|preference|edit.*cron|modify.*cron|update.*cron|change.*cron|enable|disable|workspace|tools\.md)\b/i, category: 'config' },
   { pattern: /\b(add.*heartbeat|remove.*heartbeat|list.*heartbeat|periodic check|periodic task|autonomous check)\b/i, category: 'cron' },
@@ -25,13 +27,25 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
 ];
 
 const VALID_CATEGORIES = new Set([
-  'chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi', 'config', 'task',
+  'chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi', 'config', 'task', 'research',
 ]);
 
 export interface ClassifyResult {
   category: string;
   confidence: 'model' | 'keyword' | 'fallback' | 'sticky';
 }
+
+/**
+ * High-confidence keyword overrides that fire BEFORE model classification.
+ * Used for categories the router model doesn't know well (e.g., newly added ones).
+ * These patterns must be very specific to avoid false positives.
+ */
+const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
+  { pattern: /\b(research|analyze|analysis)\b.*\b(stock|market|data|trend|performance|price)\b/i, category: 'research' },
+  { pattern: /\b(stock|market|data|trend|performance)\b.*\b(research|analyze|analysis)\b/i, category: 'research' },
+  { pattern: /\b(chart|graph|plot|visualize)\b.*\b(data|stock|trend|performance|price)\b/i, category: 'research' },
+  { pattern: /^\s*research\b/i, category: 'research' },
+];
 
 /**
  * Strong new-topic signals — these indicate the user is starting a genuinely
@@ -43,6 +57,7 @@ const NEW_TOPIC_PATTERNS = [
   /\b(remind me|schedule|every day|set up a cron)\b/i, // explicit cron intent
   /\b(send|tell|notify)\b.*\b(message|channel)\b/i,   // explicit messaging intent
   /\b(remember this|save this|store this)\b/i,         // explicit memory intent
+  /\b(research|analyze)\b.*\b(stock|data|trend|market)\b/i,  // explicit research intent
 ];
 
 /** Messages that open with a greeting are starting a new conversation, not following up */
@@ -105,6 +120,14 @@ export async function classifyMessage(
         console.log(`[Router] Sticky: "${message.slice(0, 60)}..." → ${previousCategory} (follow-up)`);
         return { category: previousCategory, confidence: 'sticky' };
       }
+    }
+  }
+
+  // Pre-model overrides for categories the model doesn't know well
+  for (const override of PRE_MODEL_OVERRIDES) {
+    if (override.pattern.test(message) && validCategories.has(override.category)) {
+      console.log(`[Router] Pre-model override: "${message.slice(0, 60)}..." → ${override.category}`);
+      return { category: override.category, confidence: 'keyword' };
     }
   }
 

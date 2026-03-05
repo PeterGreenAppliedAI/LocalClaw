@@ -65,6 +65,30 @@ export function useRunCronJob() {
     mutationFn: (id: string) => fetchApi<{ result: string }>(`/cron/${id}/run`, { method: 'POST' }),
   });
 }
+export function useToggleCronJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      fetchApi(`/cron/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cron'] }),
+  });
+}
+export function useDeleteCronJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => fetchApi(`/cron/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cron'] }),
+  });
+}
+
+// --- Channels ---
+export function useReconnectChannel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => fetchApi(`/channels/${id}/reconnect`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['channels'] }),
+  });
+}
 
 // --- Facts ---
 export function useFacts(senderId?: string, query?: string) {
@@ -77,8 +101,31 @@ export function useFacts(senderId?: string, query?: string) {
 export function useMemorySenders() {
   return useQuery<string[]>({ queryKey: ['memory-senders'], queryFn: () => fetchApi('/memory/senders') });
 }
+export function useConsolidateFacts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (senderId?: string) => {
+      const body = senderId ? JSON.stringify({ senderId }) : undefined;
+      return fetchApi('/facts/consolidate', { method: 'POST', body });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['facts'] }),
+  });
+}
+export function useDeleteSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ agentId, sessionKey }: { agentId: string; sessionKey: string }) =>
+      fetchApi(`/sessions/${agentId}/${encodeURIComponent(sessionKey)}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+  });
+}
 
 // --- Tools ---
 export function useTools() {
   return useQuery<ToolInfo[]>({ queryKey: ['tools'], queryFn: () => fetchApi('/tools') });
+}
+
+// --- Config ---
+export function useConfig() {
+  return useQuery<Record<string, unknown>>({ queryKey: ['config'], queryFn: () => fetchApi('/config') });
 }
