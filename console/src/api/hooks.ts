@@ -1,0 +1,84 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { fetchApi } from './client';
+import type { SystemStatus, OllamaModel, ChannelInfo, SessionMeta, ConversationTurn, Task, CronJob, FactEntry, ToolInfo } from '../types';
+
+// --- System ---
+export function useStatus() {
+  return useQuery<SystemStatus>({ queryKey: ['status'], queryFn: () => fetchApi('/status'), refetchInterval: 30_000 });
+}
+export function useModels() {
+  return useQuery<OllamaModel[]>({ queryKey: ['models'], queryFn: () => fetchApi('/models') });
+}
+
+// --- Channels ---
+export function useChannels() {
+  return useQuery<ChannelInfo[]>({ queryKey: ['channels'], queryFn: () => fetchApi('/channels'), refetchInterval: 15_000 });
+}
+
+// --- Sessions ---
+export function useSessions(agentId?: string) {
+  const params = agentId ? `?agentId=${agentId}` : '';
+  return useQuery<SessionMeta[]>({ queryKey: ['sessions', agentId], queryFn: () => fetchApi(`/sessions${params}`) });
+}
+export function useTranscript(agentId: string, sessionKey: string) {
+  return useQuery<ConversationTurn[]>({
+    queryKey: ['transcript', agentId, sessionKey],
+    queryFn: () => fetchApi(`/sessions/${agentId}/${encodeURIComponent(sessionKey)}`),
+    enabled: !!agentId && !!sessionKey,
+  });
+}
+
+// --- Tasks ---
+export function useTasks(status?: string) {
+  const params = status ? `?status=${status}` : '';
+  return useQuery<Task[]>({ queryKey: ['tasks', status], queryFn: () => fetchApi(`/tasks${params}`) });
+}
+export function useCreateTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (task: Partial<Task>) => fetchApi<Task>('/tasks', { method: 'POST', body: JSON.stringify(task) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  });
+}
+export function useUpdateTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...changes }: { id: string } & Partial<Task>) =>
+      fetchApi<Task>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  });
+}
+export function useDeleteTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => fetchApi(`/tasks/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  });
+}
+
+// --- Cron ---
+export function useCronJobs() {
+  return useQuery<CronJob[]>({ queryKey: ['cron'], queryFn: () => fetchApi('/cron') });
+}
+export function useRunCronJob() {
+  return useMutation({
+    mutationFn: (id: string) => fetchApi<{ result: string }>(`/cron/${id}/run`, { method: 'POST' }),
+  });
+}
+
+// --- Facts ---
+export function useFacts(senderId?: string, query?: string) {
+  const params = new URLSearchParams();
+  if (senderId) params.set('senderId', senderId);
+  if (query) params.set('query', query);
+  const qs = params.toString() ? `?${params}` : '';
+  return useQuery<FactEntry[]>({ queryKey: ['facts', senderId, query], queryFn: () => fetchApi(`/facts/all${qs}`) });
+}
+export function useMemorySenders() {
+  return useQuery<string[]>({ queryKey: ['memory-senders'], queryFn: () => fetchApi('/memory/senders') });
+}
+
+// --- Tools ---
+export function useTools() {
+  return useQuery<ToolInfo[]>({ queryKey: ['tools'], queryFn: () => fetchApi('/tools') });
+}

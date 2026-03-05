@@ -23,6 +23,8 @@ import { STTService } from './services/stt.js';
 import { VisionService } from './services/vision.js';
 import { saveAttachment, isImageMime } from './services/attachments.js';
 import { ollamaUnreachable, toolExecutionError, LocalClawError } from './errors.js';
+import type { ConsoleApiDeps } from './console/types.js';
+import type { WebApiAdapter } from './channels/web/adapter.js';
 // Pipeline utilities kept in src/services/tts-stream.ts for future use with slower TTS models
 
 function splitFinalMessage(text: string, limit: number): string[] {
@@ -57,6 +59,7 @@ export class Orchestrator {
   private heartbeatCron?: Cron;
   private embeddingStore?: EmbeddingStore;
   private factStore?: FactStore;
+  private taskStore?: TaskStore;
 
   constructor(config: LocalClawConfig) {
     this.config = config;
@@ -124,10 +127,11 @@ export class Orchestrator {
 
     // Set up task store
     const defaultWorkspace = resolveWorkspacePath(this.config.agents.default, this.config);
-    const taskStore = new TaskStore(
+    this.taskStore = new TaskStore(
       join(defaultWorkspace, 'tasks.json'),
       join(defaultWorkspace, 'TASKS.md'),
     );
+    const taskStore = this.taskStore;
 
     // Register all tools
     const { embeddingStore } = await registerAllTools(this.toolRegistry, this.config, {
@@ -151,6 +155,29 @@ export class Orchestrator {
       channelConfigs[id] = cfg as ChannelAdapterConfig;
     }
     await this.channelRegistry.connectAll(channelConfigs);
+
+    // Inject console API deps into web adapter
+    const webAdapter = this.channelRegistry.get('web') as WebApiAdapter | undefined;
+    if (webAdapter?.injectDeps) {
+      const consoleDeps: ConsoleApiDeps = {
+        config: this.config,
+        ollamaClient: this.client,
+        toolRegistry: this.toolRegistry,
+        channelRegistry: this.channelRegistry,
+        sessionStore: this.sessionStore,
+        taskStore: this.taskStore!,
+        cronService: this.cronService,
+        factStore: this.factStore,
+        visionService: this.visionService,
+        dispatch: (params) => dispatchMessage({
+          client: this.client,
+          registry: this.toolRegistry,
+          config: this.config,
+          ...params,
+        }),
+      };
+      webAdapter.injectDeps(consoleDeps);
+    }
 
     // Start cron
     if (this.cronService) {

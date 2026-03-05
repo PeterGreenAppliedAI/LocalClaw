@@ -1,5 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { join, extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type {
   ChannelAdapter,
   ChannelAdapterConfig,
@@ -9,12 +11,31 @@ import type {
   MessageContent,
 } from '../types.js';
 import { channelConnectError, channelSendError } from '../../errors.js';
+import type { ConsoleApiDeps } from '../../console/types.js';
+import { handleConsoleRequest } from '../../console/api.js';
 
 const voiceHtml = readFileSync(new URL('./voice-ui.html', import.meta.url), 'utf-8');
+
+// Resolve console/dist path relative to project root
+const PROJECT_ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..', '..');
+const CONSOLE_DIST = join(PROJECT_ROOT, 'console', 'dist');
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+};
 
 /**
  * Simple HTTP REST API adapter for testing.
  * POST /api/message → dispatch → response
+ * Also serves the management console at /console/
  */
 export class WebApiAdapter implements ChannelAdapter {
   readonly id = 'web';
@@ -23,6 +44,13 @@ export class WebApiAdapter implements ChannelAdapter {
   private currentStatus: ChannelStatus = 'disconnected';
   private pendingResponses = new Map<string, (content: MessageContent) => void>();
   private apiKey: string | undefined;
+  private consoleDeps: ConsoleApiDeps | null = null;
+
+  /** Inject console API dependencies after orchestrator is fully initialized */
+  injectDeps(deps: ConsoleApiDeps): void {
+    this.consoleDeps = deps;
+    console.log('[Web] Console API deps injected');
+  }
 
   async connect(config: ChannelAdapterConfig): Promise<void> {
     const port = (config as any).port ?? 3100;
@@ -31,16 +59,31 @@ export class WebApiAdapter implements ChannelAdapter {
     this.currentStatus = 'connecting';
 
     this.server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-      if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
+      const url = req.url ?? '';
+
+      // Console API — delegate to console handler
+      if (url.startsWith('/console/api/') && this.consoleDeps) {
+        const handled = await handleConsoleRequest(req, res, this.consoleDeps, this.apiKey);
+        if (handled) return;
+      }
+
+      // Console static files
+      if (url.startsWith('/console')) {
+        this.serveConsole(req, res);
+        return;
+      }
+
+      // Existing routes
+      if (req.method === 'GET' && (url === '/' || url === '/index.html')) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(voiceHtml);
-      } else if (req.method === 'POST' && req.url === '/api/voice') {
+      } else if (req.method === 'POST' && url === '/api/voice') {
         if (!this.checkAuth(req, res)) return;
         await this.handleVoiceMessage(req, res);
-      } else if (req.method === 'POST' && req.url === '/api/message') {
+      } else if (req.method === 'POST' && url === '/api/message') {
         if (!this.checkAuth(req, res)) return;
         await this.handleHttpMessage(req, res);
-      } else if (req.method === 'GET' && req.url === '/health') {
+      } else if (req.method === 'GET' && url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok' }));
       } else {
@@ -85,6 +128,46 @@ export class WebApiAdapter implements ChannelAdapter {
     return this.currentStatus;
   }
 
+  /** Serve static files from console/dist/ or SPA fallback to index.html */
+  private serveConsole(_req: IncomingMessage, res: ServerResponse): void {
+    // Strip /console prefix and query string
+    let filePath = (_req.url ?? '').split('?')[0].slice('/console'.length);
+    if (!filePath || filePath === '/') filePath = '/index.html';
+
+    const fullPath = join(CONSOLE_DIST, filePath);
+
+    // Security: prevent path traversal
+    if (!fullPath.startsWith(CONSOLE_DIST)) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
+
+    try {
+      if (existsSync(fullPath) && statSync(fullPath).isFile()) {
+        const ext = extname(fullPath);
+        const mime = MIME_TYPES[ext] ?? 'application/octet-stream';
+        const data = readFileSync(fullPath);
+        res.writeHead(200, { 'Content-Type': mime });
+        res.end(data);
+      } else {
+        // SPA fallback — serve index.html for all non-file routes
+        const indexPath = join(CONSOLE_DIST, 'index.html');
+        if (existsSync(indexPath)) {
+          const data = readFileSync(indexPath);
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(data);
+        } else {
+          res.writeHead(404);
+          res.end('Console not built. Run: cd console && npm run build');
+        }
+      }
+    } catch {
+      res.writeHead(500);
+      res.end('Internal server error');
+    }
+  }
+
   /** Return true if auth passes, false if response was sent with 401 */
   private checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
     if (!this.apiKey) return true; // no key configured — open access
@@ -110,7 +193,11 @@ export class WebApiAdapter implements ChannelAdapter {
 
     const mimeType = req.headers['content-type'] ?? 'audio/webm';
     const msgId = `web-voice-${Date.now()}`;
-    console.log(`[Web] Voice message from web-user (${audioBuffer.length} bytes, ${mimeType})`);
+
+    // Allow senderId override via query param (used by console frontend)
+    const urlObj = new URL(req.url ?? '', `http://${req.headers.host}`);
+    const senderId = urlObj.searchParams.get('senderId') ?? 'web-user';
+    console.log(`[Web] Voice message from ${senderId} (${audioBuffer.length} bytes, ${mimeType})`);
 
     // SSE headers
     res.writeHead(200, {
@@ -138,7 +225,7 @@ export class WebApiAdapter implements ChannelAdapter {
       id: msgId,
       channel: 'web',
       content: '',
-      senderId: 'web-user',
+      senderId,
       channelId: 'web',
       timestamp: new Date(),
       audio: { data: audioBuffer, mimeType },
