@@ -32,8 +32,8 @@ Each specialist gets a short system prompt and a handful of tools. Even a 30B mo
 
 LocalClaw includes a full web-based management console at `http://localhost:3100/console/`.
 
-<!-- TODO: Add screenshot -->
-![Management Console](docs/screenshots/console.png)
+<img width="2554" height="1302" alt="image" src="https://github.com/user-attachments/assets/a309e3d2-0bd5-4cf0-9806-0cbfeb1f0663" />
+
 
 **Pages:**
 
