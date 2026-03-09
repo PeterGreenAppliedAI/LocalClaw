@@ -77,7 +77,7 @@ export class WebApiAdapter implements ChannelAdapter {
       if (req.method === 'GET' && (url === '/' || url === '/index.html')) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(voiceHtml);
-      } else if (req.method === 'POST' && url === '/api/voice') {
+      } else if (req.method === 'POST' && url.startsWith('/api/voice')) {
         if (!this.checkAuth(req, res)) return;
         await this.handleVoiceMessage(req, res);
       } else if (req.method === 'POST' && url === '/api/message') {

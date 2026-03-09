@@ -189,18 +189,43 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     specialistConfig = { ...specialistConfig, model: params.modelOverride };
   }
 
+  // 4. Continuation context — help local models connect short follow-up replies
+  // to the specialist's previous question. Only inject when:
+  //   - sticky routing kept the same category (the user is continuing)
+  //   - the message is short (likely a reply, not a new request)
+  //   - the last history turn is from the assistant
+  let effectiveMessage = message;
+  if (
+    classification.confidence === 'sticky' &&
+    message.trim().length < 150 &&
+    history &&
+    history.length >= 1
+  ) {
+    const lastAssistant = [...history].reverse().find(h => h.role === 'assistant');
+    if (lastAssistant?.content) {
+      const preview = lastAssistant.content.length > 300
+        ? lastAssistant.content.slice(-300) + '...'
+        : lastAssistant.content;
+      effectiveMessage = `[Continuation — the user is responding to your previous message: "${preview}"]\n\n${message}`;
+      console.log(`[Dispatch] Injected continuation context (${preview.slice(0, 60)}...)`);
+    }
+  }
+
   let result: DispatchResult;
   const dispatchStart = Date.now();
 
+  // Use effectiveMessage (with continuation context) for all specialist calls
+  const continuationParams = effectiveMessage !== message ? { ...params, message: effectiveMessage } : params;
+
   if (!specialistConfig) {
-    result = await runAsBareChat(client, config, message, classification, history, undefined, params.onStream, agentId, params.sourceContext, !!params.modelOverride);
+    result = await runAsBareChat(client, config, effectiveMessage, classification, history, undefined, params.onStream, agentId, params.sourceContext, !!params.modelOverride);
   } else if (specialistConfig.tools.length === 0) {
     // No tools — skip ReAct loop, just chat directly
-    result = await runAsBareChat(client, config, message, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext, !!params.modelOverride);
+    result = await runAsBareChat(client, config, effectiveMessage, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext, !!params.modelOverride);
   } else if (effectiveCategory === 'multi') {
-    result = await runMultiOrchestration(params, classification, specialistConfig, history);
+    result = await runMultiOrchestration(continuationParams, classification, specialistConfig, history);
   } else {
-    result = await runSpecialist(params, classification, specialistConfig, history);
+    result = await runSpecialist(continuationParams, classification, specialistConfig, history);
   }
 
   result.category = effectiveCategory;
