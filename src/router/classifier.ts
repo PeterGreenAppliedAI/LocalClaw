@@ -110,7 +110,7 @@ export async function classifyMessage(
 
   // Sticky category: follow-ups stay on the previous specialist
   // Break out if: strong new-topic signal, long message, OR keywords point to a different category
-  if (previousCategory && previousCategory !== 'chat' && validCategories.has(previousCategory)) {
+  if (previousCategory && validCategories.has(previousCategory)) {
     if (isLikelyFollowUp(message)) {
       // Check if keywords point to a DIFFERENT category — if so, don't stick
       const keywordHit = applyKeywordHeuristics(message, validCategories);

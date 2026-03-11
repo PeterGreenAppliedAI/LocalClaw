@@ -775,6 +775,26 @@ export class Orchestrator {
           );
         }
       }
+
+      // Cross-channel notification: forward WhatsApp conversations to Discord DM
+      if (msg.channel === 'whatsapp' && this.config.heartbeat?.delivery) {
+        const ownerWhatsAppIds = (this.config.channels?.whatsapp as any)?.security?.trustedUsers as string[] | undefined;
+        const isOwner = ownerWhatsAppIds?.includes(msg.senderId);
+        if (!isOwner) {
+          const { channel: notifyChannel, target: notifyTarget } = this.config.heartbeat.delivery;
+          const senderLabel = msg.senderName ?? msg.senderId;
+          const preview = msg.content.length > 200 ? msg.content.slice(0, 200) + '...' : msg.content;
+          const notification = `📱 **WhatsApp** — ${senderLabel}:\n> ${preview}`;
+          try {
+            await this.channelRegistry.send(
+              { channel: notifyChannel, channelId: notifyTarget },
+              { text: notification },
+            );
+          } catch (notifyErr) {
+            console.warn('[Orchestrator] WhatsApp notification failed:', notifyErr instanceof Error ? notifyErr.message : notifyErr);
+          }
+        }
+      }
     } catch (err) {
       const wrapped = err instanceof LocalClawError ? err : new LocalClawError('TOOL_EXECUTION_ERROR', 'Message handling failed', err);
       console.error(`[Orchestrator] ${wrapped.code}: ${wrapped.message}`);

@@ -6,7 +6,15 @@ import type { OllamaMessage } from './ollama/types.js';
 import { classifyMessage, type ClassifyResult } from './router/classifier.js';
 import { runToolLoop } from './tool-loop/engine.js';
 import { SessionStore } from './sessions/store.js';
-import type { ConversationTurn } from './sessions/types.js';
+import type { ConversationTurn, SessionState } from './sessions/types.js';
+import { createEmptySessionState } from './sessions/types.js';
+import {
+  updateMechanicalState,
+  extractSemanticDelta,
+  applyDelta,
+  serializeStatePreamble,
+  SEMANTIC_INTERVAL,
+} from './sessions/state-tracker.js';
 import { resolveWorkspacePath } from './agents/scope.js';
 import { buildWorkspaceContext } from './agents/workspace.js';
 import { logDispatch, logRouterClassification } from './metrics.js';
@@ -189,11 +197,20 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     specialistConfig = { ...specialistConfig, model: params.modelOverride };
   }
 
-  // 4. Continuation context — help local models connect short follow-up replies
-  // to the specialist's previous question. Only inject when:
-  //   - sticky routing kept the same category (the user is continuing)
-  //   - the message is short (likely a reply, not a new request)
-  //   - the last history turn is from the assistant
+  // 4. Session state — load structured state and inject preamble
+  let sessionState: SessionState | null = null;
+  let statePreamble = '';
+  if (sessionStore) {
+    sessionState = sessionStore.loadState(agentId, sessionKey);
+    if (sessionState) {
+      statePreamble = serializeStatePreamble(sessionState);
+      if (statePreamble) {
+        console.log(`[Dispatch] State preamble: turn=${sessionState.turnCount}, topic="${sessionState.currentTopic.slice(0, 60)}"`);
+      }
+    }
+  }
+
+  // 4b. Continuation context — for short follow-ups, also include the last assistant message
   let effectiveMessage = message;
   if (
     classification.confidence === 'sticky' &&
@@ -214,21 +231,24 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   let result: DispatchResult;
   const dispatchStart = Date.now();
 
-  // Use effectiveMessage (with continuation context) for all specialist calls
-  const continuationParams = effectiveMessage !== message ? { ...params, message: effectiveMessage } : params;
+  // Pass effective message through to specialists
+  const effectiveParams = effectiveMessage !== message ? { ...params, message: effectiveMessage } : params;
 
   if (!specialistConfig) {
-    result = await runAsBareChat(client, config, effectiveMessage, classification, history, undefined, params.onStream, agentId, params.sourceContext, !!params.modelOverride);
+    result = await runAsBareChat(client, config, effectiveMessage, classification, history, undefined, params.onStream, agentId, params.sourceContext, !!params.modelOverride, statePreamble);
   } else if (specialistConfig.tools.length === 0) {
     // No tools — skip ReAct loop, just chat directly
-    result = await runAsBareChat(client, config, effectiveMessage, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext, !!params.modelOverride);
+    result = await runAsBareChat(client, config, effectiveMessage, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext, !!params.modelOverride, statePreamble);
   } else if (effectiveCategory === 'multi') {
-    result = await runMultiOrchestration(continuationParams, classification, specialistConfig, history);
+    result = await runMultiOrchestration(effectiveParams, classification, specialistConfig, history, statePreamble);
   } else {
-    result = await runSpecialist(continuationParams, classification, specialistConfig, history);
+    result = await runSpecialist(effectiveParams, classification, specialistConfig, history, statePreamble);
   }
 
   result.category = effectiveCategory;
+
+  // Strip thinking tags from models that emit <think>...</think> blocks
+  result.answer = result.answer.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
   logDispatch({
     category: effectiveCategory,
@@ -239,7 +259,37 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     toolCalls: result.steps?.map(s => s.tool).filter(Boolean) as string[] | undefined,
   });
 
-  // 4. Persist turns if session store available
+  // 5. Update session state
+  if (sessionStore) {
+    const toolNames = (result.steps?.map(s => s.tool).filter(Boolean) as string[]) ?? [];
+    sessionState = updateMechanicalState(
+      sessionState ?? createEmptySessionState(effectiveCategory),
+      effectiveCategory,
+      toolNames,
+      result.answer,
+    );
+
+    // Periodic semantic extraction (skip for cron — no human in the loop)
+    if (!params.cronMode && sessionState.turnCount - sessionState.lastSemanticUpdate >= SEMANTIC_INTERVAL) {
+      try {
+        const recentTurns = sessionStore.loadTranscript(agentId, sessionKey, 10);
+        const delta = await extractSemanticDelta(
+          client,
+          config.router.model,
+          recentTurns,
+          sessionState,
+        );
+        sessionState = applyDelta(sessionState, delta);
+        console.log(`[Dispatch] Semantic state updated: topic="${sessionState.currentTopic.slice(0, 60)}", facts=${sessionState.knownFacts.length}`);
+      } catch (err) {
+        console.warn('[Dispatch] Semantic extraction failed:', err instanceof Error ? err.message : err);
+      }
+    }
+
+    sessionStore.saveState(agentId, sessionKey, sessionState);
+  }
+
+  // 6. Persist turns if session store available
   if (sessionStore) {
     const now = new Date().toISOString();
     sessionStore.appendTurn(agentId, sessionKey, {
@@ -266,6 +316,7 @@ async function runSpecialist(
   classification: ClassifyResult,
   specialist: SpecialistConfig,
   history?: OllamaMessage[],
+  statePreamble?: string,
 ): Promise<DispatchResult> {
   const { client, registry, message, agentId = 'main', sessionKey = 'default', config } = params;
   const { category } = classification;
@@ -317,6 +368,11 @@ async function runSpecialist(
     systemPrompt += '\n\nIMPORTANT: This is a voice conversation. Your response will be spoken aloud via TTS. Keep responses concise. Do NOT use emojis, markdown formatting, bullet points, or special characters — they will be verbalized. Use plain conversational English only.';
   }
 
+  // Inject session state preamble
+  if (statePreamble) {
+    systemPrompt += '\n\n' + statePreamble;
+  }
+
   const result = await runToolLoop({
     client,
     config: {
@@ -358,6 +414,7 @@ async function runMultiOrchestration(
   classification: ClassifyResult,
   specialist: SpecialistConfig,
   history?: OllamaMessage[],
+  _statePreamble?: string,
 ): Promise<DispatchResult> {
   const { client, registry, config, message } = params;
   const categories = Object.keys(config.specialists).filter(c => c !== 'multi');
@@ -488,6 +545,7 @@ async function runAsBareChat(
   agentId = 'main',
   sourceContext?: DispatchParams['sourceContext'],
   isVoice = false,
+  statePreamble?: string,
 ): Promise<DispatchResult> {
   const chatModel = specialist?.model ?? config.specialists.chat?.model ?? config.router.model;
   const temperature = specialist?.temperature ?? 0.8;
@@ -505,6 +563,9 @@ async function runAsBareChat(
   }
   if (isVoice) {
     systemContent += '\n\nIMPORTANT: This is a voice conversation. Your response will be spoken aloud via TTS. Keep responses concise. Do NOT use emojis, markdown formatting, bullet points, or special characters — they will be verbalized. Use plain conversational English only.';
+  }
+  if (statePreamble) {
+    systemContent += '\n\n' + statePreamble;
   }
 
   const messages: OllamaMessage[] = [

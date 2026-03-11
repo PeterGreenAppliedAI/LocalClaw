@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { sessionIoError } from '../errors.js';
-import type { ConversationTurn, SessionMetadata, CompactionSummary } from './types.js';
+import type { ConversationTurn, SessionMetadata, CompactionSummary, SessionState } from './types.js';
 
 export class SessionStore {
   constructor(private readonly baseDir: string) {}
@@ -16,6 +16,10 @@ export class SessionStore {
 
   private summaryPath(agentId: string, sessionKey: string): string {
     return join(this.baseDir, agentId, `${sanitizeKey(sessionKey)}.summary.json`);
+  }
+
+  private statePath(agentId: string, sessionKey: string): string {
+    return join(this.baseDir, agentId, `${sanitizeKey(sessionKey)}.state.json`);
   }
 
   loadTranscript(agentId: string, sessionKey: string, maxTurns?: number): ConversationTurn[] {
@@ -70,6 +74,14 @@ export class SessionStore {
     } catch {
       // Ignore
     }
+
+    // Clear session state — stale state would mislead the specialist
+    const state = this.statePath(agentId, sessionKey);
+    try {
+      writeFileSync(state, '');
+    } catch {
+      // Ignore
+    }
   }
 
   loadSummary(agentId: string, sessionKey: string): CompactionSummary | null {
@@ -79,6 +91,28 @@ export class SessionStore {
       return JSON.parse(data) as CompactionSummary;
     } catch {
       return null;
+    }
+  }
+
+  loadState(agentId: string, sessionKey: string): SessionState | null {
+    const path = this.statePath(agentId, sessionKey);
+    try {
+      const data = readFileSync(path, 'utf-8');
+      if (!data.trim()) return null;
+      return JSON.parse(data) as SessionState;
+    } catch {
+      return null;
+    }
+  }
+
+  saveState(agentId: string, sessionKey: string, state: SessionState): void {
+    const path = this.statePath(agentId, sessionKey);
+    const dir = dirname(path);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(path, JSON.stringify(state, null, 2));
+    } catch {
+      console.warn(`[SessionStore] Failed to write state: ${path}`);
     }
   }
 
