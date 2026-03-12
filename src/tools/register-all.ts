@@ -37,6 +37,7 @@ import { createTaskDoneTool } from './task-done.js';
 import { createTaskRemoveTool } from './task-remove.js';
 import { createReasonTool } from './reason.js';
 import { createMemoryCleanupTool } from './memory-cleanup.js';
+import { createDevMeshTool } from './devmesh.js';
 
 export interface RegisterToolsOptions {
   cronService?: CronService;
@@ -149,6 +150,11 @@ export async function registerAllTools(
   // Workspace tools (always available)
   registry.register(createWorkspaceReadTool());
   registry.register(createWorkspaceWriteTool());
+
+  // DevMesh tool (requires config)
+  if (config.tools?.devmesh) {
+    registry.register(createDevMeshTool(config.tools.devmesh));
+  }
 
   return { embeddingStore };
 }

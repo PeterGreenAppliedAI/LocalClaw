@@ -180,6 +180,12 @@ export const KnowledgeConfigSchema = z.object({
   allowedExtensions: z.array(z.string()).default(['.pdf', '.csv', '.md', '.txt', '.html', '.htm']),
 });
 
+export const DevMeshConfigSchema = z.object({
+  baseUrl: z.string(),
+  apiKey: z.string(),
+  timeoutMs: z.number().default(30_000),
+});
+
 export const ToolsConfigSchema = z.object({
   web: z.object({
     search: WebSearchConfigSchema.optional(),
@@ -188,6 +194,7 @@ export const ToolsConfigSchema = z.object({
   exec: ExecConfigSchema.optional(),
   website: WebsiteConfigSchema.optional(),
   knowledge: KnowledgeConfigSchema.optional(),
+  devmesh: DevMeshConfigSchema.optional(),
 });
 
 export const VoiceConfigSchema = z.object({

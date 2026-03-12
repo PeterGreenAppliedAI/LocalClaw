@@ -105,8 +105,43 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
       deps.config,
     );
 
-    // Handle !research command
     const trimmed = (body.message || '').trim();
+
+    // Handle !devmesh command
+    if (trimmed.toLowerCase().startsWith('!devmesh')) {
+      const rawArgs = trimmed.slice('!devmesh'.length).trim();
+
+      if (!rawArgs) {
+        res.write(`data: ${JSON.stringify({ type: 'done', answer: 'Usage: `!devmesh <question or command>`\n\nExamples:\n- `!devmesh show me pipeline stats`\n- `!devmesh how are campaigns performing?`\n- `!devmesh run discovery for enterprise segment`', category: 'devmesh', iterations: 0 })}\n\n`);
+        clearInterval(keepalive);
+        res.end();
+        return;
+      }
+
+      res.write(`data: ${JSON.stringify({ type: 'status', message: `Querying DevMesh...` })}\n\n`);
+
+      const result = await deps.dispatch({
+        message: rawArgs,
+        agentId: route.agentId,
+        sessionKey: route.sessionKey,
+        sessionStore: deps.sessionStore,
+        overrideCategory: 'devmesh',
+        sourceContext: { channel: 'console', channelId: 'console', senderId },
+        factStore: deps.factStore,
+      });
+
+      res.write(`data: ${JSON.stringify({
+        type: 'done',
+        answer: result.answer,
+        category: result.category,
+        iterations: result.iterations,
+      })}\n\n`);
+      clearInterval(keepalive);
+      res.end();
+      return;
+    }
+
+    // Handle !research command
     if (trimmed.toLowerCase().startsWith('!research')) {
       const rawArgs = trimmed.slice('!research'.length).trim();
       const typeMatch = rawArgs.match(/^--(\w+)\s+/);

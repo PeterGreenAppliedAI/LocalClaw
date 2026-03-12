@@ -671,6 +671,56 @@ export class Orchestrator {
       return;
     }
 
+    if (trimmed.startsWith('!devmesh')) {
+      const rawArgs = msg.content.trim().slice('!devmesh'.length).trim();
+
+      if (!rawArgs) {
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+          { text: 'Usage: `!devmesh <question or command>`\n\nExamples:\n• `!devmesh show me pipeline stats`\n• `!devmesh how are campaigns performing?`\n• `!devmesh run discovery for enterprise segment`\n• `!devmesh pause campaign abc123`' },
+        );
+        return;
+      }
+
+      const route = resolveRoute(
+        { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
+        this.config,
+      );
+
+      try {
+        const result = await dispatchMessage({
+          client: this.client,
+          registry: this.toolRegistry,
+          config: this.config,
+          message: rawArgs,
+          agentId: route.agentId,
+          sessionKey: route.sessionKey,
+          sessionStore: this.sessionStore,
+          overrideCategory: 'devmesh',
+          sourceContext: {
+            channel: msg.channel,
+            channelId: msg.channelId ?? '',
+            guildId: msg.guildId,
+            senderId: msg.senderId,
+          },
+          factStore: this.factStore,
+        });
+
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId },
+          { text: result.answer },
+        );
+      } catch (err) {
+        const wrapped = err instanceof LocalClawError ? err : new LocalClawError('TOOL_EXECUTION_ERROR', 'DevMesh query failed', err);
+        console.error(`[Orchestrator] DevMesh failed: ${wrapped.code}: ${wrapped.message}`);
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId },
+          { text: `DevMesh failed: ${wrapped.message}` },
+        ).catch(() => {});
+      }
+      return;
+    }
+
     // STT pre-processing: transcribe voice messages to text
     const hadAudio = !!msg.audio;
     if (msg.audio && this.sttService.enabled) {
