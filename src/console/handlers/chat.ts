@@ -4,7 +4,10 @@ import type { DispatchResult } from '../../dispatch.js';
 import { sendJson, sendError } from '../helpers/send-json.js';
 import { parseBody } from '../helpers/parse-body.js';
 import { resolveRoute } from '../../agents/resolve-route.js';
+import { resolveWorkspacePath } from '../../agents/scope.js';
 import { saveAttachment, isImageMime } from '../../services/attachments.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 const IMAGE_EXT_RE = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
 
@@ -101,6 +104,60 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
       { channel: 'console', senderId, channelId: 'console' },
       deps.config,
     );
+
+    // Handle !research command
+    const trimmed = (body.message || '').trim();
+    if (trimmed.toLowerCase().startsWith('!research')) {
+      const rawArgs = trimmed.slice('!research'.length).trim();
+      const typeMatch = rawArgs.match(/^--(\w+)\s+/);
+      const validTypes = ['deck', 'brief', 'deepdive', 'market', 'teardown', 'memo'];
+      const artifactType = typeMatch && validTypes.includes(typeMatch[1]) ? typeMatch[1] : 'memo';
+      const topic = typeMatch ? rawArgs.slice(typeMatch[0].length).trim() : rawArgs;
+
+      if (!topic) {
+        res.write(`data: ${JSON.stringify({ type: 'done', answer: 'Usage: `!research [--deck|--brief|--deepdive|--market|--teardown|--memo] <topic>`', category: 'research', iterations: 0 })}\n\n`);
+        clearInterval(keepalive);
+        res.end();
+        return;
+      }
+
+      const slug = topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
+      const today = new Date().toISOString().split('T')[0];
+      const enhancedMessage = `[RESEARCH PIPELINE]\nArtifact type: ${artifactType}\nTopic: ${topic}\nOutput slug: ${slug}\nCurrent date: ${today}\n\nProduce a research deck on this topic using the MOST RECENT data available. Search for ${new Date().getFullYear()} data first. Follow your pipeline stages exactly.`;
+
+      res.write(`data: ${JSON.stringify({ type: 'status', message: `Researching: ${topic} (${artifactType})...` })}\n\n`);
+
+      const result = await deps.dispatch({
+        message: enhancedMessage,
+        agentId: route.agentId,
+        sessionKey: route.sessionKey,
+        sessionStore: deps.sessionStore,
+        overrideCategory: 'research',
+        sourceContext: { channel: 'console', channelId: 'console', senderId },
+        factStore: deps.factStore,
+      });
+
+      const deckPath = `research/${slug}.html`;
+      const workspacePath = resolveWorkspacePath(route.agentId, deps.config);
+      const deckExists = existsSync(join(workspacePath, deckPath));
+
+      let answer = result.answer;
+      if (deckExists) {
+        answer += `\n\n[View your deck](/console/api/files/${deckPath})`;
+      }
+
+      const images = extractImagePaths(result);
+      res.write(`data: ${JSON.stringify({
+        type: 'done',
+        answer,
+        category: result.category,
+        iterations: result.iterations,
+        ...(images.length > 0 ? { images: images.map(p => `/console/api/files/${encodeURIComponent(p)}`) } : {}),
+      })}\n\n`);
+      clearInterval(keepalive);
+      res.end();
+      return;
+    }
 
     // Process attachments — same pipeline as orchestrator
     let message = body.message || '';

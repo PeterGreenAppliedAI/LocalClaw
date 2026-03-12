@@ -11,8 +11,9 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   // Multi first (longest match / compound intent)
   { pattern: /\b(save|write file|read file).*(search|send|remind)/i, category: 'multi' },
   { pattern: /\b(search|find).*(save|send|remind)/i, category: 'multi' },
-  // Research — before web_search to catch compound research intent
-  { pattern: /\b(research|analyze|analysis|chart|graph|plot|visualize|compare.*data|trend|stock|stocks|ticker|market data|data science|historical data)\b/i, category: 'research' },
+  // Research — only trigger on clear research *requests*, not casual mentions
+  { pattern: /\b(research|analyze)\b.*\b(for me|this topic|in depth|deep dive)\b/i, category: 'research' },
+  { pattern: /\b(chart|graph|plot|visualize)\b.*\b(data|stock|trend|performance|price)\b/i, category: 'research' },
   // Specific action categories before broad ones
   { pattern: /\b(config|configure|setting|settings|preference|edit.*cron|modify.*cron|update.*cron|change.*cron|enable|disable|workspace|tools\.md)\b/i, category: 'config' },
   { pattern: /\b(add.*heartbeat|remove.*heartbeat|list.*heartbeat|periodic check|periodic task|autonomous check)\b/i, category: 'cron' },
@@ -41,10 +42,9 @@ export interface ClassifyResult {
  * These patterns must be very specific to avoid false positives.
  */
 const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
-  { pattern: /\b(research|analyze|analysis)\b.*\b(stock|market|data|trend|performance|price)\b/i, category: 'research' },
+  // Research — only compound intent patterns, not bare keywords
+  { pattern: /\b(research|analyze)\b.*\b(stock|market|data|trend|performance|price)\b/i, category: 'research' },
   { pattern: /\b(stock|market|data|trend|performance)\b.*\b(research|analyze|analysis)\b/i, category: 'research' },
-  { pattern: /\b(chart|graph|plot|visualize)\b.*\b(data|stock|trend|performance|price)\b/i, category: 'research' },
-  { pattern: /^\s*research\b/i, category: 'research' },
 ];
 
 /**

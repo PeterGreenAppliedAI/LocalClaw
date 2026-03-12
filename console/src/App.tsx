@@ -12,6 +12,7 @@ import Memory from './pages/Memory';
 import Channels from './pages/Channels';
 import Tools from './pages/Tools';
 import Config from './pages/Config';
+import Research from './pages/Research';
 
 export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken());
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="channels" element={<Channels />} />
         <Route path="tools" element={<Tools />} />
         <Route path="config" element={<Config />} />
+        <Route path="research" element={<Research />} />
       </Route>
     </Routes>
   );

@@ -592,6 +592,85 @@ export class Orchestrator {
       return;
     }
 
+    if (trimmed.startsWith('!research')) {
+      const rawArgs = msg.content.trim().slice('!research'.length).trim();
+
+      // Parse --type flag
+      const typeMatch = rawArgs.match(/^--(\w+)\s+/);
+      const validTypes = ['deck', 'brief', 'deepdive', 'market', 'teardown', 'memo'];
+      const artifactType = typeMatch && validTypes.includes(typeMatch[1]) ? typeMatch[1] : 'memo';
+      const topic = typeMatch ? rawArgs.slice(typeMatch[0].length).trim() : rawArgs;
+
+      if (!topic) {
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+          { text: 'Usage: `!research [--deck|--brief|--deepdive|--market|--teardown|--memo] <topic>`\n\nExample: `!research --market EV battery trends`' },
+        );
+        return;
+      }
+
+      const slug = topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
+      const route = resolveRoute(
+        { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
+        this.config,
+      );
+
+      // Send progress indicator
+      await this.channelRegistry.send(
+        { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+        { text: `🔬 Researching: **${topic}** (${artifactType})\nThis may take a few minutes...` },
+      ).catch(() => {});
+
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const enhancedMessage = `[RESEARCH PIPELINE]\nArtifact type: ${artifactType}\nTopic: ${topic}\nOutput slug: ${slug}\nCurrent date: ${today}\n\nProduce a research deck on this topic using the MOST RECENT data available. Search for ${new Date().getFullYear()} data first. Follow your pipeline stages exactly.`;
+
+        const result = await dispatchMessage({
+          client: this.client,
+          registry: this.toolRegistry,
+          config: this.config,
+          message: enhancedMessage,
+          agentId: route.agentId,
+          sessionKey: route.sessionKey,
+          sessionStore: this.sessionStore,
+          overrideCategory: 'research',
+          sourceContext: {
+            channel: msg.channel,
+            channelId: msg.channelId ?? '',
+            guildId: msg.guildId,
+            senderId: msg.senderId,
+          },
+          factStore: this.factStore,
+        });
+
+        console.log(`[Orchestrator] Research complete: ${result.category} (${result.iterations} steps)`);
+
+        // Check if a deck was generated
+        const deckPath = `research/${slug}.html`;
+        const workspacePath = resolveWorkspacePath(route.agentId, this.config);
+        const fullDeckPath = join(workspacePath, deckPath);
+        const deckExists = existsSync(fullDeckPath);
+
+        let response = result.answer;
+        if (deckExists) {
+          response += `\n\n📊 **View your deck:** /console/api/files/${deckPath}`;
+        }
+
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId },
+          { text: response },
+        );
+      } catch (err) {
+        const wrapped = err instanceof LocalClawError ? err : new LocalClawError('TOOL_EXECUTION_ERROR', 'Research pipeline failed', err);
+        console.error(`[Orchestrator] Research failed: ${wrapped.code}: ${wrapped.message}`);
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId },
+          { text: `Research failed: ${wrapped.message}` },
+        ).catch(() => {});
+      }
+      return;
+    }
+
     // STT pre-processing: transcribe voice messages to text
     const hadAudio = !!msg.audio;
     if (msg.audio && this.sttService.enabled) {

@@ -10,6 +10,7 @@ import { handleSearchFacts, handleAllFacts, handleWriteFact, handleConsolidateFa
 import { handleTools } from './handlers/tools.js';
 import { handleChat, handleChatReset } from './handlers/chat.js';
 import { handleServeFile } from './handlers/files.js';
+import { handleListResearch, handleDeleteResearch } from './handlers/research.js';
 
 const API_PREFIX = '/console/api/';
 
@@ -177,6 +178,17 @@ export async function handleConsoleRequest(
     }
     if (path === 'chat/reset' && method === 'POST') {
       await handleChatReset(req, res, deps);
+      return true;
+    }
+
+    // Research decks
+    if (path === 'research' && method === 'GET') {
+      handleListResearch(req, res, deps);
+      return true;
+    }
+    const researchMatch = path.match(/^research\/([^/]+)$/);
+    if (researchMatch && method === 'DELETE') {
+      handleDeleteResearch(req, res, deps, researchMatch[1]);
       return true;
     }
 

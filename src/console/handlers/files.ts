@@ -14,6 +14,8 @@ const MIME_TYPES: Record<string, string> = {
   '.webp': 'image/webp',
   '.pdf': 'application/pdf',
   '.csv': 'text/csv',
+  '.html': 'text/html',
+  '.json': 'application/json',
 };
 
 export function handleServeFile(

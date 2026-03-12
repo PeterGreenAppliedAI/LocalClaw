@@ -80,6 +80,15 @@ export interface FactEntry {
   entities: string[];
 }
 
+export interface ResearchDeck {
+  slug: string;
+  title: string;
+  createdAt: string;
+  fileSize: number;
+  chartCount: number;
+  url: string;
+}
+
 export interface ToolInfo {
   name: string;
   description: string;

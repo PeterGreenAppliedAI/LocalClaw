@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchApi } from './client';
-import type { SystemStatus, OllamaModel, ChannelInfo, SessionMeta, ConversationTurn, Task, CronJob, FactEntry, ToolInfo } from '../types';
+import type { SystemStatus, OllamaModel, ChannelInfo, SessionMeta, ConversationTurn, Task, CronJob, FactEntry, ToolInfo, ResearchDeck } from '../types';
 
 // --- System ---
 export function useStatus() {
@@ -123,6 +123,18 @@ export function useDeleteSession() {
 // --- Tools ---
 export function useTools() {
   return useQuery<ToolInfo[]>({ queryKey: ['tools'], queryFn: () => fetchApi('/tools') });
+}
+
+// --- Research ---
+export function useResearchDecks() {
+  return useQuery<ResearchDeck[]>({ queryKey: ['research'], queryFn: () => fetchApi('/research'), refetchInterval: 30_000 });
+}
+export function useDeleteResearchDeck() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => fetchApi(`/research/${slug}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['research'] }),
+  });
 }
 
 // --- Config ---
