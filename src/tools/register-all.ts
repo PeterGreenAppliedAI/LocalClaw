@@ -74,7 +74,11 @@ export async function registerAllTools(
   registry.register(createMemorySearchTool(workspace, options?.ollamaClient, embeddingStore, options?.factStore));
   registry.register(createMemoryGetTool(workspace));
   registry.register(createMemorySaveTool(workspace, options?.factStore));
-  registry.register(createMemoryCleanupTool(options?.factStore));
+  registry.register(createMemoryCleanupTool(
+    options?.factStore,
+    options?.ollamaClient,
+    config.memory?.consolidation?.model,
+  ));
 
   // Knowledge import tool (requires Ollama for embeddings)
   if (options?.ollamaClient) {

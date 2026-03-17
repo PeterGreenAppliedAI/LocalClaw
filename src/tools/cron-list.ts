@@ -6,6 +6,7 @@ export function createCronListTool(cronService: CronService): LocalClawTool {
     name: 'cron_list',
     description: 'List all scheduled jobs',
     parameterDescription: 'includeDisabled (optional): Show disabled jobs too (default false).',
+    example: 'cron_list[{"includeDisabled": "true"}]',
     parameters: {
       type: 'object',
       properties: {

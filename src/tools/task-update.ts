@@ -6,6 +6,7 @@ export function createTaskUpdateTool(taskStore: TaskStore): LocalClawTool {
     name: 'task_update',
     description: 'Update an existing task. Change its title, details, status, priority, assignee, due date, or tags.',
     parameterDescription: 'id (required): Task ID. title (optional): New title. details (optional): New details. status (optional): New status (todo, in_progress, done, cancelled). priority (optional): New priority (low, medium, high). assignee (optional): New assignee. dueDate (optional): New due date (YYYY-MM-DD). tags (optional): New comma-separated tags.',
+    example: 'task_update[{"id": "t_abc123", "status": "in_progress", "priority": "high"}]',
     parameters: {
       type: 'object',
       properties: {

@@ -6,6 +6,7 @@ export function createTaskAddTool(taskStore: TaskStore): LocalClawTool {
     name: 'task_add',
     description: 'Create a new task on the task board. Returns the created task with its ID.',
     parameterDescription: 'title (required): Task title. details (optional): Additional details. priority (optional): low, medium, or high (default medium). assignee (optional): Who is responsible (e.g., "user", "bot"). dueDate (optional): Due date in YYYY-MM-DD format. tags (optional): Comma-separated tags.',
+    example: 'task_add[{"title": "Review pull request #42", "priority": "high", "assignee": "user", "dueDate": "2026-03-20", "tags": "code-review, urgent"}]',
     parameters: {
       type: 'object',
       properties: {

@@ -11,6 +11,7 @@ export function createWebFetchTool(config?: WebFetchConfig): LocalClawTool {
     name: 'web_fetch',
     description: 'Fetch the content of a URL and extract readable text',
     parameterDescription: 'url (required): The URL to fetch. extractMode (optional): "markdown" or "text" (default: "text"). maxChars (optional): max characters to return.',
+    example: 'web_fetch[{"url": "https://arxiv.org/abs/2401.12345", "extractMode": "markdown"}]',
     parameters: {
       type: 'object',
       properties: {

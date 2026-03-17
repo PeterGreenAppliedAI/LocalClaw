@@ -6,6 +6,7 @@ export function createHeartbeatRemoveTool(cronService: CronService): LocalClawTo
     name: 'heartbeat_remove',
     description: 'Remove a heartbeat task by ID.',
     parameterDescription: 'id (required): The heartbeat task ID to remove.',
+    example: 'heartbeat_remove[{"id": "hb_abc123"}]',
     parameters: {
       type: 'object',
       properties: {

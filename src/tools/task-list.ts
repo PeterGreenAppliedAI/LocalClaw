@@ -6,6 +6,7 @@ export function createTaskListTool(taskStore: TaskStore): LocalClawTool {
     name: 'task_list',
     description: 'List tasks from the task board. By default shows todo and in-progress tasks.',
     parameterDescription: 'status (optional): Filter by status (todo, in_progress, done, cancelled). assignee (optional): Filter by assignee. tag (optional): Filter by tag.',
+    example: 'task_list[{"status": "in_progress", "assignee": "user"}]',
     parameters: {
       type: 'object',
       properties: {

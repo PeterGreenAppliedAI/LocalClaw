@@ -6,6 +6,7 @@ export function createTaskRemoveTool(taskStore: TaskStore): LocalClawTool {
     name: 'task_remove',
     description: 'Permanently delete a task from the task board.',
     parameterDescription: 'id (required): The task ID to remove.',
+    example: 'task_remove[{"id": "t_abc123"}]',
     parameters: {
       type: 'object',
       properties: {

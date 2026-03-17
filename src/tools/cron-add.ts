@@ -8,6 +8,7 @@ export function createCronAddTool(cronService: CronService): LocalClawTool {
     name: 'cron_add',
     description: `Schedule a recurring task. The category must be one of: ${VALID_CATEGORIES.join(', ')}. Use "web_search" for any internet/news lookups, "exec" for commands, "memory" for saving/retrieving info.`,
     parameterDescription: `name (required): Job name. schedule (required): Cron expression (e.g., "0 9 * * *" for daily at 9am). category (required): Must be one of: ${VALID_CATEGORIES.join(', ')}. message (required): The prompt to run. channel (required): Delivery channel (e.g., "discord"). target (required): Channel ID for results.`,
+    example: 'cron_add[{"name": "morning-news", "schedule": "0 9 * * *", "category": "web_search", "message": "Search for top AI news today and summarize", "channel": "discord", "target": "1234567890"}]',
     parameters: {
       type: 'object',
       properties: {

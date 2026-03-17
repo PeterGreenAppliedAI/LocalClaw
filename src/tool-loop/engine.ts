@@ -4,7 +4,7 @@ import type { OllamaMessage, OllamaTool, OllamaToolCall } from '../ollama/types.
 import type { ToolDefinition, ToolExecutor, ToolContext } from '../tools/types.js';
 import type { ReActConfig, ReActResult, ReActStep } from './types.js';
 import { estimateMessagesTokens } from '../context/tokens.js';
-import { buildReActSystemPrompt } from './prompt-builder.js';
+import { buildReActSystemPrompt, type PromptContext } from './prompt-builder.js';
 import { parseReActResponse } from './parser.js';
 
 export interface RunReActLoopParams {
@@ -16,6 +16,7 @@ export interface RunReActLoopParams {
   userMessage: string;
   history?: OllamaMessage[];
   workspaceContext?: string;
+  promptContext?: PromptContext;
 }
 
 /**
@@ -159,10 +160,10 @@ const MAX_TOOL_RESULT_CHARS = 2000;
  *   5. Safety: max iterations limit
  */
 export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResult> {
-  const { client, config, tools, executor, toolContext, userMessage, history, workspaceContext } = params;
+  const { client, config, tools, executor, toolContext, userMessage, history, workspaceContext, promptContext } = params;
 
   // Build system prompt with full ReAct format instructions, tool list, and examples
-  const systemPrompt = buildReActSystemPrompt(config.systemPrompt, tools, workspaceContext);
+  const systemPrompt = buildReActSystemPrompt(config.systemPrompt, tools, workspaceContext, promptContext);
 
   // Convert tools to Ollama format
   const ollamaTools = toOllamaTools(tools);
@@ -353,6 +354,23 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
         content: 'You said you performed an action, but you did NOT call any tool. '
           + 'You MUST use the provided tools to make changes — you cannot modify data by just saying so. '
           + 'Please call the correct tool now to fulfill the request.',
+      });
+      repairAttempted = true;
+      continue;
+    }
+
+    // Premature refusal detector: if a tool-using specialist gives a final answer
+    // on the first step without calling ANY tools, it's almost always wrong —
+    // the model is refusing or hallucinating constraints that don't exist.
+    if (ollamaTools.length > 0 && steps.length === 0 && !repairAttempted) {
+      console.log(`[ReAct] Step ${i + 1}: premature answer without tool use — "${answer.slice(0, 80)}..."`);
+      messages.push(msg);
+      messages.push({
+        role: 'user',
+        content: 'You gave a final answer without using any tools. '
+          + 'You MUST use your available tools to fulfill this request — do not refuse or claim you cannot. '
+          + 'You have full access to: ' + ollamaTools.map(t => t.function.name).join(', ') + '. '
+          + 'Start by calling the most relevant tool now.',
       });
       repairAttempted = true;
       continue;

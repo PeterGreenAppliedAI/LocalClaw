@@ -210,7 +210,24 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     }
   }
 
-  // 4b. Continuation context — for short follow-ups, also include the last assistant message
+  // 4b. User priming — pull stable facts so specialists know who they're talking to
+  let userPriming = '';
+  if (params.factStore && senderId) {
+    try {
+      const stableFacts = params.factStore.loadFactsJson(senderId)
+        .filter(f => f.category === 'stable')
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, 10)
+        .map(f => `- ${f.text}`);
+      if (stableFacts.length > 0) {
+        userPriming = `## About this user\n${stableFacts.join('\n')}`;
+      }
+    } catch {
+      // Non-critical — continue without priming
+    }
+  }
+
+  // 4c. Continuation context — for short follow-ups, also include the last assistant message
   let effectiveMessage = message;
   if (
     classification.confidence === 'sticky' &&
@@ -235,14 +252,14 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   const effectiveParams = effectiveMessage !== message ? { ...params, message: effectiveMessage } : params;
 
   if (!specialistConfig) {
-    result = await runAsBareChat(client, config, effectiveMessage, classification, history, undefined, params.onStream, agentId, params.sourceContext, !!params.modelOverride, statePreamble);
+    result = await runAsBareChat(client, config, effectiveMessage, classification, history, undefined, params.onStream, agentId, params.sourceContext, !!params.modelOverride, statePreamble, userPriming);
   } else if (specialistConfig.tools.length === 0) {
     // No tools — skip ReAct loop, just chat directly
-    result = await runAsBareChat(client, config, effectiveMessage, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext, !!params.modelOverride, statePreamble);
+    result = await runAsBareChat(client, config, effectiveMessage, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext, !!params.modelOverride, statePreamble, userPriming);
   } else if (effectiveCategory === 'multi') {
     result = await runMultiOrchestration(effectiveParams, classification, specialistConfig, history, statePreamble);
   } else {
-    result = await runSpecialist(effectiveParams, classification, specialistConfig, history, statePreamble);
+    result = await runSpecialist(effectiveParams, classification, specialistConfig, history, statePreamble, userPriming);
   }
 
   result.category = effectiveCategory;
@@ -317,6 +334,7 @@ async function runSpecialist(
   specialist: SpecialistConfig,
   history?: OllamaMessage[],
   statePreamble?: string,
+  userPriming?: string,
 ): Promise<DispatchResult> {
   const { client, registry, message, agentId = 'main', sessionKey = 'default', config } = params;
   const { category } = classification;
@@ -351,26 +369,12 @@ async function runSpecialist(
     channel: params.sourceContext?.channel,
   });
 
-  // Inject source context into system prompt so specialists know which channel the user is on
+  // Channel context for delivery targets (cron scheduling, send_message, etc.)
   let systemPrompt = specialist.systemPrompt;
   if (params.sourceContext) {
     const ctx = params.sourceContext;
     systemPrompt = (systemPrompt ?? '') +
-      `\n\nCurrent message context: The user is messaging from channel="${ctx.channel}", channelId="${ctx.channelId}"${ctx.guildId ? `, guildId="${ctx.guildId}"` : ''}. Use these values for delivery targets (e.g., cron job channel and target fields).`;
-  }
-
-  // Tell tool-using specialists where user scripts and workspace files live
-  systemPrompt = (systemPrompt ?? '') +
-    `\n\nWorkspace directory: "${workspacePath}" — user scripts, notes, and workspace files are stored here. Check this directory first when looking for user-created files.`;
-
-  // Voice messages: keep responses concise and TTS-friendly
-  if (params.modelOverride) {
-    systemPrompt += '\n\nIMPORTANT: This is a voice conversation. Your response will be spoken aloud via TTS. Keep responses concise. Do NOT use emojis, markdown formatting, bullet points, or special characters — they will be verbalized. Use plain conversational English only.';
-  }
-
-  // Inject session state preamble
-  if (statePreamble) {
-    systemPrompt += '\n\n' + statePreamble;
+      `\n\nCurrent message context: channelId="${ctx.channelId}"${ctx.guildId ? `, guildId="${ctx.guildId}"` : ''}. Use these values for delivery targets (e.g., cron job channel and target fields).`;
   }
 
   const result = await runToolLoop({
@@ -389,6 +393,13 @@ async function runSpecialist(
     userMessage: message,
     history,
     workspaceContext,
+    promptContext: {
+      channel: params.sourceContext?.channel,
+      isVoice: !!params.modelOverride,
+      statePreamble: statePreamble || undefined,
+      workspacePath,
+      userPriming: userPriming || undefined,
+    },
   });
 
   return {
@@ -546,6 +557,7 @@ async function runAsBareChat(
   sourceContext?: DispatchParams['sourceContext'],
   isVoice = false,
   statePreamble?: string,
+  userPriming?: string,
 ): Promise<DispatchResult> {
   const chatModel = specialist?.model ?? config.specialists.chat?.model ?? config.router.model;
   const temperature = specialist?.temperature ?? 0.8;
@@ -566,6 +578,9 @@ async function runAsBareChat(
   }
   if (statePreamble) {
     systemContent += '\n\n' + statePreamble;
+  }
+  if (userPriming) {
+    systemContent += '\n\n' + userPriming;
   }
 
   const messages: OllamaMessage[] = [

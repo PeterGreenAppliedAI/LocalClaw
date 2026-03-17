@@ -9,6 +9,7 @@ export function createWorkspaceReadTool(): LocalClawTool {
     name: 'workspace_read',
     description: `Read a workspace file. Available files: ${READABLE_FILES.join(', ')}.`,
     parameterDescription: `file (required): Filename to read. One of: ${READABLE_FILES.join(', ')}.`,
+    example: 'workspace_read[{"file": "SOUL.md"}]',
     parameters: {
       type: 'object',
       properties: {

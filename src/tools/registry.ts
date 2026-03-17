@@ -20,11 +20,12 @@ export class ToolRegistry {
     return names
       .map(n => this.tools.get(n))
       .filter((t): t is LocalClawTool => t !== undefined)
-      .map(({ name, description, parameterDescription, parameters }) => ({
+      .map(({ name, description, parameterDescription, parameters, example }) => ({
         name,
         description,
         parameterDescription,
         parameters,
+        example,
       }));
   }
 

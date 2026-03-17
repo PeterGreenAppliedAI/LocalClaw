@@ -14,6 +14,14 @@ const CATEGORY_LABELS: Record<FactCategory, string> = {
 
 const CATEGORY_ORDER: FactCategory[] = ['stable', 'context', 'decision', 'question'];
 
+/** Auto-expiry TTLs by category. null = never expires. */
+const CATEGORY_TTL_DAYS: Record<FactCategory, number | null> = {
+  stable: null,
+  context: 14,
+  decision: 30,
+  question: 7,
+};
+
 /**
  * FactStore — single write funnel for all memory facts.
  *
@@ -60,6 +68,17 @@ export class FactStore {
     const dateStr = now.toISOString().slice(0, 10);
     const ts = now.toISOString().replace(/[:.]/g, '-');
 
+    // Auto-compute expiresAt from category TTL if not explicitly set
+    let expiresAt = parsed.expiresAt;
+    if (!expiresAt) {
+      const ttlDays = CATEGORY_TTL_DAYS[parsed.category];
+      if (ttlDays !== null) {
+        const created = new Date(createdAt);
+        created.setDate(created.getDate() + ttlDays);
+        expiresAt = created.toISOString();
+      }
+    }
+
     const entry: FactEntry = FactEntrySchema.parse({
       id: `fact_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       text: parsed.text,
@@ -67,7 +86,7 @@ export class FactStore {
       confidence: parsed.confidence,
       source: sourceOverride ?? parsed.source ?? `${dateStr}/mem_${ts}.md`,
       createdAt,
-      expiresAt: parsed.expiresAt,
+      expiresAt,
       hash,
       senderId,
       tags: parsed.tags,
@@ -132,7 +151,17 @@ export class FactStore {
           if (seenHashes.has(entry.hash)) continue;
           seenHashes.add(entry.hash);
 
-          // Drop expired context entries
+          // Backfill expiresAt for legacy entries missing it
+          if (!entry.expiresAt) {
+            const ttlDays = CATEGORY_TTL_DAYS[entry.category];
+            if (ttlDays !== null) {
+              const created = new Date(entry.createdAt);
+              created.setDate(created.getDate() + ttlDays);
+              entry.expiresAt = created.toISOString();
+            }
+          }
+
+          // Drop expired entries
           if (entry.expiresAt && new Date(entry.expiresAt).getTime() < now) continue;
 
           allEntries.push(entry);
@@ -196,6 +225,19 @@ export class FactStore {
 
     console.log(`[FactStore] Consolidated: removed ${removed.size} duplicate(s), ${kept.length} facts remain`);
     return removed.size;
+  }
+
+  /**
+   * Overwrite facts.json and facts.md with the given entries.
+   * Used by LLM consolidation to remove merged/replaced facts.
+   */
+  overwriteFacts(entries: FactEntry[], senderId?: string): void {
+    const memDir = this.memDir(senderId);
+    const factsDir = join(memDir, 'facts');
+    mkdirSync(factsDir, { recursive: true });
+    writeFileSync(join(factsDir, 'facts.json'), JSON.stringify(entries, null, 2));
+    writeFileSync(join(factsDir, 'facts.md'), this.formatFactsMd(entries));
+    this.invalidateCache(senderId);
   }
 
   /** Generic/recency queries that should return recent facts instead of keyword matching */

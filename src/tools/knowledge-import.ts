@@ -23,6 +23,7 @@ export function createKnowledgeImportTool(
     name: 'knowledge_import',
     description: 'Import a document into the knowledge base. Supports: PDF, CSV, markdown, text, HTML. Documents are chunked, embedded, and indexed for semantic search.',
     parameterDescription: 'path (required): File path to import. description (optional): Brief description of the document.',
+    example: 'knowledge_import[{"path": "docs/api-reference.pdf", "description": "REST API documentation"}]',
     parameters: {
       type: 'object',
       properties: {

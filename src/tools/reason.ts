@@ -7,6 +7,7 @@ export function createReasonTool(client: OllamaClient, config: ReasoningConfig):
     name: 'reason',
     description: 'Send a problem to the reasoning model for deep analysis, planning, or content formatting. The reasoning model thinks carefully but cannot call tools — use this after gathering information. Good for: writing articles, analyzing data, planning approaches, formatting reports.',
     parameterDescription: 'prompt (required): What to reason about or produce. context (optional): Supporting data, search results, or prior findings to reason over.',
+    example: 'reason[{"prompt": "Compare the pros and cons of PostgreSQL vs MongoDB for a real-time analytics platform", "context": "The system handles 50k events/sec with complex aggregations"}]',
     parameters: {
       type: 'object',
       properties: {

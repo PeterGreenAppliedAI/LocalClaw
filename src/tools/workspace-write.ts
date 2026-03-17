@@ -9,6 +9,7 @@ export function createWorkspaceWriteTool(): LocalClawTool {
     name: 'workspace_write',
     description: `Write to a workspace file. Writable files: ${WRITABLE_FILES.join(', ')}. Protected files (SOUL.md, IDENTITY.md, AGENTS.md, BOOTSTRAP.md) are read-only.`,
     parameterDescription: `file (required): Filename to write. One of: ${WRITABLE_FILES.join(', ')}. content (required): New file content (full overwrite).`,
+    example: 'workspace_write[{"file": "TOOLS.md", "content": "# Tools\\n\\nUpdated tool documentation..."}]',
     parameters: {
       type: 'object',
       properties: {

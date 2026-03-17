@@ -8,6 +8,7 @@ export function createCodeSessionTool(
     name: 'code_session',
     description: 'Manage persistent code sessions. Start a REPL, run code that preserves state between calls, get output, or close sessions.',
     parameterDescription: 'action (required): start/run/output/close/list. session (required for start/run/output/close): Session name. runtime (required for start): python/node/bash. code (required for run): Code to execute.',
+    example: 'code_session[{"action": "start", "session": "analysis", "runtime": "python"}]',
     parameters: {
       type: 'object',
       properties: {

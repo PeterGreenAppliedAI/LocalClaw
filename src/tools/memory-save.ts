@@ -13,6 +13,7 @@ export function createMemorySaveTool(
     name: 'memory_save',
     description: 'Save a fact to structured memory with provenance. Facts are categorized (stable, context, decision, question), deduplicated, and searchable via memory_search.',
     parameterDescription: 'content (required): The fact to save. category (optional): "stable" (default), "context", "decision", or "question".',
+    example: 'memory_save[{"content": "User works at Acme Corp as a backend engineer", "category": "stable"}]',
     parameters: {
       type: 'object',
       properties: {

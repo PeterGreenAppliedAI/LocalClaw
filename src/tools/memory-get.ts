@@ -7,6 +7,7 @@ export function createMemoryGetTool(workspacePath: string): LocalClawTool {
     name: 'memory_get',
     description: 'Read the contents of a memory file',
     parameterDescription: 'file (required): Path to the file relative to workspace (e.g., "MEMORY.md" or "memory/notes.md").',
+    example: 'memory_get[{"file": "memory/notes.md"}]',
     parameters: {
       type: 'object',
       properties: {

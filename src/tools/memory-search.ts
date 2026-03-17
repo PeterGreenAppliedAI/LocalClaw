@@ -23,6 +23,7 @@ export function createMemorySearchTool(
     name: 'memory_search',
     description: 'Search through stored memories and knowledge base. Use source="knowledge" to search imported documents (vector search). Default searches structured fact memory first, then falls back to markdown files.',
     parameterDescription: 'query (required): What to search for. maxResults (optional): Max results (default 5). source (optional): "memory" or "knowledge" (default "memory").',
+    example: 'memory_search[{"query": "user preferred programming language", "maxResults": 3}]',
     parameters: {
       type: 'object',
       properties: {

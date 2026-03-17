@@ -21,6 +21,7 @@ export function createWriteFileTool(): LocalClawTool {
     name: 'write_file',
     description: 'Write or create a file (workspace-only for safety). Cannot overwrite protected files (SOUL.md, TOOLS.md, IDENTITY.md, AGENTS.md, HEARTBEAT.md, BOOTSTRAP.md, TASKS.md).',
     parameterDescription: 'path (required): File path relative to workspace. content (required): File content to write.',
+    example: 'write_file[{"path": "output/report.md", "content": "# Analysis Report\\n\\nFindings..."}]',
     parameters: {
       type: 'object',
       properties: {

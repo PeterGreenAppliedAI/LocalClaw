@@ -10,6 +10,7 @@ export function createHeartbeatAddTool(
     name: 'heartbeat_add',
     description: 'Add a task to the periodic heartbeat. Heartbeat tasks run on a shared schedule and are executed autonomously with full tool access.',
     parameterDescription: 'name (required): Task name. message (required): What the heartbeat should do (e.g., "Check the task board for overdue items").',
+    example: 'heartbeat_add[{"name": "overdue-check", "message": "Check the task board for overdue items and notify the user"}]',
     parameters: {
       type: 'object',
       properties: {

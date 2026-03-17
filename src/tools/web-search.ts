@@ -14,6 +14,7 @@ export function createWebSearchTool(config?: WebSearchConfig): LocalClawTool {
     name: 'web_search',
     description: 'Search the web for current information',
     parameterDescription: 'query (required): Search query. count (optional): Number of results (default 5). freshness (optional): "day", "week", "month".',
+    example: 'web_search[{"query": "NVIDIA earnings Q1 2026", "count": 5}]',
     parameters: {
       type: 'object',
       properties: {

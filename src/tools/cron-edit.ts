@@ -8,6 +8,7 @@ export function createCronEditTool(cronService: CronService): LocalClawTool {
     name: 'cron_edit',
     description: `Edit an existing cron job. Update its name, schedule, category, message, or enabled status. Category must be one of: ${VALID_CATEGORIES.join(', ')}.`,
     parameterDescription: `id (required): Job ID to edit. name (optional): New name. schedule (optional): New cron expression. category (optional): New category (one of: ${VALID_CATEGORIES.join(', ')}). message (optional): New prompt/message. enabled (optional): Enable or disable the job.`,
+    example: 'cron_edit[{"id": "abc12345", "schedule": "0 8 * * 1-5", "enabled": "true"}]',
     parameters: {
       type: 'object',
       properties: {

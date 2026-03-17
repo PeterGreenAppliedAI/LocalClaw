@@ -9,6 +9,7 @@ export function createBrowserTool(config?: BrowserConfig): LocalClawTool {
     name: 'browser',
     description: 'Control a web browser: navigate, take snapshots, screenshots, interact with pages',
     parameterDescription: 'action (required): "open" | "navigate" | "snapshot" | "screenshot" | "tabs" | "close". url (optional): URL for navigate/open. tab (optional): Tab ID.',
+    example: 'browser[{"action": "navigate", "url": "https://example.com/dashboard"}]',
     parameters: {
       type: 'object',
       properties: {

@@ -6,6 +6,7 @@ export function createCronRemoveTool(cronService: CronService): LocalClawTool {
     name: 'cron_remove',
     description: 'Remove a scheduled job',
     parameterDescription: 'id (required): The job ID to remove.',
+    example: 'cron_remove[{"id": "abc12345"}]',
     parameters: {
       type: 'object',
       properties: {

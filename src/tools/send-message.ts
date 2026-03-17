@@ -6,6 +6,7 @@ export function createSendMessageTool(channelRegistry: ChannelRegistry): LocalCl
     name: 'send_message',
     description: 'Send a message to a channel or user',
     parameterDescription: 'channel (required): Channel adapter ID (e.g., "discord", "telegram"). channelId (required): Target channel/chat ID. text (required): Message text.',
+    example: 'send_message[{"channel": "discord", "channelId": "1234567890", "text": "Deployment complete!"}]',
     parameters: {
       type: 'object',
       properties: {

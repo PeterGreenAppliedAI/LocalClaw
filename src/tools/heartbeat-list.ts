@@ -6,6 +6,7 @@ export function createHeartbeatListTool(cronService: CronService): LocalClawTool
     name: 'heartbeat_list',
     description: 'List all heartbeat tasks. These run autonomously on the shared heartbeat schedule.',
     parameterDescription: 'includeDisabled (optional): Show disabled tasks too (default false).',
+    example: 'heartbeat_list[{}]',
     parameters: {
       type: 'object',
       properties: {

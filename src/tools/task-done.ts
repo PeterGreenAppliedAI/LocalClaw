@@ -6,6 +6,7 @@ export function createTaskDoneTool(taskStore: TaskStore): LocalClawTool {
     name: 'task_done',
     description: 'Mark a task as done. Convenience shortcut — only needs the task ID.',
     parameterDescription: 'id (required): The task ID to mark as done.',
+    example: 'task_done[{"id": "t_abc123"}]',
     parameters: {
       type: 'object',
       properties: {

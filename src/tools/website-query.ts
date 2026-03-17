@@ -6,6 +6,7 @@ export function createWebsiteQueryTool(config?: WebsiteConfig): LocalClawTool {
     name: 'website_query',
     description: 'Query a teaching website API for courses, assignments, homework, materials, and student information. Supports GET and POST requests.',
     parameterDescription: 'endpoint (required): API endpoint path (e.g., "/courses", "/assignments", "/students"). method (optional): HTTP method, default "GET". body (optional): JSON string for POST body. query (optional): Query parameters as JSON string.',
+    example: 'website_query[{"endpoint": "/courses", "query": "{\"semester\": \"2026-spring\"}"}]',
     parameters: {
       type: 'object',
       properties: {

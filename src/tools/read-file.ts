@@ -7,6 +7,7 @@ export function createReadFileTool(): LocalClawTool {
     name: 'read_file',
     description: 'Read the contents of a file within the workspace',
     parameterDescription: 'path (required): File path relative to workspace. maxLines (optional): Max lines to return (default: all).',
+    example: 'read_file[{"path": "src/index.ts", "maxLines": 50}]',
     parameters: {
       type: 'object',
       properties: {

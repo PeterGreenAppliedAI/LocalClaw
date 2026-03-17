@@ -23,9 +23,34 @@ import { STTService } from './services/stt.js';
 import { VisionService } from './services/vision.js';
 import { saveAttachment, isImageMime } from './services/attachments.js';
 import { ollamaUnreachable, toolExecutionError, LocalClawError } from './errors.js';
+import { appendFileSync } from 'node:fs';
 import type { ConsoleApiDeps } from './console/types.js';
 import type { WebApiAdapter } from './channels/web/adapter.js';
 // Pipeline utilities kept in src/services/tts-stream.ts for future use with slower TTS models
+
+/** Append (message, category) training pairs from a transcript before it's cleared. */
+function extractTrainingPairs(transcript: Array<{ role: string; content: string; category?: string }>): void {
+  const TRAINING_FILE = 'data/training/router-pairs.jsonl';
+  const pairs: string[] = [];
+
+  for (const entry of transcript) {
+    if (entry.role !== 'user' || !entry.category || !entry.content?.trim()) continue;
+    const content = entry.content.trim();
+    // Skip synthetic/system messages
+    if (content.startsWith('[RESEARCH PIPELINE]')) continue;
+    if (content.startsWith('[DEVMESH')) continue;
+    if (content.startsWith('!')) continue;
+    if (content.length < 5) continue;
+
+    pairs.push(JSON.stringify({ message: content, category: entry.category }));
+  }
+
+  if (pairs.length > 0) {
+    mkdirSync('data/training', { recursive: true });
+    appendFileSync(TRAINING_FILE, pairs.join('\n') + '\n');
+    console.log(`[Training] Extracted ${pairs.length} router pairs before session reset`);
+  }
+}
 
 function splitFinalMessage(text: string, limit: number): string[] {
   if (text.length <= limit) return [text];
@@ -113,6 +138,10 @@ export class Orchestrator {
             message: job.message,
             overrideCategory: job.category,
             cronMode: true,
+            sourceContext: {
+              channel: job.delivery.channel,
+              channelId: job.delivery.target ?? '',
+            },
           });
 
           if (job.delivery.target) {
@@ -488,6 +517,10 @@ export class Orchestrator {
 
       // Load transcript BEFORE clearing
       const transcript = this.sessionStore.loadTranscript(route.agentId, route.sessionKey);
+
+      // Preserve training data before clearing
+      try { extractTrainingPairs(transcript); } catch { /* best-effort */ }
+
       this.sessionStore.clearSession(route.agentId, route.sessionKey);
 
       // Extract facts from the conversation

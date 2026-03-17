@@ -1,42 +1,96 @@
 import type { ToolDefinition } from '../tools/types.js';
 import type { ReActStep } from './types.js';
 
+export interface PromptContext {
+  specialistPrompt?: string;
+  workspaceContext?: string;
+  channel?: string;
+  isVoice?: boolean;
+  statePreamble?: string;
+  workspacePath?: string;
+  /** Stable user facts injected as context so specialists know who they're talking to. */
+  userPriming?: string;
+}
+
 /**
  * Build the ReAct system prompt for a specialist.
- * Optionally includes workspace context (SOUL.md, USER.md, etc).
+ *
+ * Prompt ordering follows primacy/recency bias research:
+ *   TOP (highest weight):  Role + Task — what the model is doing right now
+ *   MIDDLE:                Channel, Tools, Persona
+ *   BOTTOM (second highest): Format rules + constraints
  */
 export function buildReActSystemPrompt(
   specialistPrompt: string | undefined,
   tools: ToolDefinition[],
   workspaceContext?: string,
+  promptContext?: PromptContext,
 ): string {
   const today = new Date().toISOString().split('T')[0];
+  const sections: string[] = [];
 
-  let prompt = `You are a helpful AI assistant. Today's date is ${today}.\n`;
-
+  // ── TOP: Role + Task (primacy position) ──
+  // The specialist prompt IS the role and task. Lead with it.
   if (specialistPrompt) {
-    prompt += `\n${specialistPrompt}\n`;
+    sections.push(specialistPrompt);
+  } else {
+    sections.push('You are a helpful AI assistant.');
   }
 
-  // Inject workspace context (SOUL.md, USER.md, AGENTS.md, etc.)
-  if (workspaceContext) {
-    prompt += `\n${workspaceContext}\n`;
+  sections.push(`Today's date is ${today}.`);
+
+  // ── Channel context — unambiguous, one line ──
+  if (promptContext?.channel) {
+    sections.push(`You are responding via the ${promptContext.channel} channel.`);
   }
 
+  // ── Voice mode ──
+  if (promptContext?.isVoice) {
+    sections.push('IMPORTANT: This is a voice conversation. Your response will be spoken aloud via TTS. Keep responses concise. Do NOT use emojis, markdown formatting, bullet points, or special characters. Use plain conversational English only.');
+  }
+
+  // ── Workspace path ──
+  if (promptContext?.workspacePath) {
+    sections.push(`Workspace directory: "${promptContext.workspacePath}" — user scripts, notes, and workspace files are stored here.`);
+  }
+
+  // ── Session state ──
+  if (promptContext?.statePreamble) {
+    sections.push(promptContext.statePreamble);
+  }
+
+  // ── User priming — stable facts about who's asking ──
+  if (promptContext?.userPriming) {
+    sections.push(promptContext.userPriming);
+  }
+
+  // ── Tools with structured descriptions + examples ──
   if (tools.length > 0) {
-    prompt += '\n## Available Tools\n';
+    const toolLines = ['## Available Tools', ''];
     for (const tool of tools) {
-      prompt += `- ${tool.name}: ${tool.description}\n`;
-      prompt += `  Parameters: ${tool.parameterDescription}\n`;
+      toolLines.push(`**${tool.name}**: ${tool.description}`);
+      toolLines.push(`  Parameters: ${tool.parameterDescription}`);
+      if (tool.example) {
+        toolLines.push(`  Example: ${tool.example}`);
+      }
+      toolLines.push('');
     }
+    sections.push(toolLines.join('\n'));
   }
 
-  // Build concrete examples using the actual tools
+  // ── Persona (workspace context) — compressed, middle position ──
+  // For tool-using specialists this is minimal (SOUL+IDENTITY only).
+  // Placed after tools so it doesn't compete with task instructions.
+  if (workspaceContext) {
+    sections.push(workspaceContext);
+  }
+
+  // ── BOTTOM: Format rules + constraints (recency position) ──
+  // These are the last thing the model reads before generating.
   const exampleTool = tools.length > 0 ? tools[0] : { name: 'tool_name' };
   const exampleTool2 = tools.length > 1 ? tools[1] : exampleTool;
 
-  prompt += `
-## Response Format
+  sections.push(`## Response Format
 
 You MUST respond using EXACTLY this format. Do NOT deviate.
 
@@ -64,9 +118,10 @@ Final Answer: [your complete response to the user]
 5. Use ONE tool per response — then STOP and wait for the Observation
 6. When you are done, write "Final Answer:" followed by your response
 7. NEVER write code blocks, markdown tool calls, or JSON outside of Action: lines
-8. NEVER narrate what you would do — actually DO it with Action:`;
+8. NEVER narrate what you would do — actually DO it with Action:
+9. NEVER refuse to use tools — you have full access to all tools listed above`);
 
-  return prompt;
+  return sections.join('\n\n');
 }
 
 /**

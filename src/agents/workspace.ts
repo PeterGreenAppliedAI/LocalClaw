@@ -254,10 +254,16 @@ export function buildWorkspaceContext(
     let content = files.get(filename);
     if (!content) continue;
 
-    // Channel-specific SOUL.md filtering — strip irrelevant channel personas
-    // so the model only sees the rules for the current channel
-    if (filename === BOOTSTRAP_FILES.SOUL && channel) {
-      content = filterSoulByChannel(content, channel);
+    if (filename === BOOTSTRAP_FILES.SOUL) {
+      if (category === 'minimal') {
+        // Tool specialists get a compressed persona — just core identity, no channel
+        // rules, conversation flow, or continuity notes. Saves ~1.5KB of context
+        // budget for tool results.
+        content = compressSoulForTools(content);
+      } else if (channel) {
+        // Channel-specific filtering — strip irrelevant channel personas
+        content = filterSoulByChannel(content, channel);
+      }
     }
 
     // USER.md gets truncated more aggressively (summarized)
@@ -275,6 +281,41 @@ export function buildWorkspaceContext(
   );
 
   return sections.join('\n');
+}
+
+/**
+ * Compress SOUL.md for tool-using specialists.
+ * Extracts only the "Core Truths" and "Boundaries" sections — strips channel-specific
+ * rules, conversation flow, and continuity notes that waste context budget.
+ * Typically reduces ~2KB SOUL.md to ~300 bytes.
+ */
+function compressSoulForTools(content: string): string {
+  const lines = content.split('\n');
+  const kept: string[] = ['# Persona'];
+  let inSection = false;
+  let sectionName = '';
+
+  // Keep only Core Truths and Boundaries sections
+  const keepSections = new Set(['core truths', 'boundaries']);
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^(#{2,3})\s+(.*)/);
+    if (headingMatch) {
+      sectionName = headingMatch[2].toLowerCase();
+      inSection = keepSections.has(sectionName);
+      continue; // Skip the heading itself — we flatten into a compact block
+    }
+
+    if (inSection) {
+      const trimmed = line.trim();
+      // Keep bullet points, skip empty lines and channel-specific bullets
+      if (trimmed.startsWith('-') && !trimmed.toLowerCase().includes('on whatsapp:') && !trimmed.toLowerCase().includes('on discord:')) {
+        kept.push(trimmed);
+      }
+    }
+  }
+
+  return kept.join('\n');
 }
 
 /**

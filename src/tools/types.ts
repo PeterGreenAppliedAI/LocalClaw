@@ -25,6 +25,8 @@ export interface LocalClawTool {
   parameterDescription: string;
   /** Structured parameters for native tool calling. If omitted, falls back to text-based ReAct. */
   parameters?: ToolParameterSchema;
+  /** Example usage shown in the system prompt to guide the model. */
+  example?: string;
   category: string;
   execute: (params: Record<string, unknown>, ctx: ToolContext) => Promise<string>;
 }
@@ -34,6 +36,7 @@ export interface ToolDefinition {
   description: string;
   parameterDescription: string;
   parameters?: ToolParameterSchema;
+  example?: string;
 }
 
 export type ToolExecutor = (
