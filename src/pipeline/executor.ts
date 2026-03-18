@@ -89,6 +89,19 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
       return lastResult;
     }
 
+    case 'parallel_tool': {
+      const paramsList = stage.resolveParamsList(ctx);
+      console.log(`[Pipeline] Parallel "${stage.name}": ${paramsList.length} concurrent ${stage.tool} calls`);
+      const results = await Promise.all(
+        paramsList.map(async (params) => {
+          const observation = await ctx.executor(stage.tool, params, ctx.toolContext);
+          ctx.steps.push({ tool: stage.tool, params, observation });
+          return observation;
+        }),
+      );
+      return results;
+    }
+
     default: {
       const _exhaustive: never = stage;
       throw pipelineStageError((stage as any).name, new Error(`Unknown stage type: ${(stage as any).type}`));

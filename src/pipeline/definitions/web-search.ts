@@ -48,41 +48,23 @@ export const webSearchPipeline: PipelineDefinition = {
     },
     {
       name: 'fetch_pages',
-      type: 'loop',
-      maxIterations: 3,
-      continueIf: (ctx, iteration) => {
+      type: 'parallel_tool',
+      tool: 'web_fetch',
+      resolveParamsList: (ctx) => {
         const urls = ctx.params._urls as string[];
-        return iteration < urls.length;
+        return urls.map(url => ({ url, extractMode: 'text', maxChars: '3000' }));
       },
-      stages: [
-        {
-          name: 'fetch',
-          type: 'tool',
-          tool: 'web_fetch',
-          resolveParams: (ctx) => {
-            const urls = ctx.params._urls as string[];
-            return {
-              url: urls[ctx.loopIndex!],
-              extractMode: 'text',
-              maxChars: '3000',
-            };
-          },
-        },
-        {
-          name: 'collect',
-          type: 'code',
-          execute: (ctx) => {
-            // Accumulate fetched page content
-            const pages = (ctx.params._pages as string[] | undefined) ?? [];
-            const urls = ctx.params._urls as string[];
-            const url = urls[ctx.loopIndex!];
-            const content = ctx.stageResults.fetch as string;
-            pages.push(`[Source: ${url}]\n${content}`);
-            ctx.params._pages = pages;
-            return pages;
-          },
-        },
-      ],
+    },
+    {
+      name: 'collect_pages',
+      type: 'code',
+      execute: (ctx) => {
+        const results = ctx.stageResults.fetch_pages as string[];
+        const urls = ctx.params._urls as string[];
+        ctx.params._pages = results.map((content, i) =>
+          `[Source: ${urls[i]}]\n${content}`
+        );
+      },
     },
     {
       name: 'synthesize',

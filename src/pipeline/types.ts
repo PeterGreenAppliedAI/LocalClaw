@@ -93,13 +93,22 @@ export interface LoopStage extends BaseStage {
   continueIf: (ctx: PipelineContext, iteration: number) => boolean;
 }
 
+/** Run multiple tool calls concurrently */
+export interface ParallelToolStage extends BaseStage {
+  type: 'parallel_tool';
+  tool: string;
+  /** Returns an array of param objects — one tool call per entry, all run concurrently */
+  resolveParamsList: (ctx: PipelineContext) => Record<string, unknown>[];
+}
+
 export type PipelineStage =
   | ToolStage
   | LlmStage
   | CodeStage
   | ExtractStage
   | BranchStage
-  | LoopStage;
+  | LoopStage
+  | ParallelToolStage;
 
 /**
  * A named pipeline: a sequence of stages.

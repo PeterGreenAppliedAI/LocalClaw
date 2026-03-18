@@ -7,6 +7,7 @@ import { cronPipeline } from './cron.js';
 import { webSearchPipeline } from './web-search.js';
 import { execPipeline } from './exec.js';
 import { heartbeatPipeline } from './heartbeat.js';
+import { researchPipeline } from './research.js';
 
 /**
  * Register all pipeline definitions.
@@ -26,6 +27,7 @@ export function registerAllPipelines(registry: PipelineRegistry): void {
   registry.register(webSearchPipeline);
   registry.register(execPipeline);
   registry.register(heartbeatPipeline);
+  registry.register(researchPipeline);
 
   console.log(`[Pipelines] Registered ${registry.list().length} pipeline(s)`);
 }
