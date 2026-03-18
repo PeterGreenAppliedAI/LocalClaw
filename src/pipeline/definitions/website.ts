@@ -60,6 +60,7 @@ export const websitePipeline: PipelineDefinition = {
     {
       name: 'format',
       type: 'llm',
+      stream: true,
       temperature: 0.3,
       maxTokens: 2048,
       buildPrompt: (ctx) => {

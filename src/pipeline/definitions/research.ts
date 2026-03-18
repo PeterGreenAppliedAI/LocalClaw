@@ -435,6 +435,7 @@ export const researchPipeline: PipelineDefinition = {
     {
       name: 'summary',
       type: 'llm',
+      stream: true,
       temperature: 0.3,
       maxTokens: 512,
       buildPrompt: (ctx) => {

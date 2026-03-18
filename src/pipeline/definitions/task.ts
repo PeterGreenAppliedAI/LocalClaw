@@ -98,6 +98,7 @@ export const taskPipeline: PipelineDefinition = {
           {
             name: 'format_list',
             type: 'llm',
+            stream: true,
             temperature: 0.2,
             maxTokens: 1024,
             buildPrompt: (ctx) => ({

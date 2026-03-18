@@ -43,18 +43,22 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
 
     case 'llm': {
       const { system, user } = stage.buildPrompt(ctx);
-      const response = await ctx.client.chat({
+      const messages: import('../ollama/types.js').OllamaMessage[] = [
+        { role: 'system', content: system },
+        ...(ctx.history ?? []),
+        { role: 'user', content: user },
+      ];
+      const chatParams = {
         model: ctx.model,
-        messages: [
-          { role: 'system', content: system },
-          ...(ctx.history ?? []),
-          { role: 'user', content: user },
-        ],
+        messages,
         options: {
           temperature: stage.temperature ?? 0.5,
           num_predict: stage.maxTokens ?? 2048,
         },
-      });
+      };
+      const response = stage.stream && ctx.onStream
+        ? await ctx.client.chatStream(chatParams, ctx.onStream)
+        : await ctx.client.chat(chatParams);
       const content = response.message?.content ?? '';
       // If this is the last stage-ish, also set answer
       ctx.answer = content;

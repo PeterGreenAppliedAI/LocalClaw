@@ -37,6 +37,8 @@ export interface PipelineContext {
   abort?: boolean;
   /** Final answer (set by the last stage or an early exit) */
   answer?: string;
+  /** Stream callback — stages with stream: true will use this for progressive output */
+  onStream?: (delta: string) => void;
 }
 
 // --- Stage types ---
@@ -61,6 +63,8 @@ export interface LlmStage extends BaseStage {
   buildPrompt: (ctx: PipelineContext) => { system: string; user: string };
   maxTokens?: number;
   temperature?: number;
+  /** Stream output progressively via ctx.onStream. Use on the final user-facing stage. */
+  stream?: boolean;
 }
 
 /** Run deterministic code (date math, formatting, validation) */

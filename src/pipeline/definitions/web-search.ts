@@ -69,6 +69,7 @@ export const webSearchPipeline: PipelineDefinition = {
     {
       name: 'synthesize',
       type: 'llm',
+      stream: true,
       temperature: 0.4,
       maxTokens: 2048,
       buildPrompt: (ctx) => {

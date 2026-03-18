@@ -486,6 +486,7 @@ async function runPipelineDispatch(
     userPriming: userPriming || undefined,
     model: specialist.model,
     sourceContext: params.sourceContext,
+    onStream: params.onStream,
   };
 
   console.log(`[Dispatch] Pipeline dispatch: "${specialist.pipeline}" for category "${category}"`);

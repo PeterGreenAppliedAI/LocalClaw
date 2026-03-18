@@ -36,6 +36,7 @@ export const execPipeline: PipelineDefinition = {
     {
       name: 'format',
       type: 'llm',
+      stream: true,
       temperature: 0.2,
       maxTokens: 1024,
       buildPrompt: (ctx) => ({

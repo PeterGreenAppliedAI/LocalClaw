@@ -86,6 +86,7 @@ export const memoryPipeline: PipelineDefinition = {
           {
             name: 'format_results',
             type: 'llm',
+            stream: true,
             temperature: 0.3,
             maxTokens: 1024,
             buildPrompt: (ctx) => ({
