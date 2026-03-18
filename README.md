@@ -18,15 +18,17 @@ Existing agent frameworks (LangChain, CrewAI, AutoGen, etc.) are built for GPT-4
 Instead of giving one model all the tools, LocalClaw splits the work:
 
 1. **Router** — A tiny fast model (phi4-mini, ~50ms) classifies intent into categories
-2. **Specialist** — The message goes to a focused specialist that sees only 1-3 relevant tools
-3. **Execute** — Native Ollama tool calling API with fallback text parser
+2. **Pipeline or Specialist** — Most categories use **deterministic pipelines** where code controls the workflow and the LLM only extracts parameters or synthesizes text. Open-ended categories fall back to a ReAct tool loop.
+3. **Execute** — Tools are called by the pipeline (deterministic) or via native Ollama tool calling API with fallback text parser (ReAct)
 4. **Respond** — Results flow back through the channel adapter
 
 ```
-User → Router (phi4-mini) → Category → Specialist (qwen3-coder:30b) → Tools → Answer
+User → Router (phi4-mini) → Category
+  → Pipeline (deterministic stages)    # task, memory, cron, web_search, exec, message, website, research
+  → ReAct loop (model decides)         # multi, config, chat
 ```
 
-Each specialist gets a short system prompt and a handful of tools. Even a 30B model handles this reliably because it only decides between 1-3 options, not 15+.
+**Templated Pipelines** define the exact workflow in code — extract params, call tools, format results — so the model never decides "what step next." This eliminates hallucinated actions, wrong tool ordering, and wasted iterations. The ReAct loop remains as fallback for genuinely open-ended categories.
 
 ## Management Console
 
@@ -146,7 +148,13 @@ localclaw/
 │   ├── dispatch.ts           # Router → Specialist pipeline
 │   ├── config/               # JSON5 config + Zod validation
 │   ├── router/               # Intent classification (3-tier fallback + pre-model overrides)
-│   ├── tool-loop/            # Tool-calling loop engine
+│   ├── pipeline/             # Deterministic pipeline engine
+│   │   ├── executor.ts       # Stage runner (extract, tool, llm, code, branch, loop, parallel_tool)
+│   │   ├── registry.ts       # Pipeline registry
+│   │   ├── types.ts          # Stage types, PipelineContext, PipelineResult
+│   │   ├── extractor.ts      # LLM-based parameter extraction with JSON repair
+│   │   └── definitions/      # Pipeline definitions per category
+│   ├── tool-loop/            # ReAct tool-calling loop engine (fallback for open-ended categories)
 │   ├── ollama/               # Ollama HTTP client (chat, stream, embed)
 │   ├── channels/             # Pluggable adapters (Discord, Telegram, Web, Slack, Gmail, Microsoft Graph, WhatsApp)
 │   ├── console/              # Management console API (handlers, helpers, file serving)
@@ -178,16 +186,48 @@ localclaw/
 
 Categories: `chat`, `web_search`, `memory`, `exec`, `cron`, `message`, `website`, `task`, `multi`, `config`, `research`
 
+### Templated Pipeline Engine
+
+Most categories run through **deterministic pipelines** instead of letting the model decide the workflow. Each pipeline is a sequence of typed stages:
+
+| Stage Type | Purpose | LLM? |
+|-----------|---------|------|
+| `extract` | Extract structured params from user message | Yes (focused, low-temp) |
+| `tool` | Call a specific tool with computed params | No |
+| `parallel_tool` | Call a tool N times concurrently (e.g., 5 searches at once) | No |
+| `llm` | Synthesize, analyze, or format text | Yes |
+| `code` | Deterministic logic (date math, filtering, formatting) | No |
+| `branch` | Route to sub-pipeline based on keyword intent | No |
+| `loop` | Repeat stages N times | No |
+
+**Pipelined categories:**
+
+| Category | Pipeline | Flow |
+|----------|----------|------|
+| `task` | Branched (5) | detect intent → extract → tool → confirm |
+| `memory` | Branched (2) | save/recall → extract → tool → format |
+| `cron` | Branched (4) | add/list/remove/edit → extract → tool → confirm |
+| `web_search` | Linear | extract → search → parallel fetch → synthesize |
+| `research` | Complex | plan queries → parallel search → parallel fetch → synthesize → charts → render deck |
+| `exec` | Linear | extract → tool → format |
+| `message` | Linear | extract → tool → confirm |
+| `website` | Linear | extract → tool → format |
+
+**ReAct fallback** categories (`multi`, `config`, `chat`) still use the model-decides-everything loop.
+
 ### Research Flow
 
-The `research` category enables deep data analysis with visualization:
+The `research` pipeline produces polished reveal.js slide decks through a fully templated workflow:
 
-1. **Data gathering** — Web search and API calls (yfinance for stocks, web_fetch for any source)
-2. **Analysis** — Persistent Python code sessions with pandas, numpy, scipy
-3. **Visualization** — matplotlib/seaborn charts saved as PNG, served via file endpoint
-4. **Synthesis** — Reasoning model produces a clean research summary with inline charts
+1. **Plan** — LLM generates 3-5 targeted search queries from the topic
+2. **Search** — All queries run concurrently via `parallel_tool` (5 searches at once)
+3. **Fetch** — Top 5 URLs fetched concurrently
+4. **Synthesize** — LLM analyzes findings and produces a structured slide outline with thesis, bullets, sources, and chart specifications
+5. **Visualize** — LLM generates matplotlib/seaborn chart code, executed in a Python code session
+6. **Render** — LLM generates the complete reveal.js HTML deck from the outline
+7. **Deliver** — Deck written to file, summary returned with link
 
-Charts are rendered inline in the console chat via markdown image syntax. Click any chart to open full-size.
+Supports artifact types: `memo`, `brief`, `deck`, `market`, `teardown`, `deepdive` — each with a different slide structure guide. Charts use a dark theme with explicit white text styling for readability.
 
 ### Pluggable Channel Adapters
 
@@ -405,16 +445,18 @@ Tasks support priority levels (low/medium/high), assignees, due dates, and tags.
 
 ### Heartbeat (Autonomous Scheduled Tasks)
 
-LocalClaw includes an autonomous heartbeat system that periodically reads `HEARTBEAT.md` from the workspace and executes the tasks defined in it — checking the task board for overdue items, reviewing memory for stale entries, and delivering a report to a configured Discord channel (or DM).
+LocalClaw includes an autonomous heartbeat system that periodically checks the task board, reviews memory, and delivers a report to a configured Discord channel (or DM).
 
 **How it works:**
 
 1. **Schedule** — A cron job (default: every 2 hours) triggers the heartbeat
-2. **Read** — The orchestrator reads `HEARTBEAT.md` from the default agent's workspace
-3. **Dispatch** — The instructions are dispatched through the `multi` category, which decomposes them into sub-tasks across specialists (task checks, memory searches, etc.)
-4. **Deliver** — Results are sent to the configured Discord channel or user DM
+2. **Fetch tasks** — The `heartbeat` pipeline calls `task_list` to get all tasks
+3. **Analyze dates in code** — JavaScript compares due dates against today (no LLM date reasoning — this eliminates the "2027 is overdue in 2026" hallucination)
+4. **Fetch memory** — Searches recent context from the memory store
+5. **Format report** — Deterministic code builds the report with overdue, upcoming, and in-progress sections
+6. **Deliver** — Results are sent to the configured Discord channel or user DM
 
-No new specialists or tools are required — the heartbeat reuses the existing `multi` decomposition pipeline and all standard tools (`task_list`, `memory_search`, etc.).
+The heartbeat runs in `cronMode` which strips mutation tools — it's strictly read-only (no creating duplicate tasks or modifying state).
 
 **Configuration** (in `localclaw.config.json5`):
 
@@ -506,7 +548,7 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 - **SSRF protection** — Scheme whitelist, DNS pre-flight, redirect hop checking
 - **Path traversal prevention** — Writes validated to stay within workspace; file serving endpoint validates resolved paths
 - **Rate limiting** — 10 messages per minute per user
-- **Cron safety** — Automated tasks run in `cronMode` which strips `write_file` — cron jobs execute, they don't create
+- **Cron safety** — Automated tasks run in `cronMode` which strips mutation tools (`write_file`, `task_add`, `task_update`, `memory_save`, etc.) — cron jobs report, they don't modify
 - **Channel security** — Per-channel category restrictions, tool blocking, and per-user trust levels
 - **Web API auth** — Bearer token validation on HTTP endpoints
 - **TLS safety** — Verification enabled by default, opt-in override only
