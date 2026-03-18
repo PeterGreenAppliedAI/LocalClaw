@@ -23,6 +23,8 @@ import { STTService } from './services/stt.js';
 import { VisionService } from './services/vision.js';
 import { saveAttachment, isImageMime } from './services/attachments.js';
 import { ollamaUnreachable, toolExecutionError, LocalClawError } from './errors.js';
+import { PipelineRegistry } from './pipeline/registry.js';
+import { registerAllPipelines } from './pipeline/definitions/index.js';
 import { appendFileSync } from 'node:fs';
 import type { ConsoleApiDeps } from './console/types.js';
 import type { WebApiAdapter } from './channels/web/adapter.js';
@@ -85,6 +87,7 @@ export class Orchestrator {
   private embeddingStore?: EmbeddingStore;
   private factStore?: FactStore;
   private taskStore?: TaskStore;
+  private pipelineRegistry: PipelineRegistry;
 
   constructor(config: LocalClawConfig) {
     this.config = config;
@@ -95,6 +98,8 @@ export class Orchestrator {
     this.ttsService = new TTSService(config.tts);
     this.sttService = new STTService(config.stt);
     this.visionService = new VisionService(config.vision, config.ollama.url);
+    this.pipelineRegistry = new PipelineRegistry();
+    registerAllPipelines(this.pipelineRegistry);
   }
 
   getToolRegistry(): ToolRegistry {
@@ -138,6 +143,7 @@ export class Orchestrator {
             message: job.message,
             overrideCategory: job.category,
             cronMode: true,
+            pipelineRegistry: this.pipelineRegistry,
             sourceContext: {
               channel: job.delivery.channel,
               channelId: job.delivery.target ?? '',
@@ -202,6 +208,7 @@ export class Orchestrator {
           client: this.client,
           registry: this.toolRegistry,
           config: this.config,
+          pipelineRegistry: this.pipelineRegistry,
           ...params,
         }),
       };
@@ -279,13 +286,15 @@ export class Orchestrator {
 
       const prompt = [
         `Current date/time: ${dateStr} (${dayOfWeek})`,
+        `The current YEAR is ${now.getFullYear()}. The current MONTH is ${now.getMonth() + 1}. Use these to determine if dates are past or future.`,
         '',
         'Execute each heartbeat task below using the available tools. Rules:',
         '- Keep each task result SEPARATE with a clear header.',
         '- Report ONLY what the tool returns. Do NOT add commentary, opinions, or suggestions.',
         '- Do NOT repeat or paraphrase results from one task in another.',
-        '- Do NOT create tasks that already exist on the board.',
+        '- Do NOT create, add, or duplicate tasks. You are READ-ONLY — report what you find, nothing more.',
         '- Do NOT offer to take actions or ask the user questions.',
+        '- A task is overdue ONLY if its due date is BEFORE today. Compare year, month, and day carefully. A 2027 date is NOT overdue in 2026.',
         '',
         '## Current Task Board',
         currentTasks || '_Empty_',
@@ -302,6 +311,8 @@ export class Orchestrator {
         config: this.config,
         message: prompt,
         overrideCategory: 'multi',
+        cronMode: true, // strips write_file + marks as automated
+        pipelineRegistry: this.pipelineRegistry,
         // Pass delivery target as senderId so tools (memory_search etc.) know whose data to access
         sourceContext: hb.delivery.target ? {
           channel: hb.delivery.channel,
@@ -667,6 +678,7 @@ export class Orchestrator {
           sessionKey: route.sessionKey,
           sessionStore: this.sessionStore,
           overrideCategory: 'research',
+          pipelineRegistry: this.pipelineRegistry,
           sourceContext: {
             channel: msg.channel,
             channelId: msg.channelId ?? '',
@@ -796,6 +808,7 @@ export class Orchestrator {
         agentId: route.agentId,
         sessionKey: route.sessionKey,
         sessionStore: this.sessionStore,
+        pipelineRegistry: this.pipelineRegistry,
         ...(hasImageAttachment ? { overrideCategory: 'chat' as const } : {}),
         sourceContext: {
           channel: msg.channel,

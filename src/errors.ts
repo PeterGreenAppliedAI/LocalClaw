@@ -11,7 +11,9 @@ export type ErrorCode =
   | 'CHANNEL_CONNECT_ERROR'
   | 'CHANNEL_SEND_ERROR'
   | 'SSRF_BLOCKED'
-  | 'SESSION_IO_ERROR';
+  | 'SESSION_IO_ERROR'
+  | 'PIPELINE_STAGE_ERROR'
+  | 'PIPELINE_EXTRACT_FAILURE';
 
 export class LocalClawError extends Error {
   constructor(
@@ -76,4 +78,13 @@ export function ssrfBlocked(url: string): LocalClawError {
 
 export function sessionIoError(msg: string, cause?: unknown): LocalClawError {
   return new LocalClawError('SESSION_IO_ERROR', `Session I/O error: ${msg}`, cause);
+}
+
+export function pipelineStageError(stage: string, cause?: unknown): LocalClawError {
+  const msg = cause instanceof Error ? cause.message : String(cause);
+  return new LocalClawError('PIPELINE_STAGE_ERROR', `Pipeline stage "${stage}" failed: ${msg}`, cause);
+}
+
+export function pipelineExtractFailure(stage: string, raw: string): LocalClawError {
+  return new LocalClawError('PIPELINE_EXTRACT_FAILURE', `Pipeline extraction at "${stage}" returned unparseable output: "${raw.slice(0, 100)}"`);
 }

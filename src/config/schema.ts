@@ -28,6 +28,8 @@ export const SpecialistConfigSchema = z.object({
   /** Workspace context level: 'full' injects all workspace files, 'minimal' injects SOUL+IDENTITY only.
    *  Defaults to 'minimal' for tool-using specialists, 'full' for chat. */
   contextLevel: z.enum(['full', 'minimal']).optional(),
+  /** Pipeline name — if set, routes to deterministic pipeline instead of ReAct loop */
+  pipeline: z.string().optional(),
 });
 
 export const ChannelAllowFromSchema = z.object({

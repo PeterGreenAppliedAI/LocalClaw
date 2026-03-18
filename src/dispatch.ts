@@ -20,6 +20,9 @@ import { buildWorkspaceContext } from './agents/workspace.js';
 import { logDispatch, logRouterClassification } from './metrics.js';
 import { computeBudget } from './context/budget.js';
 import { buildCompactedHistory } from './context/compactor.js';
+import { PipelineRegistry } from './pipeline/registry.js';
+import { runPipeline } from './pipeline/executor.js';
+import type { PipelineContext } from './pipeline/types.js';
 
 export interface DispatchParams {
   client: OllamaClient;
@@ -47,6 +50,8 @@ export interface DispatchParams {
   cronMode?: boolean;
   /** FactStore for structured memory writes during compaction */
   factStore?: import('./memory/fact-store.js').FactStore;
+  /** Pipeline registry for deterministic pipeline dispatch */
+  pipelineRegistry?: PipelineRegistry;
 }
 
 export interface DispatchResult {
@@ -256,6 +261,9 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   } else if (specialistConfig.tools.length === 0) {
     // No tools — skip ReAct loop, just chat directly
     result = await runAsBareChat(client, config, effectiveMessage, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext, !!params.modelOverride, statePreamble, userPriming);
+  } else if (specialistConfig.pipeline && params.pipelineRegistry?.has(specialistConfig.pipeline)) {
+    // Deterministic pipeline — LLM fills params, code decides workflow
+    result = await runPipelineDispatch(effectiveParams, classification, specialistConfig, history, statePreamble, userPriming);
   } else if (effectiveCategory === 'multi') {
     result = await runMultiOrchestration(effectiveParams, classification, specialistConfig, history, statePreamble);
   } else {
@@ -339,12 +347,14 @@ async function runSpecialist(
   const { client, registry, message, agentId = 'main', sessionKey = 'default', config } = params;
   const { category } = classification;
 
-  // Cron mode: strip write_file so automated tasks can't pollute the workspace
+  // Cron mode: strip write tools so automated tasks can't mutate state
+  const CRON_BLOCKED_TOOLS = new Set(['write_file', 'task_add', 'task_update', 'task_done', 'task_remove', 'workspace_write', 'memory_save']);
   const tools = params.cronMode
-    ? specialist.tools.filter(t => t !== 'write_file')
+    ? specialist.tools.filter(t => !CRON_BLOCKED_TOOLS.has(t))
     : specialist.tools;
   if (params.cronMode && tools.length !== specialist.tools.length) {
-    console.log('[Dispatch] Cron mode: stripped write_file from tool set');
+    const stripped = specialist.tools.filter(t => CRON_BLOCKED_TOOLS.has(t));
+    console.log(`[Dispatch] Cron mode: stripped [${stripped.join(', ')}] from tool set`);
   }
 
   const toolDefs = registry.getDefinitions(tools);
@@ -413,6 +423,82 @@ async function runSpecialist(
       params: s.action!.params,
       observation: s.observation,
     })),
+  };
+}
+
+/**
+ * Deterministic pipeline dispatch — replaces ReAct for specialists with a `pipeline` config.
+ * The pipeline defines the exact workflow; the LLM only extracts params or synthesizes text.
+ */
+async function runPipelineDispatch(
+  params: DispatchParams,
+  classification: ClassifyResult,
+  specialist: SpecialistConfig,
+  history?: OllamaMessage[],
+  statePreamble?: string,
+  userPriming?: string,
+): Promise<DispatchResult> {
+  const { client, registry, message, agentId = 'main', sessionKey = 'default', config } = params;
+  const { category } = classification;
+
+  const pipelineDef = params.pipelineRegistry!.get(specialist.pipeline!);
+  if (!pipelineDef) {
+    // Fallback to ReAct if pipeline not found (shouldn't happen — checked in caller)
+    console.warn(`[Dispatch] Pipeline "${specialist.pipeline}" not found, falling back to ReAct`);
+    return runSpecialist(params, classification, specialist, history, statePreamble, userPriming);
+  }
+
+  // Cron mode: strip write tools
+  const CRON_BLOCKED_TOOLS = new Set(['write_file', 'task_add', 'task_update', 'task_done', 'task_remove', 'workspace_write', 'memory_save']);
+  const tools = params.cronMode
+    ? specialist.tools.filter(t => !CRON_BLOCKED_TOOLS.has(t))
+    : specialist.tools;
+
+  const executor = registry.createExecutor();
+  const workspacePath = resolveWorkspacePath(agentId, config);
+  const toolContext: ToolContext = {
+    agentId,
+    sessionKey,
+    workspacePath,
+    senderId: params.sourceContext?.senderId,
+  };
+
+  const wsCategory = category === 'cron'
+    ? 'cron' as const
+    : specialist.contextLevel === 'full'
+      ? 'chat' as const
+      : 'minimal' as const;
+  const workspaceContext = buildWorkspaceContext(workspacePath, {
+    category: wsCategory,
+    channel: params.sourceContext?.channel,
+  });
+
+  const ctx: PipelineContext = {
+    userMessage: message,
+    params: {},
+    stageResults: {},
+    steps: [],
+    client,
+    executor,
+    toolContext,
+    history,
+    workspaceContext,
+    userPriming: userPriming || undefined,
+    model: specialist.model,
+    sourceContext: params.sourceContext,
+  };
+
+  console.log(`[Dispatch] Pipeline dispatch: "${specialist.pipeline}" for category "${category}"`);
+
+  const pipelineResult = await runPipeline(pipelineDef, ctx);
+
+  return {
+    answer: pipelineResult.answer,
+    category,
+    classification,
+    iterations: pipelineResult.iterations,
+    hitMaxIterations: pipelineResult.hitMaxIterations,
+    steps: pipelineResult.steps,
   };
 }
 
