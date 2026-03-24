@@ -1,6 +1,7 @@
 /**
  * Browser automation client using Playwright.
- * Provides tab management, navigation, snapshots, screenshots.
+ * Provides tab management, navigation, snapshots, screenshots,
+ * and interactive actions (click, type, select).
  */
 export class BrowserClient {
   private browser: any = null;
@@ -49,7 +50,7 @@ export class BrowserClient {
     const title = await page.title();
     const url = page.url();
 
-    // AI-friendly text snapshot via injected JS (avoids DOM types in Node)
+    // AI-friendly snapshot with indexed interactive elements
     const text: string = await page.evaluate(SNAPSHOT_SCRIPT);
 
     return `Page: ${title}\nURL: ${url}\n\n${text.slice(0, 10000)}`;
@@ -58,6 +59,74 @@ export class BrowserClient {
   async screenshot(tabId?: string): Promise<Buffer> {
     const page = this.getPage(tabId);
     return page.screenshot({ type: 'png', fullPage: false });
+  }
+
+  /**
+   * Click an interactive element by its snapshot index number.
+   * Uses the same indexing as the snapshot script.
+   */
+  async click(ref: string, tabId?: string): Promise<string> {
+    const page = this.getPage(tabId);
+
+    // ref can be a snapshot index (number) or a CSS selector
+    const isIndex = /^\d+$/.test(ref.trim());
+    if (isIndex) {
+      const selector = await page.evaluate(RESOLVE_REF_SCRIPT, parseInt(ref, 10));
+      if (!selector) return `Element #${ref} not found on page`;
+      await page.click(selector, { timeout: 10_000 });
+      await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {});
+      return `Clicked element #${ref}. Page: ${page.url()}`;
+    }
+
+    // CSS selector fallback
+    await page.click(ref, { timeout: 10_000 });
+    await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {});
+    return `Clicked "${ref}". Page: ${page.url()}`;
+  }
+
+  /**
+   * Type text into an element by snapshot index or CSS selector.
+   */
+  async type(ref: string, text: string, tabId?: string): Promise<string> {
+    const page = this.getPage(tabId);
+
+    const isIndex = /^\d+$/.test(ref.trim());
+    if (isIndex) {
+      const selector = await page.evaluate(RESOLVE_REF_SCRIPT, parseInt(ref, 10));
+      if (!selector) return `Element #${ref} not found on page`;
+      await page.fill(selector, text, { timeout: 10_000 });
+      return `Typed "${text}" into element #${ref}`;
+    }
+
+    await page.fill(ref, text, { timeout: 10_000 });
+    return `Typed "${text}" into "${ref}"`;
+  }
+
+  /**
+   * Select an option from a <select> dropdown by snapshot index or CSS selector.
+   */
+  async select(ref: string, value: string, tabId?: string): Promise<string> {
+    const page = this.getPage(tabId);
+
+    const isIndex = /^\d+$/.test(ref.trim());
+    if (isIndex) {
+      const selector = await page.evaluate(RESOLVE_REF_SCRIPT, parseInt(ref, 10));
+      if (!selector) return `Element #${ref} not found on page`;
+      await page.selectOption(selector, value, { timeout: 10_000 });
+      return `Selected "${value}" in element #${ref}`;
+    }
+
+    await page.selectOption(ref, value, { timeout: 10_000 });
+    return `Selected "${value}" in "${ref}"`;
+  }
+
+  /**
+   * Wait for a CSS selector to appear on page.
+   */
+  async waitFor(selector: string, timeoutMs = 10_000, tabId?: string): Promise<string> {
+    const page = this.getPage(tabId);
+    await page.waitForSelector(selector, { timeout: timeoutMs });
+    return `Element "${selector}" appeared`;
   }
 
   async openTab(id: string, url?: string): Promise<string> {
@@ -108,29 +177,115 @@ export class BrowserClient {
   }
 }
 
-/** Injected into page context — uses browser DOM APIs directly. */
+/**
+ * Injected into page context — walks the DOM and produces an AI-readable
+ * snapshot with indexed interactive elements.
+ *
+ * Interactive elements (links, buttons, inputs, selects, textareas) get a
+ * numbered reference like [3: button] Submit so the LLM can say "click 3".
+ * The indices are stable within a single snapshot — they change on navigation.
+ */
 const SNAPSHOT_SCRIPT = `(() => {
   const body = document.body;
   if (!body) return '(empty page)';
+  let refIndex = 0;
+  const INTERACTIVE = new Set(['a','button','input','select','textarea']);
+
   function walk(node, depth) {
     const tag = node.tagName ? node.tagName.toLowerCase() : '';
-    if (['script','style','noscript'].includes(tag)) return '';
+    if (['script','style','noscript','svg'].includes(tag)) return '';
+
+    // Interactive element — assign a reference number
+    if (INTERACTIVE.has(tag) && isVisible(node)) {
+      refIndex++;
+      node.setAttribute('data-ref', String(refIndex));
+      return formatInteractive(node, tag, refIndex);
+    }
+
     const lines = [];
     for (const child of node.childNodes) {
       if (child.nodeType === 3) {
         const t = (child.textContent || '').trim();
         if (t) lines.push(t);
       } else if (child.nodeType === 1) {
-        lines.push(walk(child, depth + 1));
+        const line = walk(child, depth + 1);
+        if (line) lines.push(line);
       }
     }
     const content = lines.filter(Boolean).join('\\n');
     if (!content) return '';
-    if (['h1','h2','h3','h4'].includes(tag)) return '[' + tag + '] ' + content;
-    if (tag === 'a') return '[link: ' + (node.href || '') + '] ' + content;
-    if (tag === 'button') return '[button] ' + content;
-    if (tag === 'input') return '[input: ' + (node.type || 'text') + ']';
+    if (['h1','h2','h3','h4','h5','h6'].includes(tag)) return '[' + tag + '] ' + content;
+    if (tag === 'li') return '• ' + content;
+    if (tag === 'form') return '[form]\\n' + content + '\\n[/form]';
     return content;
   }
+
+  function isVisible(el) {
+    if (el.offsetParent === null && el.tagName !== 'BODY') return false;
+    const style = window.getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  }
+
+  function formatInteractive(node, tag, idx) {
+    const label = getLabel(node, tag);
+    switch (tag) {
+      case 'a':
+        return '[' + idx + ': link] ' + label;
+      case 'button':
+        return '[' + idx + ': button] ' + label;
+      case 'input': {
+        const type = node.type || 'text';
+        const val = node.value ? ' = "' + node.value + '"' : '';
+        const ph = node.placeholder ? ' (' + node.placeholder + ')' : '';
+        return '[' + idx + ': input ' + type + '] ' + label + ph + val;
+      }
+      case 'select': {
+        const opts = Array.from(node.options || []).map(o => o.text).slice(0, 5);
+        return '[' + idx + ': select] ' + label + ' {' + opts.join(', ') + '}';
+      }
+      case 'textarea': {
+        const val = node.value ? ' = "' + node.value.slice(0, 50) + '"' : '';
+        const ph = node.placeholder ? ' (' + node.placeholder + ')' : '';
+        return '[' + idx + ': textarea] ' + label + ph + val;
+      }
+      default:
+        return '[' + idx + ': ' + tag + '] ' + label;
+    }
+  }
+
+  function getLabel(node, tag) {
+    // Try aria-label, title, then inner text
+    const aria = node.getAttribute('aria-label');
+    if (aria) return aria;
+    const title = node.getAttribute('title');
+    if (title) return title;
+    const name = node.getAttribute('name');
+    // For inputs, check associated label
+    if (['input','select','textarea'].includes(tag)) {
+      const id = node.id;
+      if (id) {
+        const labelEl = document.querySelector('label[for="' + id + '"]');
+        if (labelEl) return labelEl.textContent.trim();
+      }
+      if (name) return name;
+      return '';
+    }
+    const text = (node.textContent || '').trim().slice(0, 60);
+    return text || name || '';
+  }
+
   return walk(body, 0);
 })()`;
+
+/**
+ * Injected into page context — resolves a snapshot reference number
+ * to a CSS selector that Playwright can target.
+ *
+ * Returns a unique selector string, or null if not found.
+ */
+const RESOLVE_REF_SCRIPT = `(refNum) => {
+  const el = document.querySelector('[data-ref="' + refNum + '"]');
+  if (!el) return null;
+  // Build a unique selector using data-ref attribute
+  return '[data-ref="' + refNum + '"]';
+}`;

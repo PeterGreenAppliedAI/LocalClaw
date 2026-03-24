@@ -7,14 +7,27 @@ let sharedClient: BrowserClient | null = null;
 export function createBrowserTool(config?: BrowserConfig): LocalClawTool {
   return {
     name: 'browser',
-    description: 'Control a web browser: navigate, take snapshots, screenshots, interact with pages',
-    parameterDescription: 'action (required): "open" | "navigate" | "snapshot" | "screenshot" | "tabs" | "close". url (optional): URL for navigate/open. tab (optional): Tab ID.',
-    example: 'browser[{"action": "navigate", "url": "https://example.com/dashboard"}]',
+    description: `Control a web browser: navigate pages, read content, fill forms, click buttons.
+Use "snapshot" to see the page with numbered interactive elements.
+Then use "click", "type", or "select" with the element number to interact.
+Workflow: open → navigate → snapshot → interact → snapshot (verify) → repeat.`,
+    parameterDescription: `action (required): "open" | "navigate" | "snapshot" | "screenshot" | "click" | "type" | "select" | "wait" | "tabs" | "close".
+url (optional): URL for navigate/open.
+ref (optional): Element reference number from snapshot, or CSS selector. Used by click/type/select.
+text (optional): Text to type (for "type" action) or option to select (for "select" action).
+tab (optional): Tab ID.`,
+    example: 'browser[{"action": "click", "ref": "3"}]',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', description: 'Browser action to perform', enum: ['open', 'navigate', 'snapshot', 'screenshot', 'tabs', 'console', 'pdf', 'close'] },
+        action: {
+          type: 'string',
+          description: 'Browser action to perform',
+          enum: ['open', 'navigate', 'snapshot', 'screenshot', 'click', 'type', 'select', 'wait', 'tabs', 'console', 'pdf', 'close'],
+        },
         url: { type: 'string', description: 'URL for navigate/open actions' },
+        ref: { type: 'string', description: 'Element reference number from snapshot, or CSS selector' },
+        text: { type: 'string', description: 'Text to type or option to select' },
         tab: { type: 'string', description: 'Tab ID to target' },
       },
       required: ['action'],
@@ -27,10 +40,9 @@ export function createBrowserTool(config?: BrowserConfig): LocalClawTool {
 
       // Lazy-init browser
       if (!sharedClient || !sharedClient.isRunning()) {
-        if (action === 'close' || action === 'tabs' || action === 'snapshot' || action === 'screenshot') {
-          if (!sharedClient?.isRunning()) {
-            return 'Browser is not running. Use action "open" first.';
-          }
+        const needsRunning = ['close', 'tabs', 'snapshot', 'screenshot', 'click', 'type', 'select', 'wait'];
+        if (needsRunning.includes(action)) {
+          return 'Browser is not running. Use action "open" first.';
         }
 
         if (action === 'open' || action === 'navigate') {
@@ -72,6 +84,30 @@ export function createBrowserTool(config?: BrowserConfig): LocalClawTool {
             const buf = await client.screenshot(tab);
             return `Screenshot taken (${buf.length} bytes). [Binary data — use snapshot for text content]`;
           }
+          case 'click': {
+            const ref = params.ref as string;
+            if (!ref) return 'Error: ref parameter required for click (element number from snapshot or CSS selector)';
+            return await client.click(ref, tab);
+          }
+          case 'type': {
+            const ref = params.ref as string;
+            const text = params.text as string;
+            if (!ref) return 'Error: ref parameter required for type (element number from snapshot or CSS selector)';
+            if (!text) return 'Error: text parameter required for type';
+            return await client.type(ref, text, tab);
+          }
+          case 'select': {
+            const ref = params.ref as string;
+            const text = params.text as string;
+            if (!ref) return 'Error: ref parameter required for select (element number from snapshot or CSS selector)';
+            if (!text) return 'Error: text parameter required for select (option value)';
+            return await client.select(ref, text, tab);
+          }
+          case 'wait': {
+            const ref = params.ref as string;
+            if (!ref) return 'Error: ref parameter required for wait (CSS selector)';
+            return await client.waitFor(ref, 10_000, tab);
+          }
           case 'tabs': {
             const tabs = client.listTabs();
             return `Open tabs: ${tabs.join(', ')}`;
@@ -90,7 +126,7 @@ export function createBrowserTool(config?: BrowserConfig): LocalClawTool {
             return 'Browser closed';
           }
           default:
-            return `Unknown action: ${action}. Use: open, navigate, snapshot, screenshot, tabs, console, pdf, close`;
+            return `Unknown action: ${action}. Use: open, navigate, snapshot, click, type, select, wait, screenshot, tabs, close`;
         }
       } catch (err) {
         return `Browser error: ${err instanceof Error ? err.message : err}`;

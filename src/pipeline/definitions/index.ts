@@ -8,6 +8,7 @@ import { webSearchPipeline } from './web-search.js';
 import { execPipeline } from './exec.js';
 import { heartbeatPipeline } from './heartbeat.js';
 import { researchPipeline } from './research.js';
+import { planPipeline } from './plan.js';
 
 /**
  * Register all pipeline definitions.
@@ -28,6 +29,9 @@ export function registerAllPipelines(registry: PipelineRegistry): void {
   registry.register(execPipeline);
   registry.register(heartbeatPipeline);
   registry.register(researchPipeline);
+
+  // Meta pipelines
+  registry.register(planPipeline);
 
   console.log(`[Pipelines] Registered ${registry.list().length} pipeline(s)`);
 }

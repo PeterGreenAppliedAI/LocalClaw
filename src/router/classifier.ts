@@ -10,7 +10,8 @@ import { buildRouterPrompt } from './prompt.js';
 const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   // Multi first (longest match / compound intent)
   { pattern: /\b(save|write file|read file).*(search|send|remind)/i, category: 'multi' },
-  { pattern: /\b(search|find).*(save|send|remind)/i, category: 'multi' },
+  { pattern: /\b(search|find).*(save|send|remind|sign.*(up|me)|register|subscribe)/i, category: 'multi' },
+  { pattern: /\b(find|search|look).*(and|then)\b/i, category: 'multi' },
   // Research — only trigger on clear research *requests*, not casual mentions
   { pattern: /\b(research|analyze)\b.*\b(for me|this topic|in depth|deep dive)\b/i, category: 'research' },
   { pattern: /\b(chart|graph|plot|visualize)\b.*\b(data|stock|trend|performance|price)\b/i, category: 'research' },
@@ -53,6 +54,8 @@ const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
  */
 const NEW_TOPIC_PATTERNS = [
   /\b(search|google|look up)\b.*\b(for|about)\b/i,  // "search the web for X"
+  /\b(find|search|look).*(and|then)\b/i,              // compound action: "find X and do Y"
+  /\b(sign.*(up|me)|register|subscribe)\b/i,          // explicit signup/registration intent
   /\b(run|execute|deploy|install|sudo)\b/i,           // explicit exec intent
   /\b(remind me|schedule|every day|set up a cron)\b/i, // explicit cron intent
   /\b(send|tell|notify)\b.*\b(message|channel)\b/i,   // explicit messaging intent
