@@ -64,10 +64,10 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Reasoning | `reason` | Hand off to a dedicated thinking model for deep analysis and content synthesis |
 | Config | `cron_edit`, `workspace_read`, `workspace_write` | Self-administration — edit cron jobs, read/write workspace files |
 | Messaging | `send_message` | Cross-channel message delivery |
-| Browsing | `browser` | Playwright headless Chromium — navigate, snapshot, screenshot |
+| Browsing | `browser` | Playwright headless Chromium — navigate, snapshot with indexed interactive elements, click, type, select, fill forms |
 | Vision | *(automatic)* | Image analysis via multimodal model — descriptions injected into context for natural Q&A |
 | Voice | TTS/STT | Kokoro TTS + faster-whisper STT — voice in, voice out, with toggle hands-free mode |
-| Multi-task | *(decomposed)* | Complex requests split into sub-tasks across specialists |
+| Multi-task | `plan` pipeline | LLM decomposes goal into steps, code loop executes them with browser/tools, verifies, and summarizes |
 | Heartbeat | *(autonomous)* | Scheduled autonomous task checks, memory cleanup, and status reports |
 | Knowledge Import | `knowledge_import` | Import PDFs, CSVs, markdown into vector-searchable knowledge base |
 | Context Compaction | *(automatic)* | Budget-aware history summarization with memory flush |
@@ -197,23 +197,25 @@ Most categories run through **deterministic pipelines** instead of letting the m
 | `parallel_tool` | Call a tool N times concurrently (e.g., 5 searches at once) | No |
 | `llm` | Synthesize, analyze, or format text | Yes |
 | `code` | Deterministic logic (date math, filtering, formatting) | No |
-| `branch` | Route to sub-pipeline based on keyword intent | No |
-| `loop` | Repeat stages N times | No |
+| `branch` | Route to sub-pipeline based on a sync function | No |
+| `llm_branch` | Single-word LLM classification to pick a branch (uses router model) | Yes (constrained) |
+| `loop` | Repeat stages N times or until condition | No |
 
 **Pipelined categories:**
 
 | Category | Pipeline | Flow |
 |----------|----------|------|
-| `task` | Branched (5) | detect intent → extract → tool → confirm |
-| `memory` | Branched (2) | save/recall → extract → tool → format |
-| `cron` | Branched (4) | add/list/remove/edit → extract → tool → confirm |
+| `task` | Branched (5) | llm_branch → extract (with task context) → tool → confirm |
+| `memory` | Branched (2) | llm_branch → extract → tool → format |
+| `cron` | Branched (4) | llm_branch → extract → tool → confirm |
 | `web_search` | Linear | extract → search → parallel fetch → synthesize |
+| `multi` | Plan | llm plan → execute loop (dynamic tools + browser) → verify → summarize |
 | `research` | Complex | plan queries → parallel search → parallel fetch → synthesize → charts → render deck |
 | `exec` | Linear | extract → tool → format |
 | `message` | Linear | extract → tool → confirm |
 | `website` | Linear | extract → tool → format |
 
-**ReAct fallback** categories (`multi`, `config`, `chat`) still use the model-decides-everything loop.
+**ReAct fallback** categories (`config`, `chat`) still use the model-decides-everything loop.
 
 ### Research Flow
 
@@ -228,6 +230,31 @@ The `research` pipeline produces polished reveal.js slide decks through a fully 
 7. **Deliver** — Deck written to file, summary returned with link
 
 Supports artifact types: `memo`, `brief`, `deck`, `market`, `teardown`, `deepdive` — each with a different slide structure guide. Charts use a dark theme with explicit white text styling for readability.
+
+### Plan Pipeline (Autonomous Task Execution)
+
+The `plan` pipeline handles complex multi-step tasks that require browser interaction, web searches, and tool coordination. Instead of asking the model to orchestrate 10+ tool calls (which local models can't do reliably), the pipeline uses a hybrid approach:
+
+1. **Plan** — LLM generates a step-by-step plan as a JSON array of `{tool, params, purpose}` objects
+2. **Execute loop** — Code iterates through the plan, calling each tool directly via `ctx.executor()`
+3. **Verify** — After each step, checks if the result succeeded; on failure, LLM generates an adjusted step
+4. **Summarize** — LLM synthesizes all step results into a conversational response (streamed)
+
+**Browser interactions** use indexed element references — the snapshot script labels every interactive element on the page (`[1: button] Sign Up`, `[2: input email]`, `[3: link] Events`), so the LLM can plan clicks and form fills by number without knowing CSS selectors.
+
+**Example:** "Find tech meetups near Huntington Station and sign me up using pgreen@devmesh.tech" generates:
+```
+Step 1: web_search — Find tech meetups near Huntington Station
+Step 2: browser.navigate — Go to Meetup.com results page
+Step 3: browser.snapshot — See available meetup listings
+Step 4: browser.click(ref: 5) — Click the most relevant meetup
+Step 5: browser.snapshot — Check registration options
+Step 6: browser.type(ref: 3, text: "pgreen@devmesh.tech") — Fill email field
+Step 7: browser.click(ref: 8) — Submit registration
+Step 8: browser.snapshot — Verify success
+```
+
+The model touches the task 3-4 times total (plan, verify, summarize) instead of every iteration. Each touch is narrow and well-scoped — exactly what local models handle reliably.
 
 ### Pluggable Channel Adapters
 

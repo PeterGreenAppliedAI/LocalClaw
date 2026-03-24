@@ -14,7 +14,7 @@
     timeout: 2000,
     defaultCategory: "chat",
     categories: {
-      chat:       { description: "Simple conversation, greetings, opinions, questions about the owner/user (Peter), or anything answerable from context" },
+      chat:       { description: "Simple conversation, greetings, opinions, discussing ideas or plans, questions about the owner/user, or anything answerable from context. Use this when the user is TALKING ABOUT a topic, not requesting an action" },
       web_search: { description: "Questions needing current internet information about external topics (NOT about the owner or user)" },
       memory:     { description: "Questions about past conversations or stored info" },
       exec:       { description: "Run commands, edit files, system operations" },
@@ -22,15 +22,16 @@
       message:    { description: "Send messages to other channels/users" },
       website:    { description: "Teaching materials, courses, assignments" },
       task:       { description: "Create, list, update, or complete tasks and to-dos" },
-      multi:      { description: "Complex requests needing multiple different tools" },
+      multi:      { description: "Complex requests needing multiple different tools or multi-step browser interactions" },
       config:     { description: "Edit settings, cron jobs, workspace files, agent configuration" },
+      research:   { description: "User is REQUESTING the bot to perform research and produce a report — e.g. 'research AAPL stock', 'analyze the EV market'. NOT when user is just talking about research" },
     },
   },
 
   specialists: {
     chat: {
       model: "qwen3-coder:30b",
-      systemPrompt: "You are Peter Green's AI assistant. Follow SOUL.md rules strictly — your behavior MUST change based on which channel the message came from (check the message context). On Discord, be a full helpful assistant. On WhatsApp, follow the WhatsApp Rules in SOUL.md without exception.",
+      systemPrompt: "You are a helpful AI assistant. Be concise and natural.",
       maxTokens: 4096,
       temperature: 0.8,
       maxIterations: 1,
@@ -38,35 +39,39 @@
     },
     web_search: {
       model: "qwen3-coder:30b",
-      systemPrompt: "You are a web research specialist. ALWAYS use the web_search tool to find information before answering. Use web_fetch to read page content. Use browser for JavaScript-heavy pages that need rendering (open, navigate, snapshot). Never answer from memory alone — search first.",
+      systemPrompt: "You are a web research specialist. ALWAYS use the web_search tool to find information before answering. Use web_fetch to read page content. Use browser for JavaScript-heavy pages that need rendering. Never answer from memory alone — search first.",
       maxTokens: 4096,
       temperature: 0.3,
       maxIterations: 8,
       tools: ["web_search", "web_fetch", "browser", "reason"],
+      pipeline: "web_search",
     },
     memory: {
       model: "qwen3-coder:30b",
-      systemPrompt: "You are a memory management specialist. When the user asks you to remember something, ALWAYS use memory_save to store it. When the user asks about past conversations or stored info, ALWAYS use memory_search first. Confirm what you saved or found.",
+      systemPrompt: "You are a memory management specialist. When the user asks you to remember something, ALWAYS use memory_save. When asked about past conversations, ALWAYS use memory_search first.",
       maxTokens: 2048,
       temperature: 0.2,
       maxIterations: 5,
       tools: ["memory_search", "memory_get", "memory_save", "knowledge_import"],
+      pipeline: "memory",
     },
     exec: {
       model: "qwen3-coder:30b",
-      systemPrompt: "You are a command execution specialist. When the user asks you to run a command, ALWAYS use the exec tool. Show the command output in your response. For file operations, use read_file and write_file.",
+      systemPrompt: "You are a command execution specialist. When the user asks you to run a command, ALWAYS use the exec tool. Show the command output in your response.",
       maxTokens: 4096,
       temperature: 0.3,
       maxIterations: 8,
       tools: ["exec", "read_file", "write_file", "code_session", "reason"],
+      pipeline: "exec",
     },
     cron: {
       model: "qwen3-coder:30b",
-      systemPrompt: "You are a scheduling specialist. You manage two types of scheduled tasks:\n\n1. **Cron jobs** — individual recurring tasks with their own schedule, category, and delivery. Use cron_add/cron_list/cron_remove.\n2. **Heartbeat tasks** — autonomous periodic tasks that all run together on a shared schedule. They get full tool access and produce a combined report. Use heartbeat_add/heartbeat_list/heartbeat_remove.\n\nWhen the user wants to schedule something at a specific time (like 'remind me at 9am'), use cron. When they want to add an autonomous check or routine task (like 'check my emails periodically' or 'monitor my task board'), use heartbeat.\n\nFor cron schedules, use standard 5-field cron expressions (minute hour day month weekday). Examples: '0 9 * * *' = daily at 9am, '0 */2 * * *' = every 2 hours, '30 14 * * 1-5' = weekdays at 2:30pm. The timezone is America/New_York (EST/EDT). Use the channel context provided to set the delivery channel and target.",
+      systemPrompt: "You are a scheduling specialist. Use cron_add/cron_list/cron_remove for recurring tasks. Use heartbeat_add/heartbeat_list/heartbeat_remove for autonomous periodic checks. For cron schedules, use standard 5-field expressions (minute hour day month weekday). Timezone is America/New_York.",
       maxTokens: 2048,
       temperature: 0.2,
       maxIterations: 3,
       tools: ["cron_add", "cron_list", "cron_remove", "heartbeat_add", "heartbeat_list", "heartbeat_remove"],
+      pipeline: "cron",
     },
     message: {
       model: "qwen3-coder:30b",
@@ -74,6 +79,7 @@
       temperature: 0.5,
       maxIterations: 3,
       tools: ["send_message"],
+      pipeline: "message",
     },
     website: {
       model: "qwen3-coder:30b",
@@ -81,17 +87,19 @@
       temperature: 0.3,
       maxIterations: 5,
       tools: ["website_query"],
+      pipeline: "website",
     },
     multi: {
       model: "qwen3-coder:30b",
       maxTokens: 4096,
       temperature: 0.3,
-      maxIterations: 8,
-      tools: ["web_search", "memory_search", "exec", "send_message", "task_add", "task_list", "task_done", "reason"],
+      maxIterations: 15,
+      tools: ["web_search", "web_fetch", "browser", "memory_search", "memory_save", "exec", "send_message", "task_add", "task_list", "task_done", "reason"],
+      pipeline: "plan",
     },
     config: {
       model: "qwen3-coder:30b",
-      systemPrompt: "You are a configuration specialist. You can edit cron jobs (cron_edit), read workspace files (workspace_read), write workspace files (workspace_write), and manage scheduled tasks. When asked to modify a cron job, use cron_edit with the job ID. When asked to update workspace files, use workspace_write. Always confirm changes after making them.",
+      systemPrompt: "You are a configuration specialist. Use cron_edit, workspace_read, workspace_write to manage settings. Always confirm changes after making them.",
       maxTokens: 4096,
       temperature: 0.3,
       maxIterations: 5,
@@ -99,11 +107,21 @@
     },
     task: {
       model: "qwen3-coder:30b",
-      systemPrompt: "You are a task management specialist. Use task_add to create tasks, task_list to show them, task_update to modify, task_done to complete, task_remove to delete. Default to showing todo + in_progress. Always confirm changes.",
+      systemPrompt: "You are a task management specialist. Use task_add to create, task_list to show, task_update to modify, task_done to complete, task_remove to delete. Default to showing todo + in_progress.",
       maxTokens: 2048,
       temperature: 0.2,
       maxIterations: 5,
       tools: ["task_add", "task_list", "task_update", "task_done", "task_remove"],
+      pipeline: "task",
+    },
+    research: {
+      model: "qwen3-coder:30b",
+      systemPrompt: "You are a research production analyst. You produce polished slide decks, not chat responses.",
+      maxTokens: 4096,
+      temperature: 0.3,
+      maxIterations: 20,
+      tools: ["web_search", "web_fetch", "code_session", "write_file", "read_file", "reason"],
+      pipeline: "research",
     },
   },
 
@@ -112,7 +130,7 @@
       enabled: true,
       token: "${DISCORD_BOT_TOKEN}",
       security: {
-        trustedUsers: ["415030165005926401"], // Tadeu718
+        trustedUsers: ["YOUR_DISCORD_USER_ID"],
         restrictedCategories: ["exec", "config"],
         restrictedTools: ["exec", "write_file", "code_session", "workspace_write"],
       },
@@ -138,7 +156,7 @@
       port: 3100,
     },
     whatsapp: {
-      enabled: true,
+      enabled: false,
       security: {
         allowedCategories: ["chat", "web_search", "memory", "task"],
         blockedTools: ["exec", "write_file", "send_message", "workspace_write"],
@@ -165,9 +183,9 @@
   cron: { enabled: true, store: "data/cron.json" },
   session: {
     transcriptDir: "data/sessions",
-    maxHistoryTurns: 100,       // coarse safety net — compaction handles size now
-    contextSize: 32768,          // model context window
-    recentTurnsToKeep: 6,        // turns kept verbatim (3 exchanges)
+    maxHistoryTurns: 100,
+    contextSize: 32768,
+    recentTurnsToKeep: 6,
   },
 
   tools: {
@@ -209,36 +227,32 @@
   },
 
   tts: {
-    enabled: true,
+    enabled: false,
     url: "${QWEN_TTS_URL}",
     voice: "serena",
     format: "opus",
   },
 
   stt: {
-    enabled: true,
+    enabled: false,
     url: "${WHISPER_URL}",
     model: "whisper-large-v3",
     language: "en",
   },
 
-  voice: {
-    model: "qwen2.5:7b",  // fast model for voice-originated messages
-  },
-
   heartbeat: {
     enabled: true,
-    schedule: "0 */2 * * *",  // every 2 hours
+    schedule: "0 */2 * * *",
     delivery: {
       channel: "discord",
-      target: "415030165005926401",  // DM to tadeu718
+      target: "YOUR_DISCORD_USER_ID",
     },
   },
 
   vision: {
-    enabled: true,
+    enabled: false,
     model: "qwen3-vl:8b",
-    prompt: "Describe this image in detail. Include text content, visual elements, layout, and any relevant context. /no_think",
+    prompt: "Describe this image in detail.",
     maxTokens: 1024,
   },
 }
