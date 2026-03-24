@@ -1,21 +1,19 @@
 import type { PipelineDefinition } from '../types.js';
 
-/**
- * Detect memory sub-intent: save vs recall.
- */
-function detectMemoryIntent(message: string): string {
-  const m = message.toLowerCase();
-  if (/\b(remember|save|store|note|record|keep)\b/.test(m)) return 'save';
-  return 'recall';
-}
+const MEMORY_CLASSIFY_PROMPT = `You are a memory intent classifier. Given the user's message, decide if they want to SAVE something to memory or RECALL something from memory.
+
+- "save" — the user wants to STORE new information (e.g., "remember that I like dark mode", "save this", "note that the meeting is Thursday")
+- "recall" — the user wants to RETRIEVE or ASK about stored information (e.g., "what do you know about me", "do you remember my favorite color", "what did I say about the project")`;
 
 export const memoryPipeline: PipelineDefinition = {
   name: 'memory',
   stages: [
     {
       name: 'route',
-      type: 'branch',
-      decide: (ctx) => detectMemoryIntent(ctx.userMessage),
+      type: 'llm_branch',
+      prompt: MEMORY_CLASSIFY_PROMPT,
+      options: ['save', 'recall'],
+      fallback: 'recall',
       branches: {
         // --- SAVE ---
         save: [

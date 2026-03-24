@@ -1,31 +1,24 @@
 import type { PipelineDefinition } from '../types.js';
 
-/**
- * Detect task sub-intent from user message using keywords.
- * Falls back to 'list' if nothing matches.
- */
-function detectTaskIntent(message: string): string {
-  const m = message.toLowerCase();
+const TASK_CLASSIFY_PROMPT = `You are a task intent classifier. Given the user's message, decide what they want to do with their task list.
 
-  // "done" / "complete" / "finish" / "mark X done"
-  if (/\b(done|complete[d]?|finish|mark.+done)\b/.test(m)) return 'done';
-  // "remove" / "delete"
-  if (/\b(remove|delete|drop)\b/.test(m)) return 'remove';
-  // "update" / "change" / "edit" / "set" / "move" / "reassign"
-  if (/\b(update|change|edit|modify|set|move|reassign|reschedule)\b/.test(m)) return 'update';
-  // "add" / "create" / "new task" / "remind me"
-  if (/\b(add|create|new\s+task|remind\s+me|todo)\b/.test(m)) return 'add';
-  // Default to list
-  return 'list';
-}
+- "add" — the user wants to CREATE a new task (e.g., "add a task to review the PR", "remind me to call Bob")
+- "list" — the user wants to VIEW or CHECK tasks, or is asking a QUESTION about tasks (e.g., "what's on my task list", "is that it?", "check my tasks", "is it done?")
+- "done" — the user wants to MARK a specific task as completed (e.g., "mark task abc123 done", "complete the review task")
+- "update" — the user wants to CHANGE a task's details like date, priority, or title (e.g., "change the due date", "reschedule task X")
+- "remove" — the user wants to DELETE a task entirely (e.g., "remove task abc123", "delete that task")
+
+IMPORTANT: Questions like "is it done?", "is that it?", "are there more?" are ALWAYS "list" — they are asking for information, not performing an action.`;
 
 export const taskPipeline: PipelineDefinition = {
   name: 'task',
   stages: [
     {
       name: 'route',
-      type: 'branch',
-      decide: (ctx) => detectTaskIntent(ctx.userMessage),
+      type: 'llm_branch',
+      prompt: TASK_CLASSIFY_PROMPT,
+      options: ['add', 'list', 'done', 'update', 'remove'],
+      fallback: 'list',
       branches: {
         // --- ADD ---
         add: [
@@ -102,7 +95,13 @@ export const taskPipeline: PipelineDefinition = {
             temperature: 0.2,
             maxTokens: 1024,
             buildPrompt: (ctx) => ({
-              system: 'Format the task list into a clear, readable response. Be concise. Use the data exactly as provided — do not invent tasks.',
+              system: `You are a task list formatter. Your ONLY job is to present the task data below in a clear, readable format.
+
+RULES:
+- Display ONLY the tasks from the data provided. Do NOT invent, create, or add any tasks.
+- Do NOT say "Created task" or "Added task" — you are READING, not writing.
+- If the data says "No tasks found", say exactly that.
+- Be concise and use bullet points or a clean list format.`,
               user: `User asked: "${ctx.userMessage}"\n\nTask data:\n${ctx.stageResults.list as string}`,
             }),
           },
@@ -110,6 +109,12 @@ export const taskPipeline: PipelineDefinition = {
 
         // --- DONE ---
         done: [
+          {
+            name: 'fetch_tasks_for_done',
+            type: 'tool',
+            tool: 'task_list',
+            resolveParams: () => ({}),
+          },
           {
             name: 'extract_done',
             type: 'extract',
@@ -120,6 +125,7 @@ export const taskPipeline: PipelineDefinition = {
               { input: 'mark task abc123 done', output: { id: 'abc123' } },
               { input: 'complete task 5', output: { id: '5' } },
             ],
+            context: (ctx) => `Current tasks:\n${ctx.stageResults.fetch_tasks_for_done as string ?? 'No tasks found'}`,
           },
           {
             name: 'done',
@@ -139,6 +145,12 @@ export const taskPipeline: PipelineDefinition = {
         // --- UPDATE ---
         update: [
           {
+            name: 'fetch_tasks_for_update',
+            type: 'tool',
+            tool: 'task_list',
+            resolveParams: () => ({}),
+          },
+          {
             name: 'extract_update',
             type: 'extract',
             schema: {
@@ -155,6 +167,7 @@ export const taskPipeline: PipelineDefinition = {
               { input: 'change task abc to high priority', output: { id: 'abc', priority: 'high' } },
               { input: 'reschedule task 5 to next Monday', output: { id: '5', dueDate: '2026-03-23' } },
             ],
+            context: (ctx) => `Current tasks:\n${ctx.stageResults.fetch_tasks_for_update as string ?? 'No tasks found'}`,
           },
           {
             name: 'update',
@@ -180,6 +193,12 @@ export const taskPipeline: PipelineDefinition = {
         // --- REMOVE ---
         remove: [
           {
+            name: 'fetch_tasks_for_remove',
+            type: 'tool',
+            tool: 'task_list',
+            resolveParams: () => ({}),
+          },
+          {
             name: 'extract_remove',
             type: 'extract',
             schema: {
@@ -189,6 +208,7 @@ export const taskPipeline: PipelineDefinition = {
               { input: 'remove task abc123', output: { id: 'abc123' } },
               { input: 'delete task 7', output: { id: '7' } },
             ],
+            context: (ctx) => `Current tasks:\n${ctx.stageResults.fetch_tasks_for_remove as string ?? 'No tasks found'}`,
           },
           {
             name: 'remove',

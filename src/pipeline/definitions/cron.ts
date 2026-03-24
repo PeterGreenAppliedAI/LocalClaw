@@ -1,23 +1,21 @@
 import type { PipelineDefinition } from '../types.js';
 
-/**
- * Detect cron sub-intent from user message.
- */
-function detectCronIntent(message: string): string {
-  const m = message.toLowerCase();
-  if (/\b(remove|delete|cancel|stop)\b/.test(m)) return 'remove';
-  if (/\b(edit|change|update|modify|reschedule)\b/.test(m)) return 'edit';
-  if (/\b(add|create|schedule|set\s*up|every|daily|weekly|hourly)\b/.test(m)) return 'add';
-  return 'list';
-}
+const CRON_CLASSIFY_PROMPT = `You are a scheduling intent classifier. Given the user's message, decide what they want to do with scheduled jobs.
+
+- "add" — the user wants to CREATE or SCHEDULE a new recurring job (e.g., "schedule a daily search", "run this every Friday", "set up a weekly task")
+- "list" — the user wants to VIEW current scheduled jobs or is asking a question about them (e.g., "what's scheduled", "show my cron jobs", "any recurring tasks?")
+- "remove" — the user wants to DELETE or CANCEL a scheduled job (e.g., "remove the daily search", "cancel that cron job", "stop the weekly task")
+- "edit" — the user wants to CHANGE an existing job's schedule, message, or settings (e.g., "change it to run at 10am", "update the search query", "disable that job")`;
 
 export const cronPipeline: PipelineDefinition = {
   name: 'cron',
   stages: [
     {
       name: 'route',
-      type: 'branch',
-      decide: (ctx) => detectCronIntent(ctx.userMessage),
+      type: 'llm_branch',
+      prompt: CRON_CLASSIFY_PROMPT,
+      options: ['add', 'list', 'remove', 'edit'],
+      fallback: 'list',
       branches: {
         // --- ADD ---
         add: [

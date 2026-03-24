@@ -22,12 +22,14 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
 
   switch (stage.type) {
     case 'extract': {
+      const extraContext = stage.context ? stage.context(ctx) : undefined;
       const params = await extractParams(
         ctx.client,
         ctx.model,
         stage.schema,
         ctx.userMessage,
         stage.examples,
+        extraContext,
       );
       // Merge extracted params into ctx.params
       Object.assign(ctx.params, params);
@@ -77,6 +79,25 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
         return undefined;
       }
       console.log(`[Pipeline] Branch "${stage.name}" → "${branchKey}" (${subStages.length} stages)`);
+      return await executeStages(subStages, ctx);
+    }
+
+    case 'llm_branch': {
+      const model = stage.model ?? ctx.routerModel ?? ctx.model;
+      const prompt = `${stage.prompt}\n\nValid options: ${stage.options.join(', ')}\n\nUser message: "${ctx.userMessage}"\n\nReply with ONE word only.`;
+      const response = await ctx.client.generate({
+        model,
+        prompt,
+        options: { temperature: 0.1, num_predict: 20 },
+      });
+      const raw = response.response.trim().toLowerCase().replace(/[^a-z_]/g, '');
+      const branchKey = stage.options.includes(raw) ? raw : stage.fallback;
+      const subStages = stage.branches[branchKey];
+      if (!subStages) {
+        console.warn(`[Pipeline] LlmBranch "${stage.name}" has no handler for key "${branchKey}"`);
+        return undefined;
+      }
+      console.log(`[Pipeline] LlmBranch "${stage.name}" → "${branchKey}" (raw="${raw}", ${subStages.length} stages)`);
       return await executeStages(subStages, ctx);
     }
 

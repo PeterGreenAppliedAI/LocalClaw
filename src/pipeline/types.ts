@@ -29,6 +29,8 @@ export interface PipelineContext {
   userPriming?: string;
   /** Specialist model name */
   model: string;
+  /** Fast router model for classification tasks (e.g., llm_branch) */
+  routerModel?: string;
   /** Source context from dispatch */
   sourceContext?: { channel: string; channelId: string; guildId?: string; senderId?: string };
   /** Current loop iteration (set by executor during loop stages) */
@@ -80,12 +82,28 @@ export interface ExtractStage extends BaseStage {
   schema: Record<string, { type: string; description: string; required?: boolean; enum?: string[] }>;
   /** Optional examples to guide extraction */
   examples?: Array<{ input: string; output: Record<string, unknown> }>;
+  /** Optional context injector — returns extra context (e.g. current task list) to help the LLM resolve fuzzy references */
+  context?: (ctx: PipelineContext) => string;
 }
 
-/** Branch to a sub-pipeline based on intent */
+/** Branch to a sub-pipeline based on a synchronous decision function */
 export interface BranchStage extends BaseStage {
   type: 'branch';
   decide: (ctx: PipelineContext) => string;
+  branches: Record<string, PipelineStage[]>;
+}
+
+/** Branch to a sub-pipeline based on LLM single-word classification */
+export interface LlmBranchStage extends BaseStage {
+  type: 'llm_branch';
+  /** Model to use for classification (defaults to ctx.model) */
+  model?: string;
+  /** Classification prompt — must instruct the LLM to return a single word */
+  prompt: string;
+  /** Valid branch keys — the LLM response is validated against these */
+  options: string[];
+  /** Fallback branch if LLM returns an invalid option */
+  fallback: string;
   branches: Record<string, PipelineStage[]>;
 }
 
@@ -111,6 +129,7 @@ export type PipelineStage =
   | CodeStage
   | ExtractStage
   | BranchStage
+  | LlmBranchStage
   | LoopStage
   | ParallelToolStage;
 

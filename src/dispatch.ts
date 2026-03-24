@@ -485,6 +485,7 @@ async function runPipelineDispatch(
     workspaceContext,
     userPriming: userPriming || undefined,
     model: specialist.model,
+    routerModel: config.router?.model,
     sourceContext: params.sourceContext,
     onStream: params.onStream,
   };

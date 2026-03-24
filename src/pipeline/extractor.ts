@@ -16,6 +16,7 @@ export function buildExtractionPrompt(
   schema: Record<string, FieldSchema>,
   userMessage: string,
   examples?: Array<{ input: string; output: Record<string, unknown> }>,
+  extraContext?: string,
 ): { system: string; user: string } {
   const fields = Object.entries(schema)
     .map(([name, field]) => {
@@ -26,6 +27,10 @@ export function buildExtractionPrompt(
     .join('\n');
 
   let system = `Extract the following parameters from the user's message as a JSON object.\n\n${fields}\n\nReturn ONLY a valid JSON object. No explanation, no markdown, no extra text.`;
+
+  if (extraContext) {
+    system += `\n\nReference data (use this to resolve IDs and fuzzy references):\n${extraContext}`;
+  }
 
   if (examples && examples.length > 0) {
     const exLines = examples
@@ -47,8 +52,9 @@ export async function extractParams(
   schema: Record<string, FieldSchema>,
   userMessage: string,
   examples?: Array<{ input: string; output: Record<string, unknown> }>,
+  extraContext?: string,
 ): Promise<Record<string, unknown>> {
-  const { system, user } = buildExtractionPrompt(schema, userMessage, examples);
+  const { system, user } = buildExtractionPrompt(schema, userMessage, examples, extraContext);
 
   const response = await client.chat({
     model,
