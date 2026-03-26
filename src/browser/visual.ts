@@ -178,7 +178,11 @@ async function callVisionModel(
   for (const model of models) {
     try {
       const result = await callSingleVisionModel(config.ollamaUrl, model, base64Image, prompt);
-      if (result) return result;
+      if (result) {
+        console.log(`[VisualBrowser] Vision model "${model}" responded (${result.length} chars)`);
+        return result;
+      }
+      console.warn(`[VisualBrowser] Vision model "${model}" returned empty after retry`);
     } catch (err) {
       console.warn(`[VisualBrowser] Vision model "${model}" failed: ${err instanceof Error ? err.message : err}`);
       if (model === models[models.length - 1]) throw err; // Last model — rethrow
@@ -186,7 +190,7 @@ async function callVisionModel(
     }
   }
 
-  throw new Error('All vision models failed');
+  return '(Vision model could not analyze the page. The models may be busy or the image too complex. Try again.)';
 }
 
 async function callSingleVisionModel(
@@ -195,36 +199,46 @@ async function callSingleVisionModel(
   base64Image: string,
   prompt: string,
 ): Promise<string> {
-  const response = await fetch(`${ollamaUrl}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-          images: [base64Image],
-        },
-      ],
-      stream: false,
-      options: { num_predict: 1024 },
-    }),
-    signal: AbortSignal.timeout(60_000),
-  });
+  // Retry once on empty response (model cold-start or GPU contention)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await fetch(`${ollamaUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+            images: [base64Image],
+          },
+        ],
+        stream: false,
+        options: { num_predict: 1024 },
+      }),
+      signal: AbortSignal.timeout(90_000),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Vision model "${model}" returned ${response.status}: ${response.statusText}`);
+    if (!response.ok) {
+      throw new Error(`Vision model "${model}" returned ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json() as {
+      message?: { content?: string; thinking?: string };
+      error?: { message?: string };
+    };
+
+    if (data.error) {
+      throw new Error(`Vision model "${model}" error: ${data.error.message ?? JSON.stringify(data.error)}`);
+    }
+
+    const result = (data.message?.content || data.message?.thinking || '').trim();
+    if (result) return result;
+
+    if (attempt === 0) {
+      console.log(`[VisualBrowser] Vision model "${model}" returned empty, retrying...`);
+    }
   }
 
-  const data = await response.json() as {
-    message?: { content?: string; thinking?: string };
-    error?: { message?: string };
-  };
-
-  if (data.error) {
-    throw new Error(`Vision model "${model}" error: ${data.error.message ?? JSON.stringify(data.error)}`);
-  }
-
-  return (data.message?.content || data.message?.thinking || '').trim();
+  return '';
 }
