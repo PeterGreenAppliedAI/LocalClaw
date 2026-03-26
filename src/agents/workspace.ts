@@ -151,7 +151,7 @@ This file exists because this is a brand-new workspace. Complete these steps, th
 export function loadBootstrapFiles(workspacePath: string): Map<string, string> {
   const files = new Map<string, string>();
 
-  for (const [key, filename] of Object.entries(BOOTSTRAP_FILES)) {
+  for (const [, filename] of Object.entries(BOOTSTRAP_FILES)) {
     const path = join(workspacePath, filename);
     if (existsSync(path)) {
       try {
@@ -192,7 +192,7 @@ export function truncateBootstrapContent(content: string, maxChars = 20_000): st
  * - BOOTSTRAP.md: only if it exists (first-run only)
  * - MEMORY.md: never (use memory_search tool)
  */
-export type WorkspaceCategory = 'chat' | 'tool' | 'minimal' | 'cron' | 'subagent';
+export type WorkspaceCategory = 'chat' | 'tool' | 'minimal' | 'cron' | 'subagent' | 'progressive';
 
 export function buildWorkspaceContext(
   workspacePath: string,
@@ -204,6 +204,11 @@ export function buildWorkspaceContext(
   const maxChars = options?.maxCharsPerFile ?? 20_000;
   const category = options?.category ?? 'tool';
   const channel = options?.channel;
+
+  // Progressive disclosure: show one-line summaries, model reads on demand via workspace_read
+  if (category === 'progressive') {
+    return buildProgressiveContext(files, workspacePath);
+  }
 
   // Determine which files to inject based on category.
   // Priority ordering: tool results > conversation history > workspace context.
@@ -281,6 +286,42 @@ export function buildWorkspaceContext(
   );
 
   return sections.join('\n');
+}
+
+/**
+ * Progressive disclosure: inject a compact index of workspace files
+ * instead of full content. The model reads files on demand via workspace_read.
+ *
+ * This saves significant context budget — a full workspace can be 4-6KB;
+ * progressive disclosure reduces it to ~300 bytes.
+ */
+function buildProgressiveContext(files: Map<string, string>, workspacePath: string): string {
+  const FILE_SUMMARIES: Record<string, string> = {
+    [BOOTSTRAP_FILES.SOUL]: 'Persona, communication style, channel-specific behavior rules',
+    [BOOTSTRAP_FILES.AGENTS]: 'Operating instructions, guidelines, tool usage patterns',
+    [BOOTSTRAP_FILES.IDENTITY]: 'Agent name, creature type, vibe',
+    [BOOTSTRAP_FILES.USER]: 'User profile, preferences, timezone',
+    [BOOTSTRAP_FILES.TOOLS]: 'Local environment notes, SSH hosts, project directories',
+    [BOOTSTRAP_FILES.MEMORY]: 'Long-term memory (use memory_search instead)',
+    [BOOTSTRAP_FILES.HEARTBEAT]: 'Periodic task instructions for scheduled runs',
+    [BOOTSTRAP_FILES.BOOTSTRAP]: 'First-run setup steps (delete after completion)',
+  };
+
+  const lines: string[] = [
+    '# Workspace Files',
+    `Path: ${workspacePath}`,
+    '',
+    'Read any file with workspace_read when you need its full content.',
+    '',
+  ];
+
+  for (const [filename, content] of files) {
+    const summary = FILE_SUMMARIES[filename] ?? 'Workspace file';
+    const size = content.length;
+    lines.push(`- **${filename}** (${size} chars) — ${summary}`);
+  }
+
+  return lines.join('\n');
 }
 
 /**

@@ -463,11 +463,17 @@ async function runPipelineDispatch(
     senderId: params.sourceContext?.senderId,
   };
 
+  // Context isolation: the plan pipeline gets a fresh context (no parent history)
+  // and progressive workspace disclosure to maximize context budget for tool results.
+  const isolateContext = specialist.pipeline === 'plan';
+
   const wsCategory = category === 'cron'
     ? 'cron' as const
-    : specialist.contextLevel === 'full'
-      ? 'chat' as const
-      : 'minimal' as const;
+    : isolateContext
+      ? 'progressive' as const
+      : specialist.contextLevel === 'full'
+        ? 'chat' as const
+        : 'minimal' as const;
   const workspaceContext = buildWorkspaceContext(workspacePath, {
     category: wsCategory,
     channel: params.sourceContext?.channel,
@@ -481,7 +487,7 @@ async function runPipelineDispatch(
     client,
     executor,
     toolContext,
-    history,
+    history: isolateContext ? undefined : history,
     workspaceContext,
     userPriming: userPriming || undefined,
     model: specialist.model,

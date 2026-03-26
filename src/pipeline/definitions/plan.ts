@@ -6,9 +6,10 @@ import type { PipelineDefinition, PipelineContext } from '../types.js';
  *
  * Flow:
  *   1. LLM generates a step-by-step plan as JSON
- *   2. Loop executes each step dynamically (calling tools via ctx.executor)
- *   3. After each step, result is checked and next step is picked
- *   4. LLM summarizes what was accomplished
+ *   2. Self-reflection — LLM critiques the plan for missing steps, bad ordering, etc.
+ *   3. Loop executes each step dynamically (calling tools via ctx.executor)
+ *   4. After each step, result is checked and next step is picked
+ *   5. LLM summarizes what was accomplished
  */
 
 const PLAN_PROMPT = `You are a task planner. Given the user's goal, create a concrete step-by-step plan.
@@ -40,6 +41,25 @@ Return ONLY a JSON array of steps. No explanation. Example:
   {"tool": "browser", "params": {"action": "snapshot"}, "purpose": "See available meetup listings"},
   {"tool": "browser", "params": {"action": "click", "ref": "5"}, "purpose": "Click on first relevant meetup group"}
 ]`;
+
+const REFLECT_PROMPT = `You are a plan reviewer. Critique the proposed plan below and suggest improvements.
+
+Check for these common issues:
+1. MISSING SNAPSHOT: Browser interactions MUST have a snapshot step AFTER navigation and BEFORE click/type/select. The agent cannot interact with elements it hasn't seen.
+2. WRONG ORDER: Steps that depend on previous results must come after those results are available.
+3. UNREALISTIC: Steps that assume information not yet gathered (e.g., clicking element #5 before taking a snapshot to know what #5 is).
+4. MISSING VERIFICATION: After form submission or important actions, there should be a snapshot to verify success.
+5. TOO VAGUE: Search queries should be specific, not generic like "find things".
+6. MISSING STEPS: If the goal includes signing up, there must be form-filling steps (type email, click submit).
+
+Return a JSON object:
+{
+  "issues": ["list of problems found"],
+  "revised_plan": [revised steps array if changes needed],
+  "approved": true/false
+}
+
+If the plan is good, return: {"issues": [], "revised_plan": [], "approved": true}`;
 
 const REPLAN_PROMPT = `You are monitoring plan execution. A step just completed. Based on the result, decide what to do next.
 
@@ -122,7 +142,58 @@ export const planPipeline: PipelineDefinition = {
       },
     },
 
-    // Stage 3: Execute steps in a loop
+    // Stage 3: Self-reflection — critique the plan before executing
+    {
+      name: 'reflect',
+      type: 'code',
+      execute: async (ctx: PipelineContext) => {
+        const plan = ctx.params._plan as PlanStep[];
+        const planJson = JSON.stringify(plan, null, 2);
+
+        const response = await ctx.client.chat({
+          model: ctx.routerModel ?? ctx.model,
+          messages: [
+            { role: 'system', content: REFLECT_PROMPT },
+            { role: 'user', content: `Goal: "${ctx.userMessage}"\n\nProposed plan:\n${planJson}` },
+          ],
+          options: { temperature: 0.2, num_predict: 2048 },
+        });
+
+        const raw = response.message?.content ?? '';
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          console.log('[Plan] Reflection: no valid JSON, keeping original plan');
+          return;
+        }
+
+        try {
+          const reflection = JSON.parse(jsonMatch[0]);
+
+          if (reflection.issues?.length > 0) {
+            console.log(`[Plan] Reflection found ${reflection.issues.length} issue(s):`);
+            for (const issue of reflection.issues) {
+              console.log(`[Plan]   - ${issue}`);
+            }
+          }
+
+          if (!reflection.approved && reflection.revised_plan?.length > 0) {
+            const revised = (reflection.revised_plan as any[]).filter(
+              (s: any) => s && typeof s.tool === 'string' && typeof s.params === 'object',
+            );
+            if (revised.length > 0) {
+              ctx.params._plan = revised;
+              console.log(`[Plan] Reflection revised plan: ${plan.length} → ${revised.length} steps`);
+            }
+          } else {
+            console.log('[Plan] Reflection approved plan as-is');
+          }
+        } catch {
+          console.log('[Plan] Reflection: failed to parse, keeping original plan');
+        }
+      },
+    },
+
+    // Stage 4: Execute steps in a loop
     {
       name: 'execute_steps',
       type: 'loop',
@@ -224,7 +295,7 @@ export const planPipeline: PipelineDefinition = {
       ],
     },
 
-    // Stage 4: Summarize results
+    // Stage 5: Summarize results
     {
       name: 'summarize',
       type: 'llm',

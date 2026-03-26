@@ -25,13 +25,14 @@ export interface RunReActLoopParams {
  * Strategy:
  * 1. Keep system message and current user message untouched
  * 2. Keep the most recent 2 assistant+tool pairs untouched
- * 3. Replace older tool observation content with a truncated preview
+ * 3. Truncate large tool call arguments in older assistant messages (e.g., write_file content)
+ * 4. Replace older tool observation content with a truncated preview
  */
 export function trimToolLoopMessages(messages: OllamaMessage[], contextSize: number): void {
   const budget = Math.floor(contextSize * 0.85); // leave room for output + overhead
   if (estimateMessagesTokens(messages) <= budget) return;
 
-  // Find tool messages eligible for trimming (not in the last 4 non-system messages)
+  // Find non-system messages eligible for trimming
   const nonSystemIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) {
     if (messages[i].role !== 'system') nonSystemIndices.push(i);
@@ -40,6 +41,41 @@ export function trimToolLoopMessages(messages: OllamaMessage[], contextSize: num
   // Protect last 4 non-system messages (≈ 2 assistant+tool pairs)
   const protectedSet = new Set(nonSystemIndices.slice(-4));
 
+  // Pass 1: Truncate large tool call arguments in older assistant messages.
+  // This is a lighter optimization — preserves the tool call structure but
+  // removes bulky payloads (e.g., write_file content, edit_file patches).
+  const ARG_TRUNCATE_LIMIT = 2000;
+  for (let i = 0; i < messages.length; i++) {
+    if (protectedSet.has(i)) continue;
+    if (messages[i].role !== 'assistant') continue;
+
+    const msg = messages[i];
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      let modified = false;
+      const trimmedCalls = msg.tool_calls.map((call: any) => {
+        const args = call.function?.arguments;
+        if (!args || typeof args !== 'object') return call;
+
+        const trimmedArgs: Record<string, unknown> = {};
+        for (const [key, val] of Object.entries(args)) {
+          if (typeof val === 'string' && val.length > ARG_TRUNCATE_LIMIT) {
+            trimmedArgs[key] = val.slice(0, ARG_TRUNCATE_LIMIT) + `... [truncated from ${val.length} chars]`;
+            modified = true;
+          } else {
+            trimmedArgs[key] = val;
+          }
+        }
+        return { ...call, function: { ...call.function, arguments: trimmedArgs } };
+      });
+      if (modified) {
+        messages[i] = { ...msg, tool_calls: trimmedCalls };
+      }
+    }
+
+    if (estimateMessagesTokens(messages) <= budget) return;
+  }
+
+  // Pass 2: Truncate tool observation content
   for (let i = 0; i < messages.length; i++) {
     if (protectedSet.has(i)) continue;
     if (messages[i].role !== 'tool') continue;
