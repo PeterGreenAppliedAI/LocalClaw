@@ -25,7 +25,7 @@ export function createTaskAddTool(taskStore: TaskStore): LocalClawTool {
       const title = params.title as string;
       if (!title) return 'Error: title parameter is required';
 
-      const priority = params.priority as string | undefined;
+      const priority = params.priority ? (params.priority as string).toLowerCase() : undefined;
       if (priority && !['low', 'medium', 'high'].includes(priority)) {
         return `Error: Invalid priority "${priority}". Must be low, medium, or high.`;
       }

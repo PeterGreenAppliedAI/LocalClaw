@@ -43,7 +43,7 @@ export function createTaskUpdateTool(taskStore: TaskStore): LocalClawTool {
       }
 
       if (params.priority !== undefined) {
-        const priority = params.priority as string;
+        const priority = (params.priority as string).toLowerCase();
         if (!['low', 'medium', 'high'].includes(priority)) {
           return `Error: Invalid priority "${priority}". Must be low, medium, or high.`;
         }

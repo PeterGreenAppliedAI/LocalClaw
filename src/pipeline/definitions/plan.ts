@@ -17,8 +17,18 @@ const PLAN_PROMPT = `You are a task planner. Given the user's goal, create a con
 Available tools you can use in your plan:
 - web_search: Search the internet. Params: { query: string }
 - web_fetch: Fetch a URL and extract text. Params: { url: string }
-- browser: Interactive browser control. Params: { action: "open"|"navigate"|"snapshot"|"click"|"type"|"select", url?, ref?, text? }
-  Workflow: open → navigate to URL → snapshot (see numbered elements) → click/type/select by number → snapshot (verify)
+- browser: Interactive browser control with TWO modes:
+
+  DOM mode (simple pages): Use "snapshot" to see numbered elements, "click"/"type"/"select" by number.
+    Params: { action: "open"|"navigate"|"snapshot"|"click"|"type"|"select", url?, ref?, text? }
+
+  Visual mode (JS-heavy pages, SPAs, dynamic sites): Use "visual_snapshot" to see the page through a vision model,
+    then "visual_click"/"visual_type" by describing the element in plain language.
+    Params: { action: "visual_snapshot"|"visual_click"|"visual_type", url?, target?, text? }
+
+  PREFER VISUAL MODE for: Meetup, LinkedIn, Eventbrite, any modern website with dynamic content.
+  Use DOM mode only for simple static pages.
+
 - memory_save: Save information. Params: { content: string }
 - memory_search: Search saved info. Params: { query: string }
 - send_message: Send a message. Params: { channel: string, channelId: string, text: string }
@@ -28,29 +38,31 @@ Available tools you can use in your plan:
 
 IMPORTANT RULES:
 - Each step must have: tool (tool name), params (object), purpose (what this achieves)
-- For browser interactions, you MUST include a snapshot step AFTER navigating to see the page elements before interacting
+- For browser interactions, you MUST include a visual_snapshot or snapshot step AFTER navigating to see the page before interacting
+- For visual_click/visual_type, the "target" param describes the element in plain language (e.g., "Log in button", "Email input field", "Events tab in navigation")
 - Be specific with search queries — not generic
 - If a step requires information from a previous step, note it in the purpose field with "USES: step N result"
 - Keep plans to 10 steps or fewer — do the minimum needed
-- For form filling, plan: navigate → snapshot → type into fields → click submit → snapshot to verify
+- For form filling, plan: navigate → visual_snapshot → visual_type fields → visual_click submit → visual_snapshot to verify
 
 Return ONLY a JSON array of steps. No explanation. Example:
 [
   {"tool": "web_search", "params": {"query": "Long Island tech meetups 2026"}, "purpose": "Find meetup groups"},
   {"tool": "browser", "params": {"action": "open", "url": "https://meetup.com/find/?q=tech&location=Huntington+Station+NY"}, "purpose": "Browse Meetup.com listings"},
-  {"tool": "browser", "params": {"action": "snapshot"}, "purpose": "See available meetup listings"},
-  {"tool": "browser", "params": {"action": "click", "ref": "5"}, "purpose": "Click on first relevant meetup group"}
+  {"tool": "browser", "params": {"action": "visual_snapshot"}, "purpose": "See available meetup listings"},
+  {"tool": "browser", "params": {"action": "visual_click", "target": "First tech meetup group in results"}, "purpose": "Click on most relevant meetup"}
 ]`;
 
 const REFLECT_PROMPT = `You are a plan reviewer. Critique the proposed plan below and suggest improvements.
 
 Check for these common issues:
-1. MISSING SNAPSHOT: Browser interactions MUST have a snapshot step AFTER navigation and BEFORE click/type/select. The agent cannot interact with elements it hasn't seen.
+1. MISSING SNAPSHOT: Browser interactions MUST have a visual_snapshot or snapshot step AFTER navigation and BEFORE any click/type/select. The agent cannot interact with elements it hasn't seen.
 2. WRONG ORDER: Steps that depend on previous results must come after those results are available.
 3. UNREALISTIC: Steps that assume information not yet gathered (e.g., clicking element #5 before taking a snapshot to know what #5 is).
-4. MISSING VERIFICATION: After form submission or important actions, there should be a snapshot to verify success.
+4. MISSING VERIFICATION: After form submission or important actions, there should be a visual_snapshot to verify success.
 5. TOO VAGUE: Search queries should be specific, not generic like "find things".
-6. MISSING STEPS: If the goal includes signing up, there must be form-filling steps (type email, click submit).
+6. MISSING STEPS: If the goal includes signing up, there must be form-filling steps (visual_type email, visual_click submit).
+7. WRONG MODE: For modern JS-heavy sites (Meetup, LinkedIn, Eventbrite), use visual_click/visual_type instead of DOM-based click/type. Visual mode describes elements in natural language ("Log in button") instead of reference numbers.
 
 Return a JSON object:
 {
