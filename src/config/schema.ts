@@ -147,6 +147,10 @@ export const BrowserConfigSchema = z.object({
   enabled: z.boolean().default(false),
   headless: z.boolean().default(true),
   executablePath: z.string().optional(),
+  /** Xvfb display for visual mode (e.g., ":99"). When set, browser launches non-headless against this virtual display. */
+  display: z.string().optional(),
+  /** Vision model for visual browser interactions (e.g., "qwen3-vl:8b"). Falls back to config.vision.model. */
+  visionModel: z.string().optional(),
 });
 
 export const TTSConfigSchema = z.object({

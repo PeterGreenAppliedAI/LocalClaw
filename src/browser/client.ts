@@ -8,7 +8,7 @@ export class BrowserClient {
   private pages = new Map<string, any>();
   private activeTabId = 'default';
 
-  async launch(options?: { headless?: boolean; executablePath?: string }): Promise<void> {
+  async launch(options?: { headless?: boolean; executablePath?: string; display?: string }): Promise<void> {
     let pw: any;
     try {
       const mod = 'playwright-core';
@@ -17,14 +17,28 @@ export class BrowserClient {
       throw new Error('playwright-core not installed. Run: npm i playwright-core');
     }
 
+    // Visual mode: launch non-headless against an Xvfb virtual display
+    const env = options?.display
+      ? { ...process.env, DISPLAY: options.display }
+      : undefined;
+
+    const headless = options?.display ? false : (options?.headless ?? true);
+
     this.browser = await pw.chromium.launch({
-      headless: options?.headless ?? true,
+      headless,
       executablePath: options?.executablePath,
+      env,
     });
 
-    const context = await this.browser.newContext();
+    const context = await this.browser.newContext({
+      viewport: { width: 1280, height: 720 },
+    });
     const page = await context.newPage();
     this.pages.set('default', page);
+
+    if (options?.display) {
+      console.log(`[Browser] Launched in visual mode on display ${options.display}`);
+    }
   }
 
   async close(): Promise<void> {
@@ -42,6 +56,8 @@ export class BrowserClient {
   async navigate(url: string, tabId?: string): Promise<string> {
     const page = this.getPage(tabId);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    // Wait for JS-heavy pages to finish rendering (network idle or 3s max)
+    await page.waitForLoadState('networkidle', { timeout: 3_000 }).catch(() => {});
     return page.url();
   }
 
@@ -62,8 +78,19 @@ export class BrowserClient {
   }
 
   /**
+   * Re-index interactive elements on the page before resolving a reference.
+   * This ensures element numbers are fresh even if the page changed since
+   * the last snapshot (navigation, dynamic content, etc.).
+   */
+  private async freshResolveRef(page: any, refNum: number): Promise<string | null> {
+    // Re-run the snapshot script to assign fresh data-ref attributes
+    await page.evaluate(SNAPSHOT_SCRIPT);
+    return page.evaluate(RESOLVE_REF_SCRIPT, refNum);
+  }
+
+  /**
    * Click an interactive element by its snapshot index number.
-   * Uses the same indexing as the snapshot script.
+   * Re-indexes elements before resolving to handle stale references.
    */
   async click(ref: string, tabId?: string): Promise<string> {
     const page = this.getPage(tabId);
@@ -71,7 +98,7 @@ export class BrowserClient {
     // ref can be a snapshot index (number) or a CSS selector
     const isIndex = /^\d+$/.test(ref.trim());
     if (isIndex) {
-      const selector = await page.evaluate(RESOLVE_REF_SCRIPT, parseInt(ref, 10));
+      const selector = await this.freshResolveRef(page, parseInt(ref, 10));
       if (!selector) return `Element #${ref} not found on page`;
       await page.click(selector, { timeout: 10_000 });
       await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {});
@@ -86,13 +113,14 @@ export class BrowserClient {
 
   /**
    * Type text into an element by snapshot index or CSS selector.
+   * Re-indexes elements before resolving to handle stale references.
    */
   async type(ref: string, text: string, tabId?: string): Promise<string> {
     const page = this.getPage(tabId);
 
     const isIndex = /^\d+$/.test(ref.trim());
     if (isIndex) {
-      const selector = await page.evaluate(RESOLVE_REF_SCRIPT, parseInt(ref, 10));
+      const selector = await this.freshResolveRef(page, parseInt(ref, 10));
       if (!selector) return `Element #${ref} not found on page`;
       await page.fill(selector, text, { timeout: 10_000 });
       return `Typed "${text}" into element #${ref}`;
@@ -104,13 +132,14 @@ export class BrowserClient {
 
   /**
    * Select an option from a <select> dropdown by snapshot index or CSS selector.
+   * Re-indexes elements before resolving to handle stale references.
    */
   async select(ref: string, value: string, tabId?: string): Promise<string> {
     const page = this.getPage(tabId);
 
     const isIndex = /^\d+$/.test(ref.trim());
     if (isIndex) {
-      const selector = await page.evaluate(RESOLVE_REF_SCRIPT, parseInt(ref, 10));
+      const selector = await this.freshResolveRef(page, parseInt(ref, 10));
       if (!selector) return `Element #${ref} not found on page`;
       await page.selectOption(selector, value, { timeout: 10_000 });
       return `Selected "${value}" in element #${ref}`;
@@ -169,7 +198,8 @@ export class BrowserClient {
     return page.pdf({ format: 'A4' });
   }
 
-  private getPage(tabId?: string): any {
+  /** Get the page for a tab. Public so visual mode can access it for coordinate clicks. */
+  getPage(tabId?: string): any {
     const id = tabId ?? this.activeTabId;
     const page = this.pages.get(id);
     if (!page) throw new Error(`Tab "${id}" not found`);

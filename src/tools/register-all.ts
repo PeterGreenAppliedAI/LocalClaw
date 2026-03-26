@@ -106,9 +106,9 @@ export async function registerAllTools(
   const sessionManager = new SessionManager(config.tools?.exec?.sessions);
   registry.register(createCodeSessionTool(sessionManager));
 
-  // Browser tool
+  // Browser tool (pass Ollama URL for visual mode vision model calls)
   if (config.browser?.enabled) {
-    registry.register(createBrowserTool(config.browser));
+    registry.register(createBrowserTool(config.browser, config.ollama?.url));
   }
 
   // Website tool
