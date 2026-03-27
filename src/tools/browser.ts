@@ -11,7 +11,7 @@ export function createBrowserTool(config?: BrowserConfig, ollamaUrl?: string): L
     ? {
         ollamaUrl: ollamaUrl ?? 'http://127.0.0.1:11434',
         visionModel: config.visionModel ?? 'qwen3-vl:8b',
-        fallbackModels: ['qwen3-vl:8b'],
+        fallbackModels: ['qwen3.5:9b', 'qwen3-vl:8b'],
         viewportWidth: 1280,
         viewportHeight: 720,
       }

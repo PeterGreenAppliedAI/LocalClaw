@@ -31,10 +31,14 @@ Available tools you can use in your plan:
 
 - memory_save: Save information. Params: { content: string }
 - memory_search: Search saved info. Params: { query: string }
-- send_message: Send a message. Params: { channel: string, channelId: string, text: string }
 - exec: Run a shell command. Params: { command: string }
-- task_add: Create a task. Params: { title: string, priority?: string, dueDate?: string }
-- task_list: List tasks. Params: {}
+- task_add: Create a task on the USER'S LOCAL TASK LIST (not on a website). Params: { title: string, priority?: string, dueDate?: string }
+- task_list: List tasks from the user's local task list. Params: {}
+
+IMPORTANT:
+- DO NOT include send_message steps. The user automatically receives your final summary.
+- When the user says "add to my task list", use the task_add TOOL — do NOT try to click an "add to tasks" button on a website. The user's task list is LOCAL, managed by the task_add tool.
+- task_add title should include the REAL name from the page (e.g., "Attend: Exclusive Long Island Networking Event - March 27"), not a generic placeholder.
 
 IMPORTANT RULES:
 - Each step must have: tool (tool name), params (object), purpose (what this achieves)
@@ -136,7 +140,7 @@ export const planPipeline: PipelineDefinition = {
       maxTokens: 2048,
       buildPrompt: (ctx) => ({
         system: PLAN_PROMPT,
-        user: ctx.userMessage,
+        user: `Today's date: ${new Date().toISOString().split('T')[0]}\n\nGoal: ${ctx.userMessage}`,
       }),
     },
 
@@ -325,7 +329,7 @@ export const planPipeline: PipelineDefinition = {
                   messages: [
                     {
                       role: 'system',
-                      content: `You are filling in tool parameters with REAL data from previous step results. Given the step's purpose and recent results, return a JSON object with the correct params. Use SPECIFIC names, dates, titles, and URLs from the results — NEVER use generic placeholders.\n\nTool: ${step.tool}\nOriginal params: ${JSON.stringify(step.params)}\nPurpose: ${step.purpose}`,
+                      content: `You are filling in tool parameters with REAL data from previous step results. Given the step's purpose and recent results, return a JSON object with the correct params. Use SPECIFIC names, dates, titles, and URLs from the results — NEVER use generic placeholders.\n\nToday's date is ${new Date().toISOString().split('T')[0]}. All dates should be in the current year unless explicitly stated otherwise. Use YYYY-MM-DD format for dates.\n\nTool: ${step.tool}\nOriginal params: ${JSON.stringify(step.params)}\nPurpose: ${step.purpose}`,
                     },
                     {
                       role: 'user',
