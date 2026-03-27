@@ -64,7 +64,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Reasoning | `reason` | Hand off to a dedicated thinking model for deep analysis and content synthesis |
 | Config | `cron_edit`, `workspace_read`, `workspace_write` | Self-administration — edit cron jobs, read/write workspace files |
 | Messaging | `send_message` | Cross-channel message delivery |
-| Browsing | `browser` | Playwright headless Chromium — navigate, snapshot with indexed interactive elements, click, type, select, fill forms |
+| Browsing | `browser` | Dual-mode browser: DOM mode (indexed elements, fast) + Visual mode (Xvfb + vision model, handles SPAs). Click, type, select, fill forms |
 | Vision | *(automatic)* | Image analysis via multimodal model — descriptions injected into context for natural Q&A |
 | Voice | TTS/STT | Kokoro TTS + faster-whisper STT — voice in, voice out, with toggle hands-free mode |
 | Multi-task | `plan` pipeline | LLM decomposes goal into steps, code loop executes them with browser/tools, verifies, and summarizes |
@@ -209,7 +209,7 @@ Most categories run through **deterministic pipelines** instead of letting the m
 | `memory` | Branched (2) | llm_branch → extract → tool → format |
 | `cron` | Branched (4) | llm_branch → extract → tool → confirm |
 | `web_search` | Linear | extract → search → parallel fetch → synthesize |
-| `multi` | Plan | llm plan → execute loop (dynamic tools + browser) → verify → summarize |
+| `multi` | Plan | llm plan → self-reflect → execute loop (dynamic tools + visual browser) → smart select → verify → summarize |
 | `research` | Complex | plan queries → parallel search → parallel fetch → synthesize → charts → render deck |
 | `exec` | Linear | extract → tool → format |
 | `message` | Linear | extract → tool → confirm |
@@ -236,25 +236,34 @@ Supports artifact types: `memo`, `brief`, `deck`, `market`, `teardown`, `deepdiv
 The `plan` pipeline handles complex multi-step tasks that require browser interaction, web searches, and tool coordination. Instead of asking the model to orchestrate 10+ tool calls (which local models can't do reliably), the pipeline uses a hybrid approach:
 
 1. **Plan** — LLM generates a step-by-step plan as a JSON array of `{tool, params, purpose}` objects
-2. **Execute loop** — Code iterates through the plan, calling each tool directly via `ctx.executor()`
-3. **Verify** — After each step, checks if the result succeeded; on failure, LLM generates an adjusted step
-4. **Summarize** — LLM synthesizes all step results into a conversational response (streamed)
+2. **Self-Reflection** — LLM critiques its own plan before execution: checks for missing snapshots, bad step ordering, unrealistic assumptions, missing verification steps, and generic placeholders. Revises the plan if issues are found (inspired by [agent-reasoning](https://github.com/jasperan/agent-reasoning))
+3. **Execute loop** — Code iterates through the plan, calling tools directly via `ctx.executor()`. Includes:
+   - **Smart selection** — When clicking search results, grabs fresh rendered page text and asks the LLM to pick the most relevant content item (not just the first result)
+   - **Dynamic param resolution** — When creating tasks or saving memory, extracts real data (event names, dates, URLs) from the rendered page text instead of using placeholders
+   - **Hybrid content reading** — Uses `innerText` (rendered visible text) for content extraction on SPAs instead of DOM tree walking (which returns template variables like `{eventName}` on React sites)
+4. **Verify** — After each step, checks if the result succeeded; on failure, LLM generates an adjusted step
+5. **Summarize** — LLM synthesizes all step results into a conversational response (streamed)
 
-**Browser interactions** use indexed element references — the snapshot script labels every interactive element on the page (`[1: button] Sign Up`, `[2: input email]`, `[3: link] Events`), so the LLM can plan clicks and form fills by number without knowing CSS selectors.
+**Dual-mode browser:** The plan pipeline uses two browser interaction modes:
+- **DOM mode** — Fast, walks the DOM tree, labels interactive elements with indices (`[1: button]`, `[2: input]`). Best for simple static pages.
+- **Visual mode** — Renders the page on a virtual display (Xvfb), takes a screenshot, sends it to a vision model (qwen3.5:35b) which identifies elements and returns pixel coordinates. Clicks at exact (x, y) positions. Handles JavaScript-heavy SPAs that defeat DOM walking. Adapted from [Deep Agents](https://github.com/langchain-ai/deepagents)' progressive disclosure pattern.
 
-**Example:** "Find tech meetups near Huntington Station and sign me up using pgreen@devmesh.tech" generates:
+**Example:** "Search Eventbrite for tech events near Huntington Station NY, then add the first one to my task list" produces:
 ```
-Step 1: web_search — Find tech meetups near Huntington Station
-Step 2: browser.navigate — Go to Meetup.com results page
-Step 3: browser.snapshot — See available meetup listings
-Step 4: browser.click(ref: 5) — Click the most relevant meetup
-Step 5: browser.snapshot — Check registration options
-Step 6: browser.type(ref: 3, text: "pgreen@devmesh.tech") — Fill email field
-Step 7: browser.click(ref: 8) — Submit registration
-Step 8: browser.snapshot — Verify success
+Step 1: browser.open → Navigate to eventbrite.com
+Step 2: browser.visual_snapshot → See homepage layout
+Step 3: browser.visual_type(target: "search bar") → Enter "tech events near Huntington Station NY"
+Step 4: browser.visual_click(target: "Search button") → Execute search
+Step 5: browser.visual_snapshot → View search results
+Step 6: [Smart Selection] → Fresh text grab (4470 chars), picks "Exclusive Long Island Networking Event"
+Step 7: browser.visual_click(target: "Exclusive Long Island Networking Event") → Open event
+Step 8: browser.text_content → Read rendered event details (name, date, time)
+Step 9: task_add → "Attend: Exclusive Long Island Networking Event - 2026-03-27" (high priority)
 ```
 
-The model touches the task 3-4 times total (plan, verify, summarize) instead of every iteration. Each touch is narrow and well-scoped — exactly what local models handle reliably.
+The model touches the task 4-5 times (plan, reflect, select, resolve params, summarize) instead of every iteration. Each touch is narrow and well-scoped — exactly what local models handle reliably.
+
+**Context isolation:** The plan pipeline runs with a fresh context (no parent conversation history) and progressive workspace disclosure (~300 bytes instead of 4-6KB) to maximize the context budget for tool results.
 
 ### Pluggable Channel Adapters
 
