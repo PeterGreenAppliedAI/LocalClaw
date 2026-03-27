@@ -72,6 +72,28 @@ export class BrowserClient {
     return `Page: ${title}\nURL: ${url}\n\n${text.slice(0, 10000)}`;
   }
 
+  /**
+   * Get the rendered visible text from the page — what the user actually sees.
+   * Unlike snapshot() which walks the DOM tree (and may hit unrendered SPA templates),
+   * this uses innerText which returns only visible, rendered content after JavaScript runs.
+   * Waits briefly for dynamic content to load on SPAs.
+   */
+  async textContent(tabId?: string): Promise<string> {
+    const page = this.getPage(tabId);
+
+    // Wait for SPA content to render — network idle or 3s max
+    await page.waitForLoadState('networkidle', { timeout: 3_000 }).catch(() => {});
+    // Extra wait for React/Vue hydration
+    await page.waitForTimeout(1_500);
+
+    const title = await page.title();
+    const url = page.url();
+
+    const text: string = await page.evaluate('(() => { return document.body ? document.body.innerText : ""; })()') ?? '';
+
+    return `Page: ${title}\nURL: ${url}\n\n${text.slice(0, 10000)}`;
+  }
+
   async screenshot(tabId?: string): Promise<Buffer> {
     const page = this.getPage(tabId);
     return page.screenshot({ type: 'png', fullPage: false });

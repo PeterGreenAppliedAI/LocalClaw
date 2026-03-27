@@ -11,7 +11,7 @@ export function createBrowserTool(config?: BrowserConfig, ollamaUrl?: string): L
     ? {
         ollamaUrl: ollamaUrl ?? 'http://127.0.0.1:11434',
         visionModel: config.visionModel ?? 'qwen3-vl:8b',
-        fallbackModels: ['qwen3.5:9b'],
+        fallbackModels: ['qwen3-vl:8b'],
         viewportWidth: 1280,
         viewportHeight: 720,
       }
@@ -109,6 +109,9 @@ tab (optional): Tab ID.`,
           case 'screenshot': {
             const buf = await client.screenshot(tab);
             return `Screenshot taken (${buf.length} bytes). [Binary data — use snapshot for text content]`;
+          }
+          case 'text_content': {
+            return await client.textContent(tab);
           }
           case 'click': {
             const ref = params.ref as string;

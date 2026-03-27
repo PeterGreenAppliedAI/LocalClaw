@@ -44,6 +44,9 @@ IMPORTANT RULES:
 - If a step requires information from a previous step, note it in the purpose field with "USES: step N result"
 - Keep plans to 10 steps or fewer — do the minimum needed
 - For form filling, plan: navigate → visual_snapshot → visual_type fields → visual_click submit → visual_snapshot to verify
+- CRITICAL: When creating tasks, saving memory, or reporting to the user, use SPECIFIC information extracted from the page — event names, dates, times, URLs. NEVER use generic placeholders like "Attend event" or "Review opportunity". The visual_snapshot result contains the actual page content — reference it in subsequent steps.
+- For "find X and add to task list" goals: visual_snapshot the page → read the ACTUAL event/item name and date from the snapshot → use those exact details in the task_add title and dueDate params
+- FILTERING: When search results are shown, do NOT blindly pick the first result. Evaluate results against the user's original query and pick the MOST RELEVANT one. For example, if the user asked for "tech events" and the first result is "Pickleball Heaven", skip it and find an actual tech event. Include a purpose like "FILTER: pick most relevant tech event from results" in the step.
 
 Return ONLY a JSON array of steps. No explanation. Example:
 [
@@ -63,6 +66,8 @@ Check for these common issues:
 5. TOO VAGUE: Search queries should be specific, not generic like "find things".
 6. MISSING STEPS: If the goal includes signing up, there must be form-filling steps (visual_type email, visual_click submit).
 7. WRONG MODE: For modern JS-heavy sites (Meetup, LinkedIn, Eventbrite), use visual_click/visual_type instead of DOM-based click/type. Visual mode describes elements in natural language ("Log in button") instead of reference numbers.
+8. GENERIC DATA: If task_add or memory_save uses a vague placeholder title like "Attend event" or "Review opportunity" instead of actual data from the page, flag it. The plan must extract real details (names, dates, URLs) from visual_snapshot results before creating tasks.
+9. NO FILTERING: If the plan clicks the first search result without evaluating whether it matches the user's query, flag it. There should be a step that reads the results and picks the most relevant one based on the user's original request.
 
 Return a JSON object:
 {
@@ -230,8 +235,118 @@ export const planPipeline: PipelineDefinition = {
               return;
             }
 
-            const step = plan[stepIndex];
+            let step = plan[stepIndex];
             console.log(`[Plan] Step ${stepIndex + 1}/${plan.length}: ${step.tool} — ${step.purpose}`);
+
+            // Hybrid snapshot: when the plan calls visual_snapshot for reading/extracting
+            // content (not just navigation verification), also run a DOM snapshot to get
+            // the actual text. Visual mode sees layout; DOM mode reads text.
+            const isReadingSnapshot = step.tool === 'browser'
+              && step.params.action === 'visual_snapshot'
+              && /extract|read|identify|find|detail|list|content|event|result|search/i.test(step.purpose);
+            if (isReadingSnapshot) {
+              try {
+                // Use text_content (innerText) instead of DOM snapshot — on SPAs the DOM
+                // tree has unrendered template variables while innerText returns the actual
+                // visible rendered text after JavaScript runs.
+                const textResult = await ctx.executor('browser', { action: 'text_content' }, ctx.toolContext);
+                ctx.params._lastDomSnapshot = textResult;
+                console.log(`[Plan] Hybrid snapshot: added rendered text (${textResult.length} chars) for content extraction`);
+              } catch {
+                console.log('[Plan] Hybrid snapshot: text extraction failed, continuing with visual only');
+              }
+            }
+
+            // Intelligent selection: when a step is about picking/clicking a result from
+            // a list (search results, event listings), use the DOM snapshot + LLM to find
+            // the most relevant item instead of blindly clicking the first one.
+            const isSelectionStep = step.tool === 'browser'
+              && (step.params.action === 'visual_click' || step.params.action === 'click')
+              && /first|select|pick|choose|relevant|best|result|navigate.*event|navigate.*detail/i.test(step.purpose);
+            if (isSelectionStep) {
+              // Always grab fresh rendered text at selection time — cached snapshots
+              // may be stale (SPA hadn't loaded results yet when earlier snapshot ran)
+              let domSnapshot: string | undefined;
+              try {
+                domSnapshot = await ctx.executor('browser', { action: 'text_content' }, ctx.toolContext);
+                console.log(`[Plan] Smart selection: fresh text grab (${domSnapshot.length} chars)`);
+              } catch {
+                domSnapshot = ctx.params._lastDomSnapshot as string | undefined;
+              }
+            if (domSnapshot) {
+              try {
+                const selectResponse = await ctx.client.chat({
+                  model: ctx.routerModel ?? ctx.model,
+                  messages: [
+                    {
+                      role: 'system',
+                      content: `You are selecting the most relevant CONTENT ITEM (event, article, listing, job, result) from a web page. The user's original goal was: "${ctx.userMessage}"\n\nIMPORTANT: Pick an actual content item (event name, listing title, search result) — NOT a navigation button, search bar, or UI element like "Search events" or "Log in".\n\nLook at the page content below and find the content item that BEST matches what the user is looking for. Return ONLY a JSON object:\n{"target": "exact text of the content item to click (e.g., event name, listing title)", "reason": "why this is the best match"}`,
+                    },
+                    {
+                      role: 'user',
+                      content: domSnapshot.slice(0, 4000),
+                    },
+                  ],
+                  options: { temperature: 0.1, num_predict: 256 },
+                });
+                const raw = selectResponse.message?.content ?? '';
+                const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                  const selection = JSON.parse(jsonMatch[0]);
+                  if (selection.target) {
+                    step = { ...step, params: { ...step.params, target: selection.target } };
+                    console.log(`[Plan] Smart selection: "${selection.target}" — ${selection.reason}`);
+                  }
+                }
+              } catch {
+                console.log('[Plan] Smart selection failed, using original target');
+              }
+            }
+            }
+
+            // Dynamic param resolution: for steps that consume page content
+            // (task_add, memory_save), ask the LLM to fill in concrete details
+            // from the accumulated results so far.
+            const needsResolution = ['task_add', 'memory_save'].includes(step.tool)
+              && results.length > 0;
+            if (needsResolution) {
+              try {
+                const recentResults = results.slice(-3).join('\n\n');
+                // Grab fresh rendered text for param resolution — cached may be stale
+                let freshText = '';
+                try {
+                  freshText = await ctx.executor('browser', { action: 'text_content' }, ctx.toolContext);
+                } catch { /* browser may be closed */ }
+                const domContext = freshText.length > 100
+                  ? `\n\nCurrent page text content:\n${freshText.slice(0, 3000)}`
+                  : '';
+                const resolveResponse = await ctx.client.chat({
+                  model: ctx.routerModel ?? ctx.model,
+                  messages: [
+                    {
+                      role: 'system',
+                      content: `You are filling in tool parameters with REAL data from previous step results. Given the step's purpose and recent results, return a JSON object with the correct params. Use SPECIFIC names, dates, titles, and URLs from the results — NEVER use generic placeholders.\n\nTool: ${step.tool}\nOriginal params: ${JSON.stringify(step.params)}\nPurpose: ${step.purpose}`,
+                    },
+                    {
+                      role: 'user',
+                      content: `Recent step results:\n${recentResults}${domContext}`,
+                    },
+                  ],
+                  options: { temperature: 0.1, num_predict: 256 },
+                });
+                const raw = resolveResponse.message?.content ?? '';
+                const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                  const resolved = JSON.parse(jsonMatch[0]);
+                  if (resolved && typeof resolved === 'object') {
+                    step = { ...step, params: { ...step.params, ...resolved } };
+                    console.log(`[Plan] Resolved params for ${step.tool}: ${JSON.stringify(resolved)}`);
+                  }
+                }
+              } catch {
+                console.log(`[Plan] Param resolution failed for ${step.tool}, using original params`);
+              }
+            }
 
             try {
               const observation = await ctx.executor(step.tool, step.params, ctx.toolContext);
