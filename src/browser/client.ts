@@ -110,51 +110,109 @@ export class BrowserClient {
     return page.evaluate(RESOLVE_REF_SCRIPT, refNum);
   }
 
+  /** Visual fallback config — set by the browser tool when visual mode is available */
+  visualConfig: import('./visual.js').VisualBrowserConfig | null = null;
+
   /**
-   * Click an interactive element by its snapshot index number.
-   * Re-indexes elements before resolving to handle stale references.
+   * Click an interactive element. DOM-first with automatic visual escalation.
+   *
+   * Tries in order:
+   * 1. DOM click by snapshot index (data-ref attribute)
+   * 2. DOM click by CSS selector
+   * 3. Visual click by description (if visual mode available and ref is text)
+   *
+   * Escalation is logged so the decision is auditable.
    */
   async click(ref: string, tabId?: string): Promise<string> {
     const page = this.getPage(tabId);
-
-    // ref can be a snapshot index (number) or a CSS selector
     const isIndex = /^\d+$/.test(ref.trim());
+
+    // Attempt 1: DOM click by index
     if (isIndex) {
       const selector = await this.freshResolveRef(page, parseInt(ref, 10));
-      if (!selector) return `Element #${ref} not found on page`;
-      await page.click(selector, { timeout: 10_000 });
-      await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {});
-      return `Clicked element #${ref}. Page: ${page.url()}`;
+      if (selector) {
+        try {
+          await page.click(selector, { timeout: 5_000 });
+          await page.waitForLoadState('domcontentloaded', { timeout: 5_000 }).catch(() => {});
+          console.log(`[Browser] DOM click #${ref} succeeded`);
+          return `Clicked element #${ref}. Page: ${page.url()}`;
+        } catch (err) {
+          console.log(`[Browser] DOM click #${ref} failed: ${err instanceof Error ? err.message : err}`);
+        }
+      } else {
+        console.log(`[Browser] DOM click #${ref}: element not found in DOM`);
+      }
     }
 
-    // CSS selector fallback
-    await page.click(ref, { timeout: 10_000 });
-    await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {});
-    return `Clicked "${ref}". Page: ${page.url()}`;
+    // Attempt 2: DOM click by CSS selector (if ref looks like one)
+    if (!isIndex && (ref.startsWith('.') || ref.startsWith('#') || ref.startsWith('[') || ref.includes(' > '))) {
+      try {
+        await page.click(ref, { timeout: 5_000 });
+        await page.waitForLoadState('domcontentloaded', { timeout: 5_000 }).catch(() => {});
+        console.log(`[Browser] DOM click "${ref}" succeeded`);
+        return `Clicked "${ref}". Page: ${page.url()}`;
+      } catch (err) {
+        console.log(`[Browser] DOM click "${ref}" failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // Attempt 3: Visual escalation — use vision model to find and click by description
+    if (this.visualConfig) {
+      console.log(`[Browser] Escalating to visual mode for: "${ref}"`);
+      const { visualClick } = await import('./visual.js');
+      return await visualClick(this, this.visualConfig, ref, tabId);
+    }
+
+    return `Element "${ref}" not found via DOM. Visual mode not available for fallback.`;
   }
 
   /**
-   * Type text into an element by snapshot index or CSS selector.
-   * Re-indexes elements before resolving to handle stale references.
+   * Type text into an element. DOM-first with automatic visual escalation.
    */
   async type(ref: string, text: string, tabId?: string): Promise<string> {
     const page = this.getPage(tabId);
-
     const isIndex = /^\d+$/.test(ref.trim());
+
+    // Attempt 1: DOM fill by index
     if (isIndex) {
       const selector = await this.freshResolveRef(page, parseInt(ref, 10));
-      if (!selector) return `Element #${ref} not found on page`;
-      await page.fill(selector, text, { timeout: 10_000 });
-      return `Typed "${text}" into element #${ref}`;
+      if (selector) {
+        try {
+          await page.fill(selector, text, { timeout: 5_000 });
+          console.log(`[Browser] DOM type #${ref} succeeded`);
+          return `Typed "${text}" into element #${ref}`;
+        } catch (err) {
+          console.log(`[Browser] DOM type #${ref} failed: ${err instanceof Error ? err.message : err}`);
+        }
+      } else {
+        console.log(`[Browser] DOM type #${ref}: element not found in DOM`);
+      }
     }
 
-    await page.fill(ref, text, { timeout: 10_000 });
-    return `Typed "${text}" into "${ref}"`;
+    // Attempt 2: DOM fill by CSS selector
+    if (!isIndex && (ref.startsWith('.') || ref.startsWith('#') || ref.startsWith('[') || ref.includes(' > '))) {
+      try {
+        await page.fill(ref, text, { timeout: 5_000 });
+        console.log(`[Browser] DOM type "${ref}" succeeded`);
+        return `Typed "${text}" into "${ref}"`;
+      } catch (err) {
+        console.log(`[Browser] DOM type "${ref}" failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    // Attempt 3: Visual escalation
+    if (this.visualConfig) {
+      console.log(`[Browser] Escalating to visual mode for type: "${ref}"`);
+      const { visualType } = await import('./visual.js');
+      return await visualType(this, this.visualConfig, ref, text, tabId);
+    }
+
+    return `Element "${ref}" not found via DOM. Visual mode not available for fallback.`;
   }
 
   /**
-   * Select an option from a <select> dropdown by snapshot index or CSS selector.
-   * Re-indexes elements before resolving to handle stale references.
+   * Select an option from a <select> dropdown. DOM-first, no visual fallback
+   * (select dropdowns are standard DOM elements).
    */
   async select(ref: string, value: string, tabId?: string): Promise<string> {
     const page = this.getPage(tabId);

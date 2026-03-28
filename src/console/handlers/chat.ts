@@ -105,8 +105,20 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
       deps.config,
     );
 
-    // Handle !research command
     const trimmed = (body.message || '').trim();
+
+    // Handle !reset / !new — clear session before it hits the router
+    if (trimmed.toLowerCase() === '!reset' || trimmed.toLowerCase() === '!new') {
+      try {
+        await deps.sessionStore.clearSession(route.agentId, route.sessionKey);
+      } catch { /* ignore */ }
+      res.write(`data: ${JSON.stringify({ type: 'done', answer: 'Session cleared. Starting fresh!', category: 'system', iterations: 0 })}\n\n`);
+      clearInterval(keepalive);
+      res.end();
+      return;
+    }
+
+    // Handle !research command
     if (trimmed.toLowerCase().startsWith('!research')) {
       const rawArgs = trimmed.slice('!research'.length).trim();
       const typeMatch = rawArgs.match(/^--(\w+)\s+/);
