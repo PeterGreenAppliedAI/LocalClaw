@@ -1,4 +1,6 @@
 import type { PipelineDefinition, PipelineContext } from '../types.js';
+import { SkillStore } from '../../skills/store.js';
+import { findMatchingSkill } from '../../skills/matcher.js';
 
 /**
  * Plan pipeline — decomposes a complex goal into executable steps,
@@ -128,23 +130,66 @@ function parseReplanResponse(raw: string): { step?: PlanStep; done?: boolean; su
 export const planPipeline: PipelineDefinition = {
   name: 'plan',
   stages: [
-    // Stage 1: Generate the plan
+    // Stage 0: Check for matching skill before generating a new plan
+    {
+      name: 'skill_check',
+      type: 'code',
+      execute: (ctx) => {
+        const workspacePath = ctx.toolContext.workspacePath;
+        if (!workspacePath) return;
+
+        try {
+          const store = new SkillStore(workspacePath);
+          const match = findMatchingSkill(store, ctx.userMessage);
+          if (match) {
+            const skill = store.get(match.slug);
+            if (skill && skill.steps.length > 0) {
+              ctx.params._skillMatch = match;
+              ctx.params._skillSteps = skill.steps;
+              ctx.params._skillNotes = skill.notes;
+              ctx.params._skillSlug = match.slug;
+              console.log(`[Plan] Skill match: "${skill.name}" (${skill.successCount} successes) — using saved plan`);
+            }
+          }
+        } catch {
+          // No skills directory or read error — continue with LLM planning
+        }
+      },
+    },
+
+    // Stage 1: Generate the plan (skipped if skill matched)
     {
       name: 'generate_plan',
       type: 'llm',
       temperature: 0.3,
       maxTokens: 2048,
+      // Skip if a skill was matched — use the saved steps instead
+      when: (ctx) => !ctx.params._skillSteps,
       buildPrompt: (ctx) => ({
         system: PLAN_PROMPT,
         user: `Today's date: ${new Date().toISOString().split('T')[0]}\n\nGoal: ${ctx.userMessage}`,
       }),
     },
 
-    // Stage 2: Parse the plan into steps
+    // Stage 2: Parse the plan into steps (or use skill steps)
     {
       name: 'parse_plan',
       type: 'code',
       execute: (ctx) => {
+        // Use skill steps if available, otherwise parse LLM output
+        const skillSteps = ctx.params._skillSteps as PlanStep[] | undefined;
+        if (skillSteps && skillSteps.length > 0) {
+          ctx.params._plan = skillSteps;
+          ctx.params._stepIndex = 0;
+          ctx.params._results = [] as string[];
+          const notes = ctx.params._skillNotes as string[] | undefined;
+          if (notes && notes.length > 0) {
+            console.log(`[Plan] Skill notes: ${notes.join('; ')}`);
+          }
+          console.log(`[Plan] Using saved skill: ${skillSteps.length} steps`);
+          return;
+        }
+
         const raw = ctx.stageResults.generate_plan as string;
         const steps = parsePlan(raw);
         if (steps.length === 0) {
@@ -436,6 +481,70 @@ export const planPipeline: PipelineDefinition = {
           system: `Summarize what you accomplished for the user. Be conversational and specific about what was done vs what couldn't be done. If there were failures, explain what happened and suggest alternatives. Don't list every step — focus on outcomes.`,
           user: `Goal: "${ctx.userMessage}"\n\n${planSummary ? `Plan summary: ${planSummary}\n\n` : ''}Step results:\n${results.join('\n\n')}`,
         };
+      },
+    },
+
+    // Stage 6: Save as skill if successful
+    {
+      name: 'skill_save',
+      type: 'code',
+      execute: (ctx) => {
+        const workspacePath = ctx.toolContext.workspacePath;
+        if (!workspacePath) return;
+
+        const plan = ctx.params._plan as PlanStep[] | undefined;
+        const results = ctx.params._results as string[] | undefined;
+        if (!plan || !results || plan.length < 3) return;
+
+        // Check if we already used a saved skill — if so, just record success
+        const skillSlug = ctx.params._skillSlug as string | undefined;
+        if (skillSlug) {
+          try {
+            const store = new SkillStore(workspacePath);
+            store.recordSuccess(skillSlug);
+            console.log(`[Plan] Recorded skill success: ${skillSlug}`);
+          } catch { /* ignore */ }
+          return;
+        }
+
+        // Count failures — only save if mostly successful
+        const failCount = results.filter(r => r.includes('Error:')).length;
+        const successRate = 1 - (failCount / results.length);
+        if (successRate < 0.6) {
+          console.log(`[Plan] Skipping skill save — success rate too low (${Math.round(successRate * 100)}%)`);
+          return;
+        }
+
+        // Generate a slug from the goal
+        const slug = ctx.userMessage
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '')
+          .slice(0, 50);
+
+        // Extract learned notes from execution
+        const notes: string[] = [];
+        for (const r of results) {
+          if (r.includes('Escalating to visual mode')) notes.push('Some elements need visual mode fallback');
+          if (r.includes('text_content')) notes.push('Use text_content for reading SPA content');
+          if (r.includes('Smart selection')) notes.push('Smart selection needed for picking relevant results');
+        }
+
+        try {
+          const store = new SkillStore(workspacePath);
+          store.save({
+            name: slug,
+            slug,
+            description: ctx.userMessage.slice(0, 200),
+            created: new Date().toISOString().split('T')[0],
+            lastUsed: new Date().toISOString().split('T')[0],
+            successCount: 1,
+            steps: plan,
+            notes: [...new Set(notes)],
+          });
+        } catch (err) {
+          console.warn(`[Plan] Failed to save skill: ${err instanceof Error ? err.message : err}`);
+        }
       },
     },
   ],
