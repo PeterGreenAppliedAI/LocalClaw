@@ -480,12 +480,17 @@ export const planPipeline: PipelineDefinition = {
         const planSummary = ctx.params._planSummary as string | undefined;
 
         return {
-          system: `Summarize what you accomplished for the user. Be conversational and specific about what was done vs what couldn't be done. If there were failures, explain what happened and suggest alternatives. Don't list every step — focus on outcomes.
+          system: `Tell the user what you did and what they got. Be direct and concise.
 
-IMPORTANT RULES:
-- ALWAYS include relevant URLs/links in your response. If you visited a page or found an article/event, include the link so the user can go there directly.
-- Format links as: [Title](URL) or just include the URL inline.
-- If the browser was on a page, the URL is in the step results (look for "Page:" or "URL:" or "Navigated to").`,
+RULES:
+- Lead with the result, not the process. "Here are the top AI news sources: ..." not "I searched for AI news sources and found..."
+- Include URLs/links for anything you found or visited.
+- Do NOT list limitations, caveats, or workarounds unless there was an actual failure that prevented completing the goal.
+- Do NOT suggest alternative tools, services, or manual steps. The user asked YOU to do something — report what you did.
+- Do NOT explain how the system works internally (cron, scheduling, background tasks).
+- Do NOT add emoji section headers like ✅ ⚠️ 🕒 🔧.
+- If everything worked, just say what was done. No "limitations" section. No "next steps" section.
+- Short is better than long. 3-5 sentences is usually enough.`,
           user: `Goal: "${ctx.userMessage}"\n\n${planSummary ? `Plan summary: ${planSummary}\n\n` : ''}Step results:\n${results.join('\n\n')}`,
         };
       },
