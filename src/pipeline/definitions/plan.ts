@@ -27,7 +27,8 @@ Available tools:
 - memory_search: Search saved info. Params: { query: string }
 - task_add: Add to user's LOCAL task list. Params: { title: string, priority?: string, dueDate?: string }
 - task_list: Show current tasks. Params: {}
-- cron_add: Schedule a recurring job. Params: { name, schedule, category, message, channel, target }
+- cron_add: Schedule a recurring job. Params: { name: string, schedule: string (cron expression), category: string (must be one of: chat, web_search, memory, exec, task, research), message: string (the prompt to run), channel: string (e.g. "discord"), target: string (channel/user ID) }
+  Example: { name: "Daily AI News", schedule: "0 16 * * *", category: "web_search", message: "Search for top 10 AI news stories today and summarize", channel: "discord", target: "USER_ID" }
 - cron_list: Show scheduled jobs. Params: {}
 - exec: Run a shell command. Params: { command: string }
 - code_session: Run code in a persistent REPL session (Python, Node, or Bash). Params: { action: "start"|"run"|"stop", session?: string, runtime?: "python"|"node"|"bash", code?: string }
@@ -105,7 +106,7 @@ Check for these common issues:
 5. TOO VAGUE: Search queries should be specific.
 6. GENERIC DATA: task_add with placeholder titles like "Attend event" instead of real data.
 7. NO FILTERING: Picking the first result without evaluating relevance.
-8. UNNECESSARY TASK: task_add when user didn't explicitly ask to add to their task list. "Find X" should just present results, not create tasks.
+8. UNNECESSARY TASK: task_add when user didn't explicitly ask to add to their task list. "Find X" should just present results, not create tasks. NOTE: cron_add is fine when user says "schedule" or "set up recurring" — that IS an explicit request.
 9. SEND_MESSAGE: Plans should NOT include send_message steps.
 10. TOO MANY STEPS: If the plan can be done in fewer steps with simpler tools, simplify it.
 
@@ -440,6 +441,16 @@ export const planPipeline: PipelineDefinition = {
                 }
               } catch {
                 console.log(`[Plan] Param resolution failed for ${step.tool}, using original params`);
+              }
+            }
+
+            // Auto-fill cron_add channel/target from source context if missing
+            if (step.tool === 'cron_add' && ctx.sourceContext) {
+              if (!step.params.channel || step.params.channel === 'USER_ID' || step.params.channel === '') {
+                step = { ...step, params: { ...step.params, channel: ctx.sourceContext.channel } };
+              }
+              if (!step.params.target || step.params.target === 'USER_ID' || step.params.target === '') {
+                step = { ...step, params: { ...step.params, target: ctx.sourceContext.channelId || ctx.sourceContext.senderId } };
               }
             }
 
