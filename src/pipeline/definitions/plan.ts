@@ -29,8 +29,8 @@ CHOOSING THE RIGHT SPECIALIST:
 - "Find info about X" → web_search
 - "Research X in depth" → research
 - "Remember that X" / "What do you know about X" → memory
-- "Add X to my task list" → task
-- "Schedule daily X at 4pm" → cron
+- "Add X to my task list" → task (things the USER needs to do manually)
+- "Schedule daily X at 4pm" → cron (automated recurring jobs — do NOT also create a task, the cron job IS the automation)
 - "Run this command" → exec
 - "Go to X website and sign up" → multi (browser interaction)
 - "Find X and schedule updates" → web_search THEN cron (chained)
@@ -84,7 +84,7 @@ Check for these common issues:
 2. WRONG ORDER: Steps that depend on previous results must come after those results.
 3. UNREALISTIC: Steps that assume information not yet gathered by a previous step.
 4. TOO VAGUE: Instructions to specialists should be specific and clear.
-5. UNNECESSARY TASK: "task" specialist used when user didn't explicitly ask to add to their task list. "Find X" should just present results. NOTE: "cron" is fine when user says "schedule" — that IS an explicit request.
+5. UNNECESSARY TASK: "task" specialist used when user didn't explicitly ask to add to their task list. "Find X" should just present results. "Schedule X" = cron only, do NOT also create a task — the cron job IS the automation.
 6. TOO MANY STEPS: Most tasks need 1-3 specialists. If the plan has more than 5, simplify.
 7. MISSING CONTEXT THREADING: If step 2 depends on step 1's results, the message should reference it (e.g., "Based on the results above...").
 
