@@ -43,6 +43,9 @@ export interface PipelineContext {
   onStream?: (delta: string) => void;
   /** Execution metrics collector — plan pipeline records step-level data here */
   metricsCollector?: import('../metrics/collector.js').MetricsCollector;
+  /** Sub-dispatch function — sends a message to a specialist and returns the result.
+   *  Used by the plan pipeline orchestrator to delegate sub-tasks. */
+  subDispatch?: (message: string, category: string) => Promise<{ answer: string; steps?: Array<{ tool?: string; params?: Record<string, unknown>; observation?: string }> }>;
 }
 
 // --- Stage types ---

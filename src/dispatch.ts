@@ -558,6 +558,20 @@ async function runPipelineDispatch(
     onStream: params.onStream,
   };
 
+  // Sub-dispatch for plan pipeline orchestration — delegates sub-tasks to specialists
+  if (isolateContext) {
+    ctx.subDispatch = async (subMessage: string, subCategory: string) => {
+      console.log(`[Plan] Sub-dispatch: "${subMessage.slice(0, 60)}..." → ${subCategory}`);
+      const result = await dispatchMessage({
+        ...params,
+        message: subMessage,
+        overrideCategory: subCategory,
+        onStream: undefined, // don't stream sub-task responses
+      });
+      return { answer: result.answer, steps: result.steps };
+    };
+  }
+
   // Create metrics collector for plan pipeline runs
   let collector: import('./metrics/collector.js').MetricsCollector | undefined;
   if (specialist.pipeline === 'plan' && params.executionMetrics) {

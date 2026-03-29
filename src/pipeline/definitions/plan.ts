@@ -14,101 +14,79 @@ import { findMatchingSkill } from '../../skills/matcher.js';
  *   5. LLM summarizes what was accomplished
  */
 
-const PLAN_PROMPT = `You are a task decomposer. Break the user's goal into concrete executable steps using the available tools. Choose the SIMPLEST tools that get the job done — don't use the browser when web_search or web_fetch would work.
+const PLAN_PROMPT = `You are a task decomposer. Break the user's goal into sub-tasks, each handled by a specialist. Each specialist has its own tools and pipeline — you just decide WHICH specialist handles each sub-task and WHAT to tell them.
 
-Available tools:
-- web_search: Search the internet. Fast, no browser needed. Params: { query: string }
-- web_fetch: Fetch a URL and extract text content. Fast, no browser needed. Params: { url: string }
-- browser: Interactive browser for sites that REQUIRE clicking, typing, or form filling. ONLY use when web_search/web_fetch can't do the job (e.g., signing up, filling forms, navigating SPAs).
-    Actions: "open", "navigate", "snapshot", "click", "type", "select"
-    For click/type: use element numbers from snapshot, CSS selectors, or text descriptions.
-    NOTE: "text_content" is handled internally — do NOT use it as a plan step. Use web_fetch to read page content instead.
-- memory_save: Save information for later. Params: { content: string }
-- memory_search: Search saved info. Params: { query: string }
-- task_add: Add to user's LOCAL task list. Params: { title: string, priority?: string, dueDate?: string }
-- task_list: Show current tasks. Params: {}
-- cron_add: Schedule a recurring job. Params: { name: string, schedule: string (cron expression), category: string (must be one of: chat, web_search, memory, exec, task, research), message: string (the prompt to run), channel: string (e.g. "discord"), target: string (channel/user ID) }
-  Example: { name: "Daily AI News", schedule: "0 16 * * *", category: "web_search", message: "Search for top 10 AI news stories today and summarize", channel: "discord", target: "USER_ID" }
-- cron_list: Show scheduled jobs. Params: {}
-- exec: Run a shell command. Params: { command: string }
-- code_session: Run code in a persistent REPL session (Python, Node, or Bash). Params: { action: "start"|"run"|"stop", session?: string, runtime?: "python"|"node"|"bash", code?: string }
-  Use for: data processing, scraping scripts, analysis, file generation, anything that needs code execution.
-  Start a session first, then run code in it. Sessions persist between steps.
-- write_file: Write content to a file. Params: { path: string, content: string }
-- read_file: Read a file. Params: { path: string }
+Available specialists:
+- web_search: Search the internet and summarize findings. Give it a search query.
+- research: Deep research with charts and slide decks. Give it a topic.
+- memory: Save or recall information. Give it what to remember or what to look up.
+- task: Create, list, update, or complete tasks. Give it the task details.
+- cron: Schedule recurring jobs. Give it the job name, schedule, and what to do. Valid categories for cron jobs: chat, web_search, memory, exec, task, research.
+- exec: Run shell commands or code. Give it the command.
+- multi: Interactive browser tasks — signing up, filling forms, navigating sites. ONLY when the task requires clicking/typing on a website.
 
-TOOL SELECTION GUIDE:
-- "Find info about X" → web_search (fast, reliable)
-- "What's on this website" → web_fetch with the URL (fast, no browser)
-- "Research X and give me a summary" → web_search + web_fetch (parallel fetches)
-- "Go to X site and sign up" → browser (needs interaction)
-- "Fill out this form" → browser (needs typing/clicking)
-- "Search X site and add to tasks" → browser (site-specific search) + task_add
-- "Schedule a daily X" → cron_add
-- "Remember that X" → memory_save
-- "Find X and schedule weekly updates" → web_search + cron_add (decomposed)
+CHOOSING THE RIGHT SPECIALIST:
+- "Find info about X" → web_search
+- "Research X in depth" → research
+- "Remember that X" / "What do you know about X" → memory
+- "Add X to my task list" → task
+- "Schedule daily X at 4pm" → cron
+- "Run this command" → exec
+- "Go to X website and sign up" → multi (browser interaction)
+- "Find X and schedule updates" → web_search THEN cron (chained)
+- "Search for events and add to tasks" → web_search THEN task (chained)
 
 RULES:
-- Each step: { tool, params, purpose }
-- Choose the CHEAPEST tool that works. web_search > web_fetch > browser.
-- Only use task_add when user EXPLICITLY asked to add to their task list.
-- Only use browser when the task genuinely requires clicking, typing, or navigating a site interactively.
-- DO NOT include send_message steps. User receives your summary automatically.
-- Keep plans to 10 steps or fewer.
-- Be specific with search queries.
-- LINKS: Always capture URLs. Final summary MUST include links so the user can go there directly.
-- task_add titles must use REAL data — never placeholders.
+- Each step: { "specialist": string, "message": string, "purpose": string }
+- "message" is what you tell the specialist — it should be a clear, self-contained instruction
+- Include context from previous steps when needed: "Based on the results: [prior findings], now do X"
+- Keep plans to 5 steps or fewer. Most tasks need 1-3 specialists.
+- Only use "task" specialist when user EXPLICITLY asked to add to their task list.
+- Only use "multi" specialist when the task genuinely requires browser interaction (clicking, typing, forms).
+- DO NOT include message/notification steps. User receives your summary automatically.
+- LINKS: Specialists should include URLs in their responses. The final summary MUST include links.
 
 Return ONLY a JSON array of steps. No explanation.
 
-Example 1 — information gathering (no browser needed):
+Example 1 — information gathering:
 [
-  {"tool": "web_search", "params": {"query": "top AI news today March 2026"}, "purpose": "Find current AI headlines"},
-  {"tool": "web_fetch", "params": {"url": "USES: top result URL from step 1"}, "purpose": "Read the full article"}
+  {"specialist": "web_search", "message": "Find the top AI news stories today", "purpose": "Get current AI headlines with links"}
 ]
 
-Example 2 — compound task with scheduling:
+Example 2 — compound task:
 [
-  {"tool": "web_search", "params": {"query": "AI news sources daily digest"}, "purpose": "Find best AI news aggregators"},
-  {"tool": "cron_add", "params": {"name": "Daily AI News", "schedule": "0 16 * * *", "category": "web_search", "message": "Search for top 10 AI news stories today and summarize"}, "purpose": "Schedule daily 4pm news digest"}
+  {"specialist": "web_search", "message": "Find the best AI news sources and aggregators", "purpose": "Identify top AI news sources"},
+  {"specialist": "cron", "message": "Schedule a daily job at 4pm called 'Daily AI News' that searches for top AI news stories and summarizes them. Category: web_search", "purpose": "Set up daily 4pm news digest"}
 ]
 
-Example 3 — site interaction (browser needed):
+Example 3 — find and add to tasks:
 [
-  {"tool": "browser", "params": {"action": "open", "url": "https://eventbrite.com"}, "purpose": "Navigate to Eventbrite"},
-  {"tool": "browser", "params": {"action": "type", "ref": "Search events input", "text": "tech events Huntington Station NY"}, "purpose": "Enter search query"},
-  {"tool": "browser", "params": {"action": "click", "ref": "Search button"}, "purpose": "Execute search"},
-  {"tool": "browser", "params": {"action": "text_content"}, "purpose": "Read search results"}
+  {"specialist": "web_search", "message": "Search for tech meetups near Huntington Station NY happening in the next month", "purpose": "Find upcoming tech meetups"},
+  {"specialist": "task", "message": "Add a task: [event name from previous step] on [date]", "purpose": "Add the most relevant meetup to task list"}
 ]
 
-Example 4 — add to task list (user explicitly asked):
+Example 4 — browser interaction:
 [
-  {"tool": "web_search", "params": {"query": "tech meetups Huntington Station NY"}, "purpose": "Find upcoming tech meetups"},
-  {"tool": "task_add", "params": {"title": "USES: meetup name from step 1", "dueDate": "USES: date from step 1"}, "purpose": "Add meetup to task list (user requested)"}
+  {"specialist": "multi", "message": "Go to eventbrite.com, search for tech events near Huntington Station NY, and read the results", "purpose": "Browse Eventbrite for events"},
+  {"specialist": "task", "message": "Add a task: [event from previous step]", "purpose": "Add event to task list"}
 ]
 
-Example 5 — data processing with code:
+Example 5 — research and schedule:
 [
-  {"tool": "web_search", "params": {"query": "top 10 AI companies by funding 2026"}, "purpose": "Find AI company data"},
-  {"tool": "web_fetch", "params": {"url": "USES: best source URL from step 1"}, "purpose": "Get detailed funding data"},
-  {"tool": "code_session", "params": {"action": "start", "session": "analysis", "runtime": "python"}, "purpose": "Start Python session for data processing"},
-  {"tool": "code_session", "params": {"action": "run", "session": "analysis", "code": "USES: Python script to parse and analyze data from step 2"}, "purpose": "Process and analyze the data"},
-  {"tool": "write_file", "params": {"path": "USES: output filename", "content": "USES: processed results"}, "purpose": "Save results to file"}
+  {"specialist": "research", "message": "Research the current state of AI regulation in the US", "purpose": "Deep research on AI regulation"},
+  {"specialist": "cron", "message": "Schedule a weekly job on Mondays at 9am called 'AI Regulation Update' that researches new AI regulation developments. Category: research", "purpose": "Set up weekly monitoring"}
 ]`;
 
 const REFLECT_PROMPT = `You are a plan reviewer. Critique the proposed plan below and suggest improvements.
 
 Check for these common issues:
-1. OVERKILL TOOL: If the plan uses browser when web_search or web_fetch would work, flag it. Browser is expensive and slow — only use it when the task requires clicking, typing, or form interaction. "Find information" = web_search. "Read a page" = web_fetch.
-2. MISSING SNAPSHOT: Browser click/type MUST have a snapshot or text_content step first. The agent can't interact with elements it hasn't seen.
-3. WRONG ORDER: Steps that depend on previous results must come after those results.
-4. UNREALISTIC: Steps that assume information not yet gathered.
-5. TOO VAGUE: Search queries should be specific.
-6. GENERIC DATA: task_add with placeholder titles like "Attend event" instead of real data.
-7. NO FILTERING: Picking the first result without evaluating relevance.
-8. UNNECESSARY TASK: task_add when user didn't explicitly ask to add to their task list. "Find X" should just present results, not create tasks. NOTE: cron_add is fine when user says "schedule" or "set up recurring" — that IS an explicit request.
-9. SEND_MESSAGE: Plans should NOT include send_message steps.
-10. TOO MANY STEPS: If the plan can be done in fewer steps with simpler tools, simplify it.
+1. OVERKILL SPECIALIST: If the plan uses "multi" (browser) when "web_search" would work, flag it. Browser is expensive and slow — only use it when the task requires clicking, typing, or form interaction. "Find information" = web_search. "Read a page" = web_search.
+2. WRONG ORDER: Steps that depend on previous results must come after those results.
+3. UNREALISTIC: Steps that assume information not yet gathered by a previous step.
+4. TOO VAGUE: Instructions to specialists should be specific and clear.
+5. UNNECESSARY TASK: "task" specialist used when user didn't explicitly ask to add to their task list. "Find X" should just present results. NOTE: "cron" is fine when user says "schedule" — that IS an explicit request.
+6. TOO MANY STEPS: Most tasks need 1-3 specialists. If the plan has more than 5, simplify.
+7. MISSING CONTEXT THREADING: If step 2 depends on step 1's results, the message should reference it (e.g., "Based on the results above...").
 
 Return a JSON object:
 {
@@ -121,13 +99,20 @@ If the plan is good, return: {"issues": [], "revised_plan": [], "approved": true
 
 const REPLAN_PROMPT = `You are monitoring plan execution. A step just completed. Based on the result, decide what to do next.
 
-If the step succeeded, return the next step from the original plan (adjusted if the result changes things).
-If the step failed or returned unexpected results, return an adjusted step.
+If the step succeeded, return the next step from the original plan (adjusted if needed).
+If the step failed, return an adjusted step using a different specialist or approach.
 If the goal is achieved, return: {"done": true, "summary": "what was accomplished"}
 
-Return ONLY a JSON object — either a step {"tool": "...", "params": {...}, "purpose": "..."} or {"done": true, "summary": "..."}`;
+Return ONLY a JSON object — either a step {"specialist": "...", "message": "...", "purpose": "..."} or {"done": true, "summary": "..."}`;
 
 interface PlanStep {
+  specialist: string;
+  message: string;
+  purpose: string;
+}
+
+// Keep old format for backward compatibility with saved skills
+interface LegacyPlanStep {
   tool: string;
   params: Record<string, unknown>;
   purpose: string;
@@ -135,6 +120,7 @@ interface PlanStep {
 
 /**
  * Parse a JSON plan from LLM output. Tolerates markdown fences and surrounding text.
+ * Handles both new format (specialist/message) and legacy format (tool/params).
  */
 function parsePlan(raw: string): PlanStep[] {
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
@@ -142,12 +128,34 @@ function parsePlan(raw: string): PlanStep[] {
   try {
     const arr = JSON.parse(jsonMatch[0]);
     if (!Array.isArray(arr)) return [];
-    return arr.filter(
-      (s: any) => s && typeof s.tool === 'string' && typeof s.params === 'object',
-    );
+    return arr
+      .filter((s: any) => s && (typeof s.specialist === 'string' || typeof s.tool === 'string'))
+      .map((s: any) => {
+        // Convert legacy format to new format
+        if (s.specialist) return s as PlanStep;
+        // Legacy: tool/params → specialist/message
+        return {
+          specialist: mapToolToSpecialist(s.tool),
+          message: `Use ${s.tool} with params: ${JSON.stringify(s.params)}`,
+          purpose: s.purpose ?? '',
+        };
+      });
   } catch {
     return [];
   }
+}
+
+/** Map a tool name to its specialist category for legacy plan compatibility */
+function mapToolToSpecialist(tool: string): string {
+  const map: Record<string, string> = {
+    web_search: 'web_search', web_fetch: 'web_search',
+    browser: 'multi',
+    memory_save: 'memory', memory_search: 'memory', memory_get: 'memory',
+    task_add: 'task', task_list: 'task', task_update: 'task', task_done: 'task', task_remove: 'task',
+    cron_add: 'cron', cron_list: 'cron', cron_remove: 'cron', cron_edit: 'cron',
+    exec: 'exec', code_session: 'exec', read_file: 'exec', write_file: 'exec',
+  };
+  return map[tool] ?? 'chat';
 }
 
 /**
@@ -159,7 +167,11 @@ function parseReplanResponse(raw: string): { step?: PlanStep; done?: boolean; su
   try {
     const obj = JSON.parse(jsonMatch[0]);
     if (obj.done) return { done: true, summary: obj.summary || '' };
-    if (obj.tool && obj.params) return { step: obj as PlanStep };
+    if (obj.specialist && obj.message) return { step: obj as PlanStep };
+    // Legacy format
+    if (obj.tool && obj.params) {
+      return { step: { specialist: mapToolToSpecialist(obj.tool), message: `Use ${obj.tool}: ${JSON.stringify(obj.params)}`, purpose: obj.purpose ?? '' } };
+    }
     return {};
   } catch {
     return {};
@@ -289,7 +301,7 @@ export const planPipeline: PipelineDefinition = {
 
           if (!reflection.approved && reflection.revised_plan?.length > 0) {
             const revised = (reflection.revised_plan as any[]).filter(
-              (s: any) => s && typeof s.tool === 'string' && typeof s.params === 'object',
+              (s: any) => s && (typeof s.specialist === 'string' || typeof s.tool === 'string'),
             );
             if (revised.length > 0) {
               ctx.params._plan = revised;
@@ -332,194 +344,58 @@ export const planPipeline: PipelineDefinition = {
               return;
             }
 
-            let step = plan[stepIndex];
-            console.log(`[Plan] Step ${stepIndex + 1}/${plan.length}: ${step.tool} — ${step.purpose}`);
+            const step = plan[stepIndex];
+            console.log(`[Plan] Step ${stepIndex + 1}/${plan.length}: ${step.specialist} — ${step.purpose}`);
 
-            // Cache text_content results for smart selection and param resolution
-            if (step.tool === 'browser' && step.params.action === 'text_content') {
-              // The text_content result will be stored in stageResults after execution.
-              // We also cache it in _lastPageText for downstream use.
-              // (The actual caching happens after execution below)
-            }
-
-            // Intelligent selection: when a step is about picking/clicking a result from
-            // a list (search results, event listings), use the DOM snapshot + LLM to find
-            // the most relevant item instead of blindly clicking the first one.
-            const isSelectionStep = step.tool === 'browser'
-              && step.params.action === 'click'
-              && /first|select|pick|choose|relevant|best|result|navigate.*event|navigate.*detail/i.test(step.purpose);
-            if (isSelectionStep) {
-              // Use cached page text from a previous text_content step, or grab fresh
-              let domSnapshot = ctx.params._lastPageText as string | undefined;
-              if (!domSnapshot || domSnapshot.length < 200) {
-                try {
-                  domSnapshot = await ctx.executor('browser', { action: 'text_content' }, ctx.toolContext);
-                  ctx.params._lastPageText = domSnapshot;
-                  console.log(`[Plan] Smart selection: fresh text grab (${domSnapshot.length} chars)`);
-                } catch {
-                  // no text available
-                }
-              } else {
-                console.log(`[Plan] Smart selection: using cached text (${domSnapshot.length} chars)`);
-              }
-            if (domSnapshot) {
-              try {
-                const selectResponse = await ctx.client.chat({
-                  model: ctx.routerModel ?? ctx.model,
-                  messages: [
-                    {
-                      role: 'system',
-                      content: `You are selecting the most relevant CONTENT ITEM (event, article, listing, job, result) from a web page. The user's original goal was: "${ctx.userMessage}"\n\nIMPORTANT: Pick an actual content item (event name, listing title, search result) — NOT a navigation button, search bar, or UI element like "Search events" or "Log in".\n\nLook at the page content below and find the content item that BEST matches what the user is looking for. Return ONLY a JSON object:\n{"target": "exact text of the content item to click (e.g., event name, listing title)", "reason": "why this is the best match"}`,
-                    },
-                    {
-                      role: 'user',
-                      content: domSnapshot.slice(0, 4000),
-                    },
-                  ],
-                  options: { temperature: 0.1, num_predict: 256 },
-                });
-                const raw = selectResponse.message?.content ?? '';
-                const jsonMatch = raw.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                  const selection = JSON.parse(jsonMatch[0]);
-                  if (selection.target) {
-                    step = { ...step, params: { ...step.params, target: selection.target } };
-                    console.log(`[Plan] Smart selection: "${selection.target}" — ${selection.reason}`);
-                    if (ctx.metricsCollector) {
-                      ctx.metricsCollector.smartSelectionUsed = true;
-                      ctx.metricsCollector.smartSelectionTarget = selection.target;
-                    }
-                  }
-                }
-              } catch {
-                console.log('[Plan] Smart selection failed, using original target');
-              }
-            }
-            }
-
-            // Dynamic param resolution: for steps that consume page content
-            // (task_add, memory_save), ask the LLM to fill in concrete details
-            // from the accumulated results so far.
-            const needsResolution = ['task_add', 'memory_save'].includes(step.tool)
-              && results.length > 0;
-            if (needsResolution) {
-              try {
-                const recentResults = results.slice(-3).join('\n\n');
-                // Use cached page text if available, otherwise try to grab fresh
-                let pageText = ctx.params._lastPageText as string | undefined;
-                if (!pageText || pageText.length < 100) {
-                  try {
-                    pageText = await ctx.executor('browser', { action: 'text_content' }, ctx.toolContext);
-                  } catch { /* browser may be closed */ }
-                }
-                const domContext = pageText && pageText.length > 100
-                  ? `\n\nPage text content:\n${pageText.slice(0, 3000)}`
-                  : '';
-                const resolveResponse = await ctx.client.chat({
-                  model: ctx.routerModel ?? ctx.model,
-                  messages: [
-                    {
-                      role: 'system',
-                      content: `You are filling in tool parameters with REAL data from previous step results. Given the step's purpose and recent results, return a JSON object with the correct params. Use SPECIFIC names, dates, titles, and URLs from the results — NEVER use generic placeholders.\n\nToday's date is ${new Date().toISOString().split('T')[0]}. All dates should be in the current year unless explicitly stated otherwise. Use YYYY-MM-DD format for dates.\n\nTool: ${step.tool}\nOriginal params: ${JSON.stringify(step.params)}\nPurpose: ${step.purpose}`,
-                    },
-                    {
-                      role: 'user',
-                      content: `Recent step results:\n${recentResults}${domContext}`,
-                    },
-                  ],
-                  options: { temperature: 0.1, num_predict: 256 },
-                });
-                const raw = resolveResponse.message?.content ?? '';
-                const jsonMatch = raw.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                  const resolved = JSON.parse(jsonMatch[0]);
-                  if (resolved && typeof resolved === 'object') {
-                    step = { ...step, params: { ...step.params, ...resolved } };
-                    console.log(`[Plan] Resolved params for ${step.tool}: ${JSON.stringify(resolved)}`);
-                    if (ctx.metricsCollector) ctx.metricsCollector.paramResolutionCount++;
-                  }
-                }
-              } catch {
-                console.log(`[Plan] Param resolution failed for ${step.tool}, using original params`);
-              }
-            }
-
-            // Validate tool name — skip hallucinated tools instead of executing them
-            const VALID_TOOLS = new Set([
-              'web_search', 'web_fetch', 'browser', 'memory_save', 'memory_search',
-              'task_add', 'task_list', 'task_update', 'task_done', 'task_remove',
-              'cron_add', 'cron_list', 'cron_remove', 'cron_edit',
-              'exec', 'code_session', 'read_file', 'write_file',
-              'memory_get', 'knowledge_import', 'reason',
-              'heartbeat_add', 'heartbeat_list', 'heartbeat_remove',
-              'workspace_read', 'workspace_write',
-            ]);
-            if (!VALID_TOOLS.has(step.tool)) {
-              console.log(`[Plan] Skipping hallucinated tool: "${step.tool}" — not a registered tool`);
-              results.push(`Step ${stepIndex + 1} (${step.tool}): SKIPPED — tool does not exist`);
-              ctx.params._lastResult = `Tool "${step.tool}" does not exist`;
-              ctx.params._lastSuccess = false;
-              ctx.params._stepIndex = stepIndex + 1;
-              return;
-            }
-
-            // Auto-fill cron_add channel/target from source context if missing
-            if (step.tool === 'cron_add' && ctx.sourceContext) {
-              if (!step.params.channel || step.params.channel === 'USER_ID' || step.params.channel === '') {
-                step = { ...step, params: { ...step.params, channel: ctx.sourceContext.channel } };
-              }
-              if (!step.params.target || step.params.target === 'USER_ID' || step.params.target === '') {
-                step = { ...step, params: { ...step.params, target: ctx.sourceContext.channelId || ctx.sourceContext.senderId } };
-              }
+            // Thread context from previous steps into the message
+            let message = step.message;
+            if (stepIndex > 0 && results.length > 0) {
+              const priorContext = results.slice(-2).join('\n\n');
+              message = `${step.message}\n\nContext from previous steps:\n${priorContext}`;
             }
 
             const stepStart = Date.now();
-            try {
-              const observation = await ctx.executor(step.tool, step.params, ctx.toolContext);
-              ctx.steps.push({ tool: step.tool, params: step.params, observation });
-              results.push(`Step ${stepIndex + 1} (${step.tool}): ${step.purpose}\nResult: ${observation}`);
-              ctx.params._lastResult = observation;
-              ctx.params._lastSuccess = true;
 
-              // Cache text_content results for smart selection and param resolution
-              if (step.tool === 'browser' && step.params.action === 'text_content') {
-                ctx.params._lastPageText = observation;
-              }
-
-              // Track step metrics + browser mode detection
-              const isClick = step.tool === 'browser' && (step.params.action === 'click' || step.params.action === 'type');
-              const wasEscalated = isClick && observation.includes('coordinates');
-              if (isClick && ctx.metricsCollector) {
-                if (wasEscalated) {
-                  ctx.metricsCollector.trackVisualEscalation(true);
-                } else {
-                  ctx.metricsCollector.trackDomClick(true);
+            // Dispatch to specialist via subDispatch (or fall back to direct executor)
+            if (ctx.subDispatch) {
+              try {
+                const result = await ctx.subDispatch(message, step.specialist);
+                const observation = result.answer;
+                if (result.steps) {
+                  ctx.steps.push(...result.steps);
                 }
-              }
-              ctx.metricsCollector?.trackStep({
-                index: stepIndex,
-                tool: step.tool,
-                purpose: step.purpose,
-                resultClass: observation.length > 0 ? 'success' : 'empty',
-                escalated: wasEscalated,
-                durationMs: Date.now() - stepStart,
-                observation,
-              });
-            } catch (err) {
-              const errMsg = err instanceof Error ? err.message : String(err);
-              results.push(`Step ${stepIndex + 1} (${step.tool}): ${step.purpose}\nError: ${errMsg}`);
-              ctx.params._lastResult = `Error: ${errMsg}`;
-              ctx.params._lastSuccess = false;
+                results.push(`Step ${stepIndex + 1} (${step.specialist}): ${step.purpose}\nResult: ${observation}`);
+                ctx.params._lastResult = observation;
+                ctx.params._lastSuccess = true;
 
-              // Track failed step
-              ctx.metricsCollector?.trackStep({
-                index: stepIndex,
-                tool: step.tool,
-                purpose: step.purpose,
-                resultClass: 'error',
-                durationMs: Date.now() - stepStart,
-                observation: errMsg,
-              });
+                ctx.metricsCollector?.trackStep({
+                  index: stepIndex,
+                  tool: step.specialist,
+                  purpose: step.purpose,
+                  resultClass: observation.length > 0 ? 'success' : 'empty',
+                  durationMs: Date.now() - stepStart,
+                  observation,
+                });
+              } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                results.push(`Step ${stepIndex + 1} (${step.specialist}): ${step.purpose}\nError: ${errMsg}`);
+                ctx.params._lastResult = `Error: ${errMsg}`;
+                ctx.params._lastSuccess = false;
+
+                ctx.metricsCollector?.trackStep({
+                  index: stepIndex,
+                  tool: step.specialist,
+                  purpose: step.purpose,
+                  resultClass: 'error',
+                  durationMs: Date.now() - stepStart,
+                  observation: errMsg,
+                });
+              }
+            } else {
+              // Fallback: no subDispatch available (e.g., CLI mode) — skip
+              results.push(`Step ${stepIndex + 1} (${step.specialist}): SKIPPED — sub-dispatch not available`);
+              ctx.params._lastResult = 'Sub-dispatch not available';
+              ctx.params._lastSuccess = false;
             }
 
             ctx.params._stepIndex = stepIndex + 1;
@@ -558,7 +434,7 @@ export const planPipeline: PipelineDefinition = {
 
             // Step failed — ask LLM to replan
             const remainingSteps = plan.slice(stepIndex).map((s, i) =>
-              `${stepIndex + i + 1}. ${s.tool}: ${s.purpose}`,
+              `${stepIndex + i + 1}. ${s.specialist}: ${s.purpose}`,
             ).join('\n');
 
             const response = await ctx.client.chat({
@@ -625,7 +501,7 @@ IMPORTANT RULES:
 
         const plan = ctx.params._plan as PlanStep[] | undefined;
         const results = ctx.params._results as string[] | undefined;
-        if (!plan || !results || plan.length < 3) return;
+        if (!plan || !results || plan.length < 2) return;
 
         // Check if we already used a saved skill — if so, just record success
         const skillSlug = ctx.params._skillSlug as string | undefined;
@@ -659,7 +535,7 @@ IMPORTANT RULES:
 
           // Use LLM to generalize the skill into a reusable pattern
           // instead of saving the raw user message as the description
-          const toolSequence = plan.map(s => s.tool).join(' → ');
+          const toolSequence = plan.map(s => s.specialist).join(' → ');
           const generalizeResponse = await ctx.client.chat({
             model: ctx.routerModel ?? ctx.model,
             messages: [
@@ -676,7 +552,7 @@ Return ONLY a JSON object: {"name": "pattern-name-slug", "description": "General
               },
               {
                 role: 'user',
-                content: `Request: "${ctx.userMessage}"\nTools used: ${toolSequence}`,
+                content: `Request: "${ctx.userMessage}"\nSpecialists used: ${toolSequence}`,
               },
             ],
             options: { temperature: 0.2, num_predict: 200 },
@@ -701,6 +577,13 @@ Return ONLY a JSON object: {"name": "pattern-name-slug", "description": "General
             .replace(/^-|-$/g, '')
             .slice(0, 50);
 
+          // Convert specialist-based steps to skill format
+          const skillSteps = plan.map(s => ({
+            tool: s.specialist,
+            params: { message: s.message },
+            purpose: s.purpose,
+          }));
+
           // Check if a pattern skill with this slug already exists — don't duplicate
           const existing = store.get(slug);
           if (existing) {
@@ -714,7 +597,7 @@ Return ONLY a JSON object: {"name": "pattern-name-slug", "description": "General
               created: new Date().toISOString().split('T')[0],
               lastUsed: new Date().toISOString().split('T')[0],
               successCount: 1,
-              steps: plan,
+              steps: skillSteps,
               notes: [...new Set(notes)],
             });
           }
