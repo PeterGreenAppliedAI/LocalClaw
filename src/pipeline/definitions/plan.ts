@@ -39,23 +39,30 @@ Available tools you can use in your plan:
 RULES:
 - Each step must have: tool (tool name), params (object), purpose (what this achieves)
 - DO NOT include send_message steps. The user automatically receives your final summary.
-- When the user says "add to my task list", use the task_add TOOL — do NOT click a website button. The task list is LOCAL.
+- Only use task_add when the user EXPLICITLY asked to add something to their task list. If the user just says "find X" or "search for X", do NOT create a task — just find the information and present it with links. The task list is LOCAL, managed by the task_add tool — never click a website button.
 - After navigating, use "snapshot" to see interactive elements OR "text_content" to read page text.
-- Use "text_content" when you need to READ content (event names, search results, article text).
+- Use "text_content" when you need to READ content (event names, search results, article text). Prefer text_content over clicking into detail pages — listing/search pages usually have enough info.
 - Use "snapshot" when you need to SEE interactive elements to click/type.
 - For click/type: use element numbers from snapshot when available, text descriptions when not (e.g., "Events tab", "Search button").
 - Be specific with search queries — not generic.
 - CRITICAL: task_add title must use REAL data from the page — never placeholders like "Attend event". Use text_content to read the actual names/dates first.
 - FILTERING: Do NOT blindly pick the first search result. Read results with text_content, then pick the most relevant one.
 - Keep plans to 10 steps or fewer.
+- LINKS: The plan should always capture the URL of any page visited. The final summary MUST include links to pages/articles/events found so the user can go there directly.
 
 Return ONLY a JSON array of steps. No explanation. Example:
 [
   {"tool": "browser", "params": {"action": "open", "url": "https://eventbrite.com"}, "purpose": "Navigate to Eventbrite"},
   {"tool": "browser", "params": {"action": "type", "ref": "Search events input", "text": "tech events Huntington Station NY"}, "purpose": "Enter search query"},
   {"tool": "browser", "params": {"action": "click", "ref": "Search button"}, "purpose": "Execute search"},
-  {"tool": "browser", "params": {"action": "text_content"}, "purpose": "Read search results to find most relevant tech event"},
-  {"tool": "task_add", "params": {"title": "USES: event name from step 4", "dueDate": "USES: date from step 4"}, "purpose": "Add the most relevant event to task list"}
+  {"tool": "browser", "params": {"action": "text_content"}, "purpose": "Read search results to find most relevant tech event"}
+]
+
+Example 2 (user explicitly asked to add to task list):
+[
+  {"tool": "browser", "params": {"action": "open", "url": "https://eventbrite.com"}, "purpose": "Navigate to Eventbrite"},
+  {"tool": "browser", "params": {"action": "text_content"}, "purpose": "Read page content to find events"},
+  {"tool": "task_add", "params": {"title": "USES: event name from text_content", "dueDate": "USES: date"}, "purpose": "Add event to task list (user requested)"}
 ]`;
 
 const REFLECT_PROMPT = `You are a plan reviewer. Critique the proposed plan below and suggest improvements.
@@ -527,7 +534,12 @@ export const planPipeline: PipelineDefinition = {
         const planSummary = ctx.params._planSummary as string | undefined;
 
         return {
-          system: `Summarize what you accomplished for the user. Be conversational and specific about what was done vs what couldn't be done. If there were failures, explain what happened and suggest alternatives. Don't list every step — focus on outcomes.`,
+          system: `Summarize what you accomplished for the user. Be conversational and specific about what was done vs what couldn't be done. If there were failures, explain what happened and suggest alternatives. Don't list every step — focus on outcomes.
+
+IMPORTANT RULES:
+- ALWAYS include relevant URLs/links in your response. If you visited a page or found an article/event, include the link so the user can go there directly.
+- Format links as: [Title](URL) or just include the URL inline.
+- If the browser was on a page, the URL is in the step results (look for "Page:" or "URL:" or "Navigated to").`,
           user: `Goal: "${ctx.userMessage}"\n\n${planSummary ? `Plan summary: ${planSummary}\n\n` : ''}Step results:\n${results.join('\n\n')}`,
         };
       },
