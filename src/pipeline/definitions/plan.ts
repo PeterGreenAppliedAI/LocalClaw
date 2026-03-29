@@ -20,8 +20,9 @@ Available tools:
 - web_search: Search the internet. Fast, no browser needed. Params: { query: string }
 - web_fetch: Fetch a URL and extract text content. Fast, no browser needed. Params: { url: string }
 - browser: Interactive browser for sites that REQUIRE clicking, typing, or form filling. ONLY use when web_search/web_fetch can't do the job (e.g., signing up, filling forms, navigating SPAs).
-    Actions: "open", "navigate", "snapshot", "text_content", "click", "type", "select"
+    Actions: "open", "navigate", "snapshot", "click", "type", "select"
     For click/type: use element numbers from snapshot, CSS selectors, or text descriptions.
+    NOTE: "text_content" is handled internally — do NOT use it as a plan step. Use web_fetch to read page content instead.
 - memory_save: Save information for later. Params: { content: string }
 - memory_search: Search saved info. Params: { query: string }
 - task_add: Add to user's LOCAL task list. Params: { title: string, priority?: string, dueDate?: string }
@@ -511,8 +512,17 @@ export const planPipeline: PipelineDefinition = {
               return;
             }
 
-            // If step succeeded and next step is straightforward, just continue
+            // If step succeeded, reset fail counter and continue
             if (lastSuccess && stepIndex < plan.length) {
+              ctx.params._consecutiveFailures = 0;
+              return;
+            }
+
+            // Track consecutive failures — give up after 2 to prevent infinite replan loops
+            const consecutiveFailures = ((ctx.params._consecutiveFailures as number) ?? 0) + 1;
+            ctx.params._consecutiveFailures = consecutiveFailures;
+            if (consecutiveFailures >= 2) {
+              console.log(`[Plan] ${consecutiveFailures} consecutive failures — skipping replan, moving on`);
               return;
             }
 
