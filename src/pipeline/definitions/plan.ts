@@ -444,6 +444,25 @@ export const planPipeline: PipelineDefinition = {
               }
             }
 
+            // Validate tool name — skip hallucinated tools instead of executing them
+            const VALID_TOOLS = new Set([
+              'web_search', 'web_fetch', 'browser', 'memory_save', 'memory_search',
+              'task_add', 'task_list', 'task_update', 'task_done', 'task_remove',
+              'cron_add', 'cron_list', 'cron_remove', 'cron_edit',
+              'exec', 'code_session', 'read_file', 'write_file',
+              'memory_get', 'knowledge_import', 'reason',
+              'heartbeat_add', 'heartbeat_list', 'heartbeat_remove',
+              'workspace_read', 'workspace_write',
+            ]);
+            if (!VALID_TOOLS.has(step.tool)) {
+              console.log(`[Plan] Skipping hallucinated tool: "${step.tool}" — not a registered tool`);
+              results.push(`Step ${stepIndex + 1} (${step.tool}): SKIPPED — tool does not exist`);
+              ctx.params._lastResult = `Tool "${step.tool}" does not exist`;
+              ctx.params._lastSuccess = false;
+              ctx.params._stepIndex = stepIndex + 1;
+              return;
+            }
+
             // Auto-fill cron_add channel/target from source context if missing
             if (step.tool === 'cron_add' && ctx.sourceContext) {
               if (!step.params.channel || step.params.channel === 'USER_ID' || step.params.channel === '') {
