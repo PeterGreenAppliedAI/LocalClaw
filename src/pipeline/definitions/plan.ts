@@ -165,12 +165,16 @@ function parsePlan(raw: string): PlanStep[] {
 /** Map a tool name to its specialist category for legacy plan compatibility */
 function mapToolToSpecialist(tool: string): string {
   const map: Record<string, string> = {
-    web_search: 'web_search', web_fetch: 'web_search',
-    browser: 'multi',
+    // Specialist names map to themselves (skills store these directly)
+    web_search: 'web_search', research: 'research', memory: 'memory',
+    task: 'task', cron: 'cron', exec: 'exec', multi: 'multi',
+    chat: 'chat', message: 'message', website: 'website', config: 'config',
+    // Legacy tool names map to their specialist
+    web_fetch: 'web_search', browser: 'multi',
     memory_save: 'memory', memory_search: 'memory', memory_get: 'memory',
     task_add: 'task', task_list: 'task', task_update: 'task', task_done: 'task', task_remove: 'task',
     cron_add: 'cron', cron_list: 'cron', cron_remove: 'cron', cron_edit: 'cron',
-    exec: 'exec', code_session: 'exec', read_file: 'exec', write_file: 'exec',
+    code_session: 'exec', read_file: 'exec', write_file: 'exec',
   };
   return map[tool] ?? 'chat';
 }
