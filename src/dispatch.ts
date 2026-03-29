@@ -104,6 +104,8 @@ export interface DispatchParams {
   factStore?: import('./memory/fact-store.js').FactStore;
   /** Pipeline registry for deterministic pipeline dispatch */
   pipelineRegistry?: PipelineRegistry;
+  /** Execution metrics store for recording pipeline run data */
+  executionMetrics?: import('./metrics/execution-store.js').ExecutionMetricsStore;
 }
 
 export interface DispatchResult {
@@ -556,9 +558,30 @@ async function runPipelineDispatch(
     onStream: params.onStream,
   };
 
+  // Create metrics collector for plan pipeline runs
+  let collector: import('./metrics/collector.js').MetricsCollector | undefined;
+  if (specialist.pipeline === 'plan' && params.executionMetrics) {
+    const { MetricsCollector } = await import('./metrics/collector.js');
+    collector = new MetricsCollector();
+    collector.pipeline = specialist.pipeline;
+    collector.category = category;
+    collector.userMessage = message;
+    ctx.metricsCollector = collector;
+  }
+
   console.log(`[Dispatch] Pipeline dispatch: "${specialist.pipeline}" for category "${category}"`);
 
   const pipelineResult = await runPipeline(pipelineDef, ctx);
+
+  // Flush metrics
+  if (collector && params.executionMetrics) {
+    collector.answer = pipelineResult.answer;
+    try {
+      collector.flush(params.executionMetrics);
+    } catch (err) {
+      console.warn(`[Metrics] Failed to flush: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   return {
     answer: pipelineResult.answer,

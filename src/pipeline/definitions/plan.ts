@@ -149,6 +149,13 @@ export const planPipeline: PipelineDefinition = {
               ctx.params._skillNotes = skill.notes;
               ctx.params._skillSlug = match.slug;
               console.log(`[Plan] Skill match: "${skill.name}" (${skill.successCount} successes) — using saved plan`);
+
+              // Track skill reuse in metrics
+              if (ctx.metricsCollector) {
+                ctx.metricsCollector.planSource = 'saved_skill';
+                ctx.metricsCollector.skillSlug = match.slug;
+                ctx.metricsCollector.skillMatchScore = match.score;
+              }
             }
           }
         } catch {
@@ -236,6 +243,9 @@ export const planPipeline: PipelineDefinition = {
             for (const issue of reflection.issues) {
               console.log(`[Plan]   - ${issue}`);
             }
+            if (ctx.metricsCollector) {
+              ctx.metricsCollector.reflectionIssueCount = reflection.issues.length;
+            }
           }
 
           if (!reflection.approved && reflection.revised_plan?.length > 0) {
@@ -245,6 +255,9 @@ export const planPipeline: PipelineDefinition = {
             if (revised.length > 0) {
               ctx.params._plan = revised;
               console.log(`[Plan] Reflection revised plan: ${plan.length} → ${revised.length} steps`);
+              if (ctx.metricsCollector) {
+                ctx.metricsCollector.reflectionRevisedPlan = true;
+              }
             }
           } else {
             console.log('[Plan] Reflection approved plan as-is');
@@ -333,6 +346,10 @@ export const planPipeline: PipelineDefinition = {
                   if (selection.target) {
                     step = { ...step, params: { ...step.params, target: selection.target } };
                     console.log(`[Plan] Smart selection: "${selection.target}" — ${selection.reason}`);
+                    if (ctx.metricsCollector) {
+                      ctx.metricsCollector.smartSelectionUsed = true;
+                      ctx.metricsCollector.smartSelectionTarget = selection.target;
+                    }
                   }
                 }
               } catch {
@@ -380,6 +397,7 @@ export const planPipeline: PipelineDefinition = {
                   if (resolved && typeof resolved === 'object') {
                     step = { ...step, params: { ...step.params, ...resolved } };
                     console.log(`[Plan] Resolved params for ${step.tool}: ${JSON.stringify(resolved)}`);
+                    if (ctx.metricsCollector) ctx.metricsCollector.paramResolutionCount++;
                   }
                 }
               } catch {
@@ -387,6 +405,7 @@ export const planPipeline: PipelineDefinition = {
               }
             }
 
+            const stepStart = Date.now();
             try {
               const observation = await ctx.executor(step.tool, step.params, ctx.toolContext);
               ctx.steps.push({ tool: step.tool, params: step.params, observation });
@@ -398,11 +417,41 @@ export const planPipeline: PipelineDefinition = {
               if (step.tool === 'browser' && step.params.action === 'text_content') {
                 ctx.params._lastPageText = observation;
               }
+
+              // Track step metrics + browser mode detection
+              const isClick = step.tool === 'browser' && (step.params.action === 'click' || step.params.action === 'type');
+              const wasEscalated = isClick && observation.includes('coordinates');
+              if (isClick && ctx.metricsCollector) {
+                if (wasEscalated) {
+                  ctx.metricsCollector.trackVisualEscalation(true);
+                } else {
+                  ctx.metricsCollector.trackDomClick(true);
+                }
+              }
+              ctx.metricsCollector?.trackStep({
+                index: stepIndex,
+                tool: step.tool,
+                purpose: step.purpose,
+                resultClass: observation.length > 0 ? 'success' : 'empty',
+                escalated: wasEscalated,
+                durationMs: Date.now() - stepStart,
+                observation,
+              });
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err);
               results.push(`Step ${stepIndex + 1} (${step.tool}): ${step.purpose}\nError: ${errMsg}`);
               ctx.params._lastResult = `Error: ${errMsg}`;
               ctx.params._lastSuccess = false;
+
+              // Track failed step
+              ctx.metricsCollector?.trackStep({
+                index: stepIndex,
+                tool: step.tool,
+                purpose: step.purpose,
+                resultClass: 'error',
+                durationMs: Date.now() - stepStart,
+                observation: errMsg,
+              });
             }
 
             ctx.params._stepIndex = stepIndex + 1;

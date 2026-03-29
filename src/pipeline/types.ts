@@ -41,6 +41,8 @@ export interface PipelineContext {
   answer?: string;
   /** Stream callback — stages with stream: true will use this for progressive output */
   onStream?: (delta: string) => void;
+  /** Execution metrics collector — plan pipeline records step-level data here */
+  metricsCollector?: import('../metrics/collector.js').MetricsCollector;
 }
 
 // --- Stage types ---

@@ -147,6 +147,7 @@ export class Orchestrator {
             overrideCategory: job.category,
             cronMode: true,
             pipelineRegistry: this.pipelineRegistry,
+            executionMetrics: this.executionMetrics,
             sourceContext: {
               channel: job.delivery.channel,
               channelId: job.delivery.target ?? '',
@@ -213,6 +214,7 @@ export class Orchestrator {
           registry: this.toolRegistry,
           config: this.config,
           pipelineRegistry: this.pipelineRegistry,
+            executionMetrics: this.executionMetrics,
           ...params,
         }),
       };
@@ -317,6 +319,7 @@ export class Orchestrator {
         overrideCategory: 'multi',
         cronMode: true, // strips write_file + marks as automated
         pipelineRegistry: this.pipelineRegistry,
+            executionMetrics: this.executionMetrics,
         // Pass delivery target as senderId so tools (memory_search etc.) know whose data to access
         sourceContext: hb.delivery.target ? {
           channel: hb.delivery.channel,
@@ -687,6 +690,7 @@ export class Orchestrator {
           sessionStore: this.sessionStore,
           overrideCategory: 'research',
           pipelineRegistry: this.pipelineRegistry,
+            executionMetrics: this.executionMetrics,
           sourceContext: {
             channel: msg.channel,
             channelId: msg.channelId ?? '',
@@ -817,6 +821,7 @@ export class Orchestrator {
         sessionKey: route.sessionKey,
         sessionStore: this.sessionStore,
         pipelineRegistry: this.pipelineRegistry,
+            executionMetrics: this.executionMetrics,
         ...(hasImageAttachment ? { overrideCategory: 'chat' as const } : {}),
         sourceContext: {
           channel: msg.channel,
