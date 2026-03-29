@@ -8,6 +8,7 @@ import type { CronService } from '../cron/service.js';
 import type { FactStore } from '../memory/fact-store.js';
 import type { VisionService } from '../services/vision.js';
 import type { DispatchParams } from '../dispatch.js';
+import type { ExecutionMetricsStore } from '../metrics/execution-store.js';
 
 export interface ConsoleApiDeps {
   config: LocalClawConfig;
@@ -19,5 +20,6 @@ export interface ConsoleApiDeps {
   cronService?: CronService;
   factStore?: FactStore;
   visionService?: VisionService;
+  executionMetrics?: ExecutionMetricsStore;
   dispatch: (params: Omit<DispatchParams, 'client' | 'registry' | 'config'>) => Promise<import('../dispatch.js').DispatchResult>;
 }

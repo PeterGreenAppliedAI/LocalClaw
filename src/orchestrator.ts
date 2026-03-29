@@ -25,6 +25,7 @@ import { saveAttachment, isImageMime } from './services/attachments.js';
 import { ollamaUnreachable, toolExecutionError, LocalClawError } from './errors.js';
 import { PipelineRegistry } from './pipeline/registry.js';
 import { registerAllPipelines } from './pipeline/definitions/index.js';
+import { ExecutionMetricsStore } from './metrics/execution-store.js';
 import { appendFileSync } from 'node:fs';
 import type { ConsoleApiDeps } from './console/types.js';
 import type { WebApiAdapter } from './channels/web/adapter.js';
@@ -88,6 +89,7 @@ export class Orchestrator {
   private factStore?: FactStore;
   private taskStore?: TaskStore;
   private pipelineRegistry: PipelineRegistry;
+  executionMetrics: ExecutionMetricsStore;
 
   constructor(config: LocalClawConfig) {
     this.config = config;
@@ -100,6 +102,7 @@ export class Orchestrator {
     this.visionService = new VisionService(config.vision, config.ollama.url);
     this.pipelineRegistry = new PipelineRegistry();
     registerAllPipelines(this.pipelineRegistry);
+    this.executionMetrics = new ExecutionMetricsStore('data/metrics/execution.db');
   }
 
   getToolRegistry(): ToolRegistry {
@@ -204,6 +207,7 @@ export class Orchestrator {
         cronService: this.cronService,
         factStore: this.factStore,
         visionService: this.visionService,
+        executionMetrics: this.executionMetrics,
         dispatch: (params) => dispatchMessage({
           client: this.client,
           registry: this.toolRegistry,

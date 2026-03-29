@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ConsoleApiDeps } from './types.js';
-import { sendError } from './helpers/send-json.js';
+import { sendError, sendJson } from './helpers/send-json.js';
 import { handleStatus, handleModels, handleConfig } from './handlers/status.js';
 import { handleChannels, handleChannelReconnect } from './handlers/channels.js';
 import { handleSessions, handleSessionTranscript, handleSessionDelete } from './handlers/sessions.js';
@@ -178,6 +178,38 @@ export async function handleConsoleRequest(
     }
     if (path === 'chat/reset' && method === 'POST') {
       await handleChatReset(req, res, deps);
+      return true;
+    }
+
+    // Execution metrics
+    if (path === 'metrics/stats' && method === 'GET') {
+      const qs = new URL(url, 'http://localhost').searchParams;
+      const days = parseInt(qs.get('days') ?? '7', 10);
+      if (!deps.executionMetrics) {
+        sendJson(res, { error: 'Execution metrics not available' }, 503);
+      } else {
+        sendJson(res, deps.executionMetrics.getStats(days));
+      }
+      return true;
+    }
+    if (path === 'metrics/runs' && method === 'GET') {
+      const qs = new URL(url, 'http://localhost').searchParams;
+      const limit = parseInt(qs.get('limit') ?? '50', 10);
+      if (!deps.executionMetrics) {
+        sendJson(res, { error: 'Execution metrics not available' }, 503);
+      } else {
+        sendJson(res, deps.executionMetrics.getRecentRuns(limit));
+      }
+      return true;
+    }
+    const stepsMatch = path.match(/^metrics\/runs\/(\d+)\/steps$/);
+    if (stepsMatch && method === 'GET') {
+      const runId = parseInt(stepsMatch[1], 10);
+      if (!deps.executionMetrics) {
+        sendJson(res, { error: 'Execution metrics not available' }, 503);
+      } else {
+        sendJson(res, deps.executionMetrics.getSteps(runId));
+      }
       return true;
     }
 

@@ -1,6 +1,6 @@
 {
   "name": "localclaw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local-model-first agent framework with Router + Specialist architecture",
   "type": "module",
   "engines": {
