@@ -537,7 +537,7 @@ export const planPipeline: PipelineDefinition = {
     {
       name: 'skill_save',
       type: 'code',
-      execute: (ctx) => {
+      execute: async (ctx: PipelineContext) => {
         const workspacePath = ctx.toolContext.workspacePath;
         if (!workspacePath) return;
 
@@ -564,13 +564,6 @@ export const planPipeline: PipelineDefinition = {
           return;
         }
 
-        // Generate a slug from the goal
-        const slug = ctx.userMessage
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-|-$/g, '')
-          .slice(0, 50);
-
         // Extract learned notes from execution
         const notes: string[] = [];
         for (const r of results) {
@@ -581,16 +574,68 @@ export const planPipeline: PipelineDefinition = {
 
         try {
           const store = new SkillStore(workspacePath);
-          store.save({
-            name: slug,
-            slug,
-            description: ctx.userMessage.slice(0, 200),
-            created: new Date().toISOString().split('T')[0],
-            lastUsed: new Date().toISOString().split('T')[0],
-            successCount: 1,
-            steps: plan,
-            notes: [...new Set(notes)],
+
+          // Use LLM to generalize the skill into a reusable pattern
+          // instead of saving the raw user message as the description
+          const toolSequence = plan.map(s => s.tool).join(' → ');
+          const generalizeResponse = await ctx.client.chat({
+            model: ctx.routerModel ?? ctx.model,
+            messages: [
+              {
+                role: 'system',
+                content: `You are naming a reusable workflow pattern. Given the user's specific request and the tools used, create a GENERAL pattern name and description that would match similar future requests — not just this specific one.
+
+Examples:
+- "Go to eventbrite and find tech events" → name: "browse-site-and-add-to-tasks", description: "Navigate to a website, search or browse for content, pick the most relevant item, and add it to the task list"
+- "Search LinkedIn for AI jobs and save top 3" → name: "search-site-and-collect-results", description: "Search a website for items matching a query, evaluate results, and save the best matches"
+- "Go to meetup.com and sign me up" → name: "browse-and-fill-form", description: "Navigate to a website, find a form or signup page, and fill in user details"
+
+Return ONLY a JSON object: {"name": "pattern-name-slug", "description": "General description of the workflow pattern"}`,
+              },
+              {
+                role: 'user',
+                content: `Request: "${ctx.userMessage}"\nTools used: ${toolSequence}`,
+              },
+            ],
+            options: { temperature: 0.2, num_predict: 200 },
           });
+
+          let skillName = 'unnamed-skill';
+          let skillDescription = ctx.userMessage.slice(0, 200);
+
+          const genRaw = generalizeResponse.message?.content ?? '';
+          const genMatch = genRaw.match(/\{[\s\S]*\}/);
+          if (genMatch) {
+            try {
+              const gen = JSON.parse(genMatch[0]);
+              if (gen.name) skillName = gen.name;
+              if (gen.description) skillDescription = gen.description;
+            } catch { /* use defaults */ }
+          }
+
+          const slug = skillName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 50);
+
+          // Check if a pattern skill with this slug already exists — don't duplicate
+          const existing = store.get(slug);
+          if (existing) {
+            store.recordSuccess(slug);
+            console.log(`[Plan] Pattern skill "${slug}" already exists — recorded success (count: ${existing.successCount + 1})`);
+          } else {
+            store.save({
+              name: skillName,
+              slug,
+              description: skillDescription,
+              created: new Date().toISOString().split('T')[0],
+              lastUsed: new Date().toISOString().split('T')[0],
+              successCount: 1,
+              steps: plan,
+              notes: [...new Set(notes)],
+            });
+          }
         } catch (err) {
           console.warn(`[Plan] Failed to save skill: ${err instanceof Error ? err.message : err}`);
         }
