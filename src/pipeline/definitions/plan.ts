@@ -236,39 +236,32 @@ export const planPipeline: PipelineDefinition = {
       },
     },
 
-    // Stage 1: Generate the plan (skipped if skill matched)
+    // Stage 1: Generate the plan (uses skill template if matched)
     {
       name: 'generate_plan',
       type: 'llm',
       temperature: 0.3,
       maxTokens: 2048,
-      // Skip if a skill was matched — use the saved steps instead
-      when: (ctx) => !ctx.params._skillSteps,
-      buildPrompt: (ctx) => ({
-        system: PLAN_PROMPT,
-        user: `Today's date: ${new Date().toISOString().split('T')[0]}\n\nGoal: ${ctx.userMessage}`,
-      }),
+      buildPrompt: (ctx) => {
+        // If a skill matched, provide its specialist sequence as a template
+        // but let the LLM generate fresh messages for the current request
+        const skillSteps = ctx.params._skillSteps as PlanStep[] | undefined;
+        const skillHint = skillSteps && skillSteps.length > 0
+          ? `\n\nA similar task has succeeded before using this specialist sequence: ${skillSteps.map(s => s.specialist).join(' → ')}. You can follow this pattern but write messages specific to the current goal.`
+          : '';
+
+        return {
+          system: PLAN_PROMPT,
+          user: `Today's date: ${new Date().toISOString().split('T')[0]}\n\nGoal: ${ctx.userMessage}${skillHint}`,
+        };
+      },
     },
 
-    // Stage 2: Parse the plan into steps (or use skill steps)
+    // Stage 2: Parse the plan into steps
     {
       name: 'parse_plan',
       type: 'code',
       execute: (ctx) => {
-        // Use skill steps if available, otherwise parse LLM output
-        const skillSteps = ctx.params._skillSteps as PlanStep[] | undefined;
-        if (skillSteps && skillSteps.length > 0) {
-          ctx.params._plan = skillSteps;
-          ctx.params._stepIndex = 0;
-          ctx.params._results = [] as string[];
-          const notes = ctx.params._skillNotes as string[] | undefined;
-          if (notes && notes.length > 0) {
-            console.log(`[Plan] Skill notes: ${notes.join('; ')}`);
-          }
-          console.log(`[Plan] Using saved skill: ${skillSteps.length} steps`);
-          return;
-        }
-
         const raw = ctx.stageResults.generate_plan as string;
         const steps = parsePlan(raw);
         if (steps.length === 0) {
