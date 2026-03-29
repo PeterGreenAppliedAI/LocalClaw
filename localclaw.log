@@ -1,0 +1,269 @@
+[Pipelines] Registered 10 pipeline(s)
+[Discord] Logged in as Teaching Bot#8108
+[Channels] Connected: discord
+[Telegram] Bot started
+[Channels] Connected: telegram
+[Web] API listening on http://0.0.0.0:3100
+[Channels] Connected: web
+[WhatsApp] Connected
+[Channels] Connected: whatsapp
+[Web] Console API deps injected
+[Cron] Scheduled "AI Stock Summary" (0 9-17 * * *) — next run: 2026-03-29T13:00:00.000Z
+[Cron] Scheduled "Weekly Meetup Search" (0 0 * * 5) — next run: 2026-04-03T04:00:00.000Z
+[Cron] Started with 2 cron job(s), 3 heartbeat task(s)
+[Heartbeat] Scheduled (0 */2 * * *) — next run: 2026-03-29T02:00:00.000Z
+[Orchestrator] Models: 39 | Tools: 28 | Channels: discord, telegram, web, whatsapp
+[Orchestrator] Started
+[Heartbeat] Running...
+[Facts] Transcript has 4 turns (2 user)
+[Facts] Calling phi4:14b for extraction (177 chars)
+[Facts] Model response: ```json
+[]
+```
+
+The conversation does not contain any factual information about the user's preferences, setup details, decisions, or personal information. It consists of greetings and a general offer of assistance, with no specific details or context provided.
+[Facts] Extracted 0 fact(s)
+[Dispatch] Category: multi (override)
+[Dispatch] Pipeline dispatch: "plan" for category "multi"
+[Pipeline] Starting "plan" (7 stages)
+[Pipeline] Running stage "skill_check" (code)
+[Pipeline] Running stage "generate_plan" (llm)
+[Pipeline] Running stage "parse_plan" (code)
+[Plan] Generated 3 steps
+[Pipeline] Running stage "reflect" (code)
+[Plan] Reflection found 4 issue(s):
+[Plan]   - UNREALISTIC: The plan assumes that the task_list tool can identify overdue tasks without a specific mechanism to compare dates.
+[Plan]   - MISSING CONTENT READ: The plan does not include steps to read and evaluate the content of tasks to determine their due dates.
+[Plan]   - TOO VAGUE: The plan lacks specificity in how to handle high-priority tasks and does not specify how to flag overdue tasks.
+[Plan]   - NO FILTERING: The plan does not specify how to filter or prioritize tasks based on their due dates or priority levels.
+[Plan] Reflection revised plan: 3 → 5 steps
+[Pipeline] Running stage "execute_steps" (loop)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 1/5: task_list — Retrieve the current task board
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 2/5: text_content — Read and evaluate task details to identify due dates and priorities
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 3/6: memory_search — Review all stored memories to check for any existing facts.
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 4/6: evaluate_tasks — Identify overdue and high-priority tasks based on due dates and priority levels
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 5/6: memory_search — Review all stored memories
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 6/6: memory_cleanup — Cleanup and consolidate memories
+[FactStore] Char bound: trimmed 121 low-confidence facts to stay under 3000 chars
+[Consolidation] Found 8 candidate pairs, processing top 8
+[Consolidation] MERGE: "Event added to task list..." + "User wants to refine search for tech events in Hun..."
+[Consolidation] MERGE: "Event: Extracted Event Name, Date: Extracted Date,..." + "Event Name: Exclusive Long Island Networking Event..."
+[FactStore] Char bound: trimmed 121 low-confidence facts to stay under 3000 chars
+[Consolidation] LLM consolidation complete: 4 removed, 2 merged
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "summarize" (llm)
+[Pipeline] Running stage "skill_save" (code)
+[Skills] Saved skill: "current-date-time-saturday-march-28-2026-at-10-00-" (current-date-time-saturday-march-28-2026-at-10-00-)
+[Pipeline] Finished "plan" — answer length: 1968
+[Heartbeat] Completed (5 steps)
+[Discord] messageCreate from=Teaching Bot#8108 bot=true content="**[Heartbeat Report]**
+### Task Board Check
+- [ ] Follow-up on business account tax deadline **HIGH** (due: 2027-01-15) @user [reminder, tax, account] `e3922068` (todo)
+- [ ] Follow-up on business account tax deadline **HIGH** (due: 2027-01-15) [@user, reminder, tax, account] `7f623975` (todo)
+- [ ] Follow-up on business account tax deadline **HIGH** (due: 2027-01-15) `ce37ca97` (todo)
+- [ ] Review AI consulting job opportunity 1 **HIGH** `2e0a243d` (todo)
+- [ ] Review AI consulting job opportunity 2 **HIGH** `0ad57ac2` (todo)
+- [ ] Attend Launchpad Huntington Event **HIGH** `8d725114` (todo)
+- [ ] Attend Launchpad Huntington event `6302a6dd` (todo)
+- [ ] Attend [Extracted Event Name] **HIGH** (due: [Extracted Event Date]) `2bbb5bc3` (todo)
+- [ ] Extracted Event Name **HIGH** (due: Extracted Date) `15256c6b` (todo)
+- [ ] Attend Exclusive Long Island Networking Event (due: March 27, 2023) `8b926191` (todo)
+- [ ] Attend: Exclusive Long Island Networking Event - 2026-03-27 **HIGH** (due: 2026-03-27) `3edb4839` (todo)
+- [ ] Attend Seminar on Big Data, Data Science and Machine Learning on 2026-04-02 (due: 2026-04-02) `925bd8f4` (todo)
+- [ ] Attend: NEW! Coffee or wine? String Art Workshop (due: 2026-04-11) `177a1353` (todo)
+- [ ] Add Career Fair: Exclusive Tech Hiring Event-New Tickets Available to task list (due: 2026-04-24) `ea8c3d22` (todo)
+
+No tasks are overdue in 2026.
+
+### Memory Review
+1. [STABLE] User prefers leveraging Playwright (conf: 0.7, src: legacy/2026-02-28.md)
+2. [STABLE] User has not yet explored Selenium or Puppeteer (conf: 0.7, src: legacy/2026-02-28.md)
+3. [STABLE] User considers exploring Puppeteer for its interesting features (conf: 0.7, src: legacy/2026-02-28.md)
+4. [STABLE] Peter's name is Peter Green (conf: 0.7, src: legacy/2026-02-28.md)
+5. [STABLE] Peter runs a local AI assistant on his infrastructure with access to his codebase and projects (conf: 0.7, src: legacy/2026-02-28.md)
+
+### Memory Cleanup
+Cleaned up 4 semantic duplicate(s)." guild=DM
+[Discord] messageCreate from=tadeu718 bot=false content="So what did you think?" guild=1307754982044336199
+[Discord] Not mentioned, ignoring
+[Discord] messageCreate from=tadeu718 bot=false content="!reset" guild=DM
+[Facts] Transcript has 0 turns (0 user)
+[Facts] Skipping — fewer than 2 user turns
+[Discord] messageCreate from=Teaching Bot#8108 bot=true content="Session cleared. Starting fresh!" guild=DM
+[Discord] messageCreate from=tadeu718 bot=false content="Go to eventbrite.com and search for tech events near Huntington Station NY, then add the first 
+  one to my task list" guild=DM
+[Orchestrator] Tadeu718 → agent:main (default)
+[Dispatch] Category: multi (model)
+[Dispatch] Pipeline dispatch: "plan" for category "multi"
+[Pipeline] Starting "plan" (7 stages)
+[Pipeline] Running stage "skill_check" (code)
+[Pipeline] Running stage "generate_plan" (llm)
+[Pipeline] Running stage "parse_plan" (code)
+[Plan] Generated 10 steps
+[Pipeline] Running stage "reflect" (code)
+[Plan] Reflection found 4 issue(s):
+[Plan]   - MISSING SNAPSHOT: After navigating to the search results page, a snapshot should be taken before clicking on the first event.
+[Plan]   - UNREALISTIC: Clicking on element #1 before taking a snapshot on the search results page.
+[Plan]   - GENERIC DATA: The task_add step uses placeholders for event name and date without ensuring they are extracted from the text_content step.
+[Plan]   - NO FILTERING: The plan assumes the first search result is the most relevant without evaluating the results.
+[Plan] Reflection revised plan: 10 → 10 steps
+[Pipeline] Running stage "execute_steps" (loop)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 1/10: browser — Navigate to Eventbrite
+[Browser] Launched in visual mode on display :99
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 2/10: browser — See interactive elements on the homepage
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 3/10: browser — Enter search query for tech events near Huntington Station NY
+[Browser] Escalating to visual mode for type: "Search events input"
+[VisualBrowser] Vision model "qwen3.5:35b" responded (147 chars)
+[VisualBrowser] Typed into "Search events input" at (253, 41)
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 4/10: browser — Execute the search for tech events
+[Browser] Escalating to visual mode for: "Search button"
+[VisualBrowser] Vision model "qwen3.5:35b" responded (172 chars)
+[VisualBrowser] Clicked "Search button" at (508, 42), confidence: 0.95
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 5/10: browser — See interactive elements on the search results page
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 6/10: browser — Read the search results to identify the first tech event
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 7/10: browser — Click on the first event in the search results
+[Plan] Smart selection: using cached text (4441 chars)
+[Plan] Smart selection: "Long Island Hiring Event" — This event is the first relevant tech-related event listed under 'Events in Huntington' and matches the user's goal of finding tech events near Huntington Station, NY.
+[Browser] DOM click #1: element not found in DOM
+[Browser] Escalating to visual mode for: "1"
+[VisualBrowser] Vision model "qwen3.5:35b" returned empty, retrying...
+[VisualBrowser] Vision model "qwen3.5:35b" returned empty after retry
+[VisualBrowser] Vision model "qwen3.5:9b" returned empty, retrying...
+[VisualBrowser] Vision model "qwen3.5:9b" returned empty after retry
+[VisualBrowser] Vision model "qwen3-vl:8b" responded (61 chars)
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 8/10: browser — Read the event details to extract name and date
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 9/10: task_add — Add the first tech event to user's task list
+[Plan] Resolved params for task_add: {"title":"Long Island Hiring Event","dueDate":"2026-04-13"}
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 10/10: memory_save — Save extracted event information
+[Plan] Resolved params for memory_save: {"content":"Long Island Hiring Event on 2026-04-13"}
+[FactStore] Char bound: trimmed 121 low-confidence facts to stay under 3000 chars
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "summarize" (llm)
+[Discord] messageCreate from=Teaching Bot#8108 bot=true content="Alright ..." guild=DM
+[Pipeline] Running stage "skill_save" (code)
+[Skills] Saved skill: "go-to-eventbrite-com-and-search-for-tech-events-ne" (go-to-eventbrite-com-and-search-for-tech-events-ne)
+[Pipeline] Finished "plan" — answer length: 713
+[Orchestrator] → multi (11 steps)
+[Discord] messageCreate from=tadeu718 bot=false content="!reset" guild=DM
+[Training] Extracted 1 router pairs before session reset
+[Facts] Transcript has 2 turns (1 user)
+[Facts] Skipping — fewer than 2 user turns
+[Discord] messageCreate from=Teaching Bot#8108 bot=true content="Session cleared. Starting fresh!" guild=DM
+[Discord] messageCreate from=tadeu718 bot=false content="Search eventbrite for networking events near Huntington Station and add one to my tasks" guild=DM
+[Orchestrator] Tadeu718 → agent:main (default)
+[Dispatch] Category: multi (model)
+[Dispatch] Pipeline dispatch: "plan" for category "multi"
+[Pipeline] Starting "plan" (7 stages)
+[Pipeline] Running stage "skill_check" (code)
+[Skills] Matched "go-to-eventbrite-com-and-search-for-tech-events-ne" (score: 19) for goal: "Search eventbrite for networking events near Huntington Stat..."
+[Plan] Skill match: "go-to-eventbrite-com-and-search-for-tech-events-ne" (1 successes) — using saved plan
+[Pipeline] Skipping stage "generate_plan" (when=false)
+[Pipeline] Running stage "parse_plan" (code)
+[Plan] Using saved skill: 10 steps
+[Pipeline] Running stage "reflect" (code)
+[Plan] Reflection found 4 issue(s):
+[Plan]   - MISSING SNAPSHOT: A snapshot step is missing after navigating to the search results page and before clicking the first event.
+[Plan]   - UNREALISTIC: Clicking on the first event before ensuring it's the correct one by reading and evaluating the search results.
+[Plan]   - NO FILTERING: The plan picks the first search result without evaluating its relevance.
+[Plan]   - GENERIC DATA: The task_add step uses placeholders instead of actual data extracted from the page.
+[Plan] Reflection revised plan: 10 → 11 steps
+[Pipeline] Running stage "execute_steps" (loop)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 1/11: browser — Navigate to Eventbrite
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 2/11: browser — See interactive elements on the homepage
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 3/11: browser — Enter search query for networking events near Huntington Station NY
+[Browser] Escalating to visual mode for type: "Search events input"
+[VisualBrowser] Vision model "qwen3.5:35b" returned empty, retrying...
+[VisualBrowser] Vision model "qwen3.5:35b" responded (88 chars)
+[VisualBrowser] Typed into "Search events input" at (240, 37)
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 4/11: browser — Execute the search for networking events
+[Browser] Escalating to visual mode for: "Search button"
+[VisualBrowser] Vision model "qwen3.5:35b" responded (93 chars)
+[VisualBrowser] Clicked "Search button" at (506, 41), confidence: 0.95
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 5/11: browser — See interactive elements on the search results page
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 6/11: browser — Read the search results to identify relevant networking events
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 7/11: browser — Determine the most relevant networking event from search results
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 8/11: browser — Click on the selected networking event in the search results
+[Plan] Smart selection: using cached text (3640 chars)
+[Plan] Smart selection: "Long Island Hiring Event" — This event is specifically focused on business networking, which aligns with the user's goal of finding networking events. It is scheduled to take place in Huntington Station, making it geographically relevant to the user's location.
+[Browser] DOM click "[Selected Event Ref]" failed: page.click: SyntaxError: Failed to execute 'querySelectorAll' on 'Document': '[Selected Event Ref]' is not a valid selector.
+    at query (<anonymous>:5288:41)
+    at <anonymous>:5298:7
+    at SelectorEvaluatorImpl._cached (<anonymous>:5075:20)
+    at SelectorEvaluatorImpl._queryCSS (<anonymous>:5285:17)
+    at SelectorEvaluatorImpl._querySimple (<anonymous>:5165:19)
+    at <anonymous>:5113:29
+    at SelectorEvaluatorImpl._cached (<anonymous>:5075:20)
+    at SelectorEvaluatorImpl.query (<anonymous>:5106:19)
+    at Object.query (<anonymous>:5320:44)
+    at <anonymous>:5278:21
+Call log:
+[2m  - waiting for locator('[Selected Event Ref]')[22m
+
+[Browser] Escalating to visual mode for: "[Selected Event Ref]"
+[VisualBrowser] Vision model "qwen3.5:35b" returned empty, retrying...
+[VisualBrowser] Vision model "qwen3.5:35b" returned empty after retry
+[VisualBrowser] Vision model "qwen3.5:9b" responded (83 chars)
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 9/11: browser — Read the event details to extract name and date
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 10/11: task_add — Add the selected networking event to user's task list
+[Plan] Resolved params for task_add: {"title":"Long Island Hiring Event","dueDate":"2026-04-13"}
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "run_step" (code)
+[Plan] Step 11/11: memory_save — Save extracted event information
+[Plan] Resolved params for memory_save: {"content":"Long Island Hiring Event on 2026-04-13"}
+[Pipeline] Running stage "check_progress" (code)
+[Pipeline] Running stage "summarize" (llm)
+[Discord] messageCreate from=Teaching Bot#8108 bot=true content="Hey ..." guild=DM
+[Pipeline] Running stage "skill_save" (code)
+[Skills] Saved skill: "go-to-eventbrite-com-and-search-for-tech-events-ne" (go-to-eventbrite-com-and-search-for-tech-events-ne)
+[Plan] Recorded skill success: go-to-eventbrite-com-and-search-for-tech-events-ne
+[Pipeline] Finished "plan" — answer length: 802
+[Orchestrator] → multi (12 steps)

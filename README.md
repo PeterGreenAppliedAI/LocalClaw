@@ -64,13 +64,16 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Reasoning | `reason` | Hand off to a dedicated thinking model for deep analysis and content synthesis |
 | Config | `cron_edit`, `workspace_read`, `workspace_write` | Self-administration — edit cron jobs, read/write workspace files |
 | Messaging | `send_message` | Cross-channel message delivery |
-| Browsing | `browser` | Dual-mode browser: DOM mode (indexed elements, fast) + Visual mode (Xvfb + vision model, handles SPAs). Click, type, select, fill forms |
+| Browsing | `browser` | Dual-mode browser: DOM-first with automatic visual escalation (Xvfb + vision model). Click, type, select, fill forms on any site including SPAs |
 | Vision | *(automatic)* | Image analysis via multimodal model — descriptions injected into context for natural Q&A |
 | Voice | TTS/STT | Kokoro TTS + faster-whisper STT — voice in, voice out, with toggle hands-free mode |
-| Multi-task | `plan` pipeline | LLM decomposes goal into steps, code loop executes them with browser/tools, verifies, and summarizes |
+| Multi-task | `plan` pipeline | LLM decomposes goal into steps, self-reflects, code executes with browser/tools, learns from success |
+| Skills | *(automatic)* | Self-improving procedural memory — successful plan executions are saved and reused for similar future tasks |
 | Heartbeat | *(autonomous)* | Scheduled autonomous task checks, memory cleanup, and status reports |
 | Knowledge Import | `knowledge_import` | Import PDFs, CSVs, markdown into vector-searchable knowledge base |
-| Context Compaction | *(automatic)* | Budget-aware history summarization with memory flush |
+| Context Compaction | *(automatic)* | Structured compression (Goal/Progress/Next Steps), proactive at 50% budget, tool-pair sanitization |
+| Smart Routing | *(automatic)* | Simple chat messages route to phi4-mini (fast), complex tasks use the full specialist model |
+| CLI | `npm run cli` | Terminal interface with streaming, slash commands, markdown rendering, session persistence |
 
 ## Quick Start
 
@@ -149,23 +152,26 @@ localclaw/
 │   ├── config/               # JSON5 config + Zod validation
 │   ├── router/               # Intent classification (3-tier fallback + pre-model overrides)
 │   ├── pipeline/             # Deterministic pipeline engine
-│   │   ├── executor.ts       # Stage runner (extract, tool, llm, code, branch, loop, parallel_tool)
+│   │   ├── executor.ts       # Stage runner (extract, tool, llm, code, branch, llm_branch, loop, parallel_tool)
 │   │   ├── registry.ts       # Pipeline registry
 │   │   ├── types.ts          # Stage types, PipelineContext, PipelineResult
 │   │   ├── extractor.ts      # LLM-based parameter extraction with JSON repair
 │   │   └── definitions/      # Pipeline definitions per category
 │   ├── tool-loop/            # ReAct tool-calling loop engine (fallback for open-ended categories)
+│   ├── browser/              # Dual-mode browser client (DOM + Visual via Xvfb)
+│   ├── skills/               # Self-improving procedural memory (store + keyword matcher)
+│   ├── cli/                  # Terminal interface (streaming, commands, markdown rendering)
 │   ├── ollama/               # Ollama HTTP client (chat, stream, embed)
 │   ├── channels/             # Pluggable adapters (Discord, Telegram, Web, Slack, Gmail, Microsoft Graph, WhatsApp)
 │   ├── console/              # Management console API (handlers, helpers, file serving)
 │   ├── services/             # TTS (Kokoro), STT (Whisper), Vision
 │   ├── tasks/                # Task board (types + JSON/Markdown store)
 │   ├── tools/                # 28 tool implementations
-│   ├── agents/               # Workspace files + routing
-│   ├── context/              # Token estimation, budget calculator, history compaction
+│   ├── agents/               # Workspace files + routing (frozen snapshots per session)
+│   ├── context/              # Token estimation, budget calculator, structured compaction
 │   ├── sessions/             # Transcript persistence + compaction summaries
 │   ├── cron/                 # Scheduling service
-│   ├── memory/               # Structured fact store, keyword search, vector search for knowledge imports
+│   ├── memory/               # Structured fact store (char-bounded), keyword search, vector search
 │   └── exec/                 # Docker sandbox + persistent code sessions
 ├── console/                  # React + Vite + TailwindCSS management console
 │   ├── src/pages/            # Dashboard, Chat, Sessions, Tasks, Cron, Memory, Channels, Tools, Config
@@ -235,35 +241,81 @@ Supports artifact types: `memo`, `brief`, `deck`, `market`, `teardown`, `deepdiv
 
 The `plan` pipeline handles complex multi-step tasks that require browser interaction, web searches, and tool coordination. Instead of asking the model to orchestrate 10+ tool calls (which local models can't do reliably), the pipeline uses a hybrid approach:
 
-1. **Plan** — LLM generates a step-by-step plan as a JSON array of `{tool, params, purpose}` objects
-2. **Self-Reflection** — LLM critiques its own plan before execution: checks for missing snapshots, bad step ordering, unrealistic assumptions, missing verification steps, and generic placeholders. Revises the plan if issues are found (inspired by [agent-reasoning](https://github.com/jasperan/agent-reasoning))
-3. **Execute loop** — Code iterates through the plan, calling tools directly via `ctx.executor()`. Includes:
-   - **Smart selection** — When clicking search results, grabs fresh rendered page text and asks the LLM to pick the most relevant content item (not just the first result)
-   - **Dynamic param resolution** — When creating tasks or saving memory, extracts real data (event names, dates, URLs) from the rendered page text instead of using placeholders
-   - **Hybrid content reading** — Uses `innerText` (rendered visible text) for content extraction on SPAs instead of DOM tree walking (which returns template variables like `{eventName}` on React sites)
-4. **Verify** — After each step, checks if the result succeeded; on failure, LLM generates an adjusted step
-5. **Summarize** — LLM synthesizes all step results into a conversational response (streamed)
+1. **Skill Check** — Before planning, searches saved skills for a matching execution pattern. If found, skips plan generation and uses the proven recipe
+2. **Plan** — LLM generates a step-by-step plan as a JSON array of `{tool, params, purpose}` objects
+3. **Self-Reflection** — LLM critiques its own plan: checks for missing snapshots, bad ordering, unrealistic assumptions, generic placeholders, wrong browser mode, and blind first-result selection. Revises the plan if issues found
+4. **Execute loop** — Code iterates through the plan, calling tools directly via `ctx.executor()`:
+   - **Smart selection** — Grabs fresh rendered page text (`innerText`) and asks the LLM to pick the most relevant content item, not just the first result
+   - **Dynamic param resolution** — Extracts real data (event names, dates, URLs) from the rendered page text when creating tasks or saving memory
+   - **DOM-first browser** — Tries DOM interactions first (fast, cheap). Automatically escalates to visual mode (vision model + pixel coordinates) only when DOM fails
+5. **Verify** — After each step, checks success; on failure, LLM generates an adjusted step
+6. **Summarize** — LLM synthesizes outcomes into a conversational response (streamed)
+7. **Skill Save** — If execution was successful (>60% step success rate, 3+ steps), saves the plan as a reusable skill. Next similar request loads the skill instead of planning from scratch
 
-**Dual-mode browser:** The plan pipeline uses two browser interaction modes:
-- **DOM mode** — Fast, walks the DOM tree, labels interactive elements with indices (`[1: button]`, `[2: input]`). Best for simple static pages.
-- **Visual mode** — Renders the page on a virtual display (Xvfb), takes a screenshot, sends it to a vision model (qwen3.5:35b) which identifies elements and returns pixel coordinates. Clicks at exact (x, y) positions. Handles JavaScript-heavy SPAs that defeat DOM walking. Adapted from [Deep Agents](https://github.com/langchain-ai/deepagents)' progressive disclosure pattern.
+**Dual-mode browser:**
+- **DOM mode** (default) — Walks the DOM, labels interactive elements with indices (`[1: button]`, `[2: input]`). Uses `innerText` for reading SPA content. Fast and deterministic.
+- **Visual mode** (escalation) — Renders on Xvfb virtual display, screenshots to vision model (qwen3.5:35b), clicks at pixel coordinates. Only invoked when DOM click/type fails. Logged: `[Browser] DOM click failed → Escalating to visual mode`.
 
-**Example:** "Search Eventbrite for tech events near Huntington Station NY, then add the first one to my task list" produces:
+**Example:** "Search Eventbrite for tech events near Huntington Station NY, then add one to my task list":
 ```
-Step 1: browser.open → Navigate to eventbrite.com
-Step 2: browser.visual_snapshot → See homepage layout
-Step 3: browser.visual_type(target: "search bar") → Enter "tech events near Huntington Station NY"
-Step 4: browser.visual_click(target: "Search button") → Execute search
-Step 5: browser.visual_snapshot → View search results
-Step 6: [Smart Selection] → Fresh text grab (4470 chars), picks "Exclusive Long Island Networking Event"
-Step 7: browser.visual_click(target: "Exclusive Long Island Networking Event") → Open event
-Step 8: browser.text_content → Read rendered event details (name, date, time)
-Step 9: task_add → "Attend: Exclusive Long Island Networking Event - 2026-03-27" (high priority)
+[Skill check] → No match (first run)
+[Plan] → 10 steps generated
+[Reflect] → 4 issues found, plan revised
+Step 1: browser open eventbrite.com
+Step 2: browser snapshot → see interactive elements
+Step 3: browser type "Search events input" → "tech events Huntington Station NY"
+Step 4: browser click "Search button" → execute search
+Step 5: browser text_content → read 4441 chars of rendered results
+Step 6: [Smart Selection] → picks "Long Island Hiring Event" (most relevant)
+Step 7: browser click → navigate to event
+Step 8: browser text_content → read event details
+Step 9: task_add → "Long Island Hiring Event" due 2026-04-13
+[Skill saved] → go-to-eventbrite-com-and-search-for-tech-events-ne (success_count: 1)
+
+Second similar request:
+[Skill match] → score 19, using saved plan (skips LLM plan generation + reflection)
+[Skill success] → success_count: 2
 ```
 
-The model touches the task 4-5 times (plan, reflect, select, resolve params, summarize) instead of every iteration. Each touch is narrow and well-scoped — exactly what local models handle reliably.
+**Context isolation:** The plan pipeline runs with fresh context (no parent history) and progressive workspace disclosure (~300 bytes instead of 4-6KB) to maximize the context budget for tool results.
 
-**Context isolation:** The plan pipeline runs with a fresh context (no parent conversation history) and progressive workspace disclosure (~300 bytes instead of 4-6KB) to maximize the context budget for tool results.
+### Self-Improving Skills
+
+After a successful plan execution, the bot saves the steps as a reusable skill in `workspace/skills/*.md`. Each skill has:
+- YAML frontmatter (name, description, success count, last used)
+- Ordered step list with tool, params, and purpose
+- Learned notes from execution (e.g., "Use text_content for SPAs", "Smart selection needed")
+
+**Progressive disclosure** (3 tiers): list shows name + description only → full load includes steps and notes → individual referenced files on demand. This saves tokens for local models with small context windows.
+
+**Matching:** Keyword overlap scoring against skill names and descriptions, with bonus points for high success counts. Threshold prevents weak matches from firing.
+
+### CLI
+
+LocalClaw includes a terminal interface (`npm run cli`) for direct interaction without channel adapters:
+
+```
+❯ /status
+  Ollama: connected | Models: 39 | Tools: 20 | Pipelines: 10
+  Router: phi4:14b | Agent: main
+
+❯ /help
+  /reset     Clear session and start fresh
+  /status    System status (models, tools, channels)
+  /model     Switch or show current model
+  /tools     List registered tools
+  /pipelines List registered pipelines
+  /tasks     Show task board
+  /sessions  List recent sessions
+  /research  Run a research pipeline
+  /compress  Trigger context compression
+
+❯ hey whats up
+  [chat (model) | 1 step | model:phi4-mini]
+  Hey there! How can I help you today?
+```
+
+Features: streaming output, markdown rendering (headers, bold, code blocks), color-coded display, tool call visualization, smart model routing, session persistence.
 
 ### Pluggable Channel Adapters
 
@@ -615,6 +667,18 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | STT | faster-whisper (HTTP) |
 | Config | JSON5 + Zod |
 | Testing | Vitest |
+
+## Attribution
+
+Several architectural patterns in LocalClaw were adapted from open source agent frameworks:
+
+| Project | What We Adapted |
+|---------|----------------|
+| **[Hermes Agent](https://github.com/nousresearch/hermes-agent)** (NousResearch) | Self-improving skills system (procedural memory with progressive disclosure), structured context compression (Goal/Progress/Next Steps template), frozen memory snapshots (loaded once per session), character-bounded memory, smart model routing (simple messages → fast model), tool-pair sanitization after compression, CLI inspiration |
+| **[Deep Agents](https://github.com/langchain-ai/deepagents)** (LangChain) | Progressive skill disclosure (compact index, read on demand), subagent context isolation (fresh context for plan pipeline), tool argument truncation in older messages |
+| **[agent-reasoning](https://github.com/jasperan/agent-reasoning)** (jasperan) | Self-reflection stage for plan pipeline (draft → critique → improve), inspired by peer-reviewed cognitive architecture research (Chain-of-Thought, Tree of Thoughts, ReAct) |
+
+These frameworks solve similar problems but assume frontier models (GPT-4, Claude) are driving the agent. LocalClaw's contribution is adapting these patterns for local models (7B-30B parameters) running on Ollama, where the model can't reliably orchestrate its own workflow — deterministic pipelines control the flow, and the model only extracts parameters and synthesizes text.
 
 ## License
 
