@@ -258,7 +258,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   // Saves compute on the DGX Spark for "hey", "thanks", "ok" type messages
   if (!params.modelOverride && specialistConfig && effectiveCategory === 'chat'
     && specialistConfig.tools.length === 0 && shouldUseQuickModel(message)) {
-    const quickModel = config.voice?.model ?? 'qwen3.5:9b';
+    const quickModel = 'phi4-mini';
     console.log(`[Dispatch] Smart routing: "${message.slice(0, 40)}..." → ${quickModel} (simple message)`);
     specialistConfig = { ...specialistConfig, model: quickModel };
   }
