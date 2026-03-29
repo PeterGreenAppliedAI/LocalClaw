@@ -317,9 +317,9 @@ export const planPipeline: PipelineDefinition = {
           }
 
           if (!reflection.approved && reflection.revised_plan?.length > 0) {
-            const revised = (reflection.revised_plan as any[]).filter(
-              (s: any) => s && (typeof s.specialist === 'string' || typeof s.tool === 'string'),
-            );
+            // Run revised plan through the same validation as parsePlan
+            const revisedRaw = JSON.stringify(reflection.revised_plan);
+            const revised = parsePlan(revisedRaw);
             if (revised.length > 0) {
               ctx.params._plan = revised;
               console.log(`[Plan] Reflection revised plan: ${plan.length} → ${revised.length} steps`);
