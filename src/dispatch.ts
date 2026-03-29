@@ -16,8 +16,60 @@ import {
   SEMANTIC_INTERVAL,
 } from './sessions/state-tracker.js';
 import { resolveWorkspacePath } from './agents/scope.js';
-import { buildWorkspaceContext } from './agents/workspace.js';
+import { buildWorkspaceContext, type WorkspaceCategory } from './agents/workspace.js';
 import { logDispatch, logRouterClassification } from './metrics.js';
+
+/**
+ * Frozen workspace snapshot cache — workspace context is loaded once per session
+ * and reused for all dispatches. This prevents mid-session memory writes from
+ * destabilizing the conversation and enables prefix caching benefits.
+ *
+ * Clears on !reset (session clear) or after 2 hours of inactivity.
+ */
+const workspaceCache = new Map<string, { context: string; loadedAt: number }>();
+const WORKSPACE_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+function getCachedWorkspaceContext(
+  sessionKey: string,
+  workspacePath: string,
+  category: WorkspaceCategory,
+  channel?: string,
+): string {
+  const cached = workspaceCache.get(sessionKey);
+  if (cached && Date.now() - cached.loadedAt < WORKSPACE_CACHE_TTL_MS) {
+    return cached.context;
+  }
+
+  const context = buildWorkspaceContext(workspacePath, { category, channel });
+  workspaceCache.set(sessionKey, { context, loadedAt: Date.now() });
+  return context;
+}
+
+/**
+ * Smart model routing heuristic — short simple messages don't need the heavy model.
+ * Adapted from Hermes Agent's smart model routing.
+ */
+function shouldUseQuickModel(message: string): boolean {
+  const trimmed = message.trim();
+  // Long messages need the full model
+  if (trimmed.length > 160) return false;
+  // Code blocks need the full model
+  if (trimmed.includes('```') || trimmed.includes('`')) return false;
+  // Complex keywords suggest a real task
+  const complexPatterns = /\b(search|find|research|analyze|create|build|write|code|debug|fix|deploy|schedule|remind|explain|compare|summarize)\b/i;
+  if (complexPatterns.test(trimmed)) return false;
+  // Short, simple message — use quick model
+  return true;
+}
+
+/** Clear cached workspace context for a session (called on !reset) */
+export function clearWorkspaceCache(sessionKey?: string): void {
+  if (sessionKey) {
+    workspaceCache.delete(sessionKey);
+  } else {
+    workspaceCache.clear();
+  }
+}
 import { computeBudget } from './context/budget.js';
 import { buildCompactedHistory } from './context/compactor.js';
 import { PipelineRegistry } from './pipeline/registry.js';
@@ -92,8 +144,8 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       : null;
     const outputReserve = tempSpecialist?.maxTokens ?? 4096;
 
-    // Build workspace context for budget estimation (use minimal for tool specialists)
-    const wsCtx = buildWorkspaceContext(workspacePath, { category: 'minimal' });
+    // Build workspace context for budget estimation (frozen per session)
+    const wsCtx = getCachedWorkspaceContext(sessionKey, workspacePath, 'minimal');
     const budget = computeBudget({
       contextSize: config.session.contextSize,
       systemPrompt: tempSpecialist?.systemPrompt ?? '',
@@ -200,6 +252,15 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   if (params.modelOverride && specialistConfig && specialistConfig.tools.length === 0) {
     console.log(`[Dispatch] Model override: ${specialistConfig.model} → ${params.modelOverride}`);
     specialistConfig = { ...specialistConfig, model: params.modelOverride };
+  }
+
+  // 3e. Smart model routing — use fast model for short simple chat messages
+  // Saves compute on the DGX Spark for "hey", "thanks", "ok" type messages
+  if (!params.modelOverride && specialistConfig && effectiveCategory === 'chat'
+    && specialistConfig.tools.length === 0 && shouldUseQuickModel(message)) {
+    const quickModel = config.voice?.model ?? 'qwen3.5:9b';
+    console.log(`[Dispatch] Smart routing: "${message.slice(0, 40)}..." → ${quickModel} (simple message)`);
+    specialistConfig = { ...specialistConfig, model: quickModel };
   }
 
   // 4. Session state — load structured state and inject preamble
@@ -374,10 +435,9 @@ async function runSpecialist(
     : specialist.contextLevel === 'full'
       ? 'chat' as const
       : 'minimal' as const;
-  const workspaceContext = buildWorkspaceContext(workspacePath, {
-    category: wsCategory,
-    channel: params.sourceContext?.channel,
-  });
+  const workspaceContext = getCachedWorkspaceContext(
+    params.sessionKey ?? 'default', workspacePath, wsCategory, params.sourceContext?.channel,
+  );
 
   // Channel context for delivery targets (cron scheduling, send_message, etc.)
   let systemPrompt = specialist.systemPrompt;
@@ -474,10 +534,10 @@ async function runPipelineDispatch(
       : specialist.contextLevel === 'full'
         ? 'chat' as const
         : 'minimal' as const;
-  const workspaceContext = buildWorkspaceContext(workspacePath, {
-    category: wsCategory,
-    channel: params.sourceContext?.channel,
-  });
+  // Plan pipeline gets fresh context (progressive, no caching). Others use frozen snapshot.
+  const workspaceContext = isolateContext
+    ? buildWorkspaceContext(workspacePath, { category: wsCategory, channel: params.sourceContext?.channel })
+    : getCachedWorkspaceContext(params.sessionKey ?? 'default', workspacePath, wsCategory, params.sourceContext?.channel);
 
   const ctx: PipelineContext = {
     userMessage: message,
@@ -659,7 +719,7 @@ async function runAsBareChat(
 
   // Inject workspace context — chat gets TOOLS.md for self-awareness
   const workspacePath = resolveWorkspacePath(agentId, config);
-  const workspaceContext = buildWorkspaceContext(workspacePath, { category: 'chat', channel: sourceContext?.channel });
+  const workspaceContext = getCachedWorkspaceContext(agentId, workspacePath, 'chat', sourceContext?.channel);
   let systemContent = specialist?.systemPrompt ?? 'You are a helpful AI assistant. Respond naturally and concisely.';
   if (workspaceContext) {
     systemContent += '\n\n' + workspaceContext;

@@ -534,6 +534,10 @@ export class Orchestrator {
 
       this.sessionStore.clearSession(route.agentId, route.sessionKey);
 
+      // Clear frozen workspace snapshot so next dispatch loads fresh context
+      const { clearWorkspaceCache } = await import('./dispatch.js');
+      clearWorkspaceCache(route.sessionKey);
+
       // Extract facts from the conversation
       let replyText = 'Session cleared. Starting fresh!';
       try {

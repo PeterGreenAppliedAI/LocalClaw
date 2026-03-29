@@ -35,6 +35,8 @@ export class FactStore {
   private readonly basePath: string;
   private factsCache = new Map<string, { entries: FactEntry[]; loadedAt: number }>();
   private static readonly CACHE_TTL_MS = 30_000;
+  /** Max chars for facts.md per user — model-independent hard limit */
+  private static readonly MAX_FACTS_CHARS = 3000;
   private migrating = false;
 
   constructor(workspacePath: string) {
@@ -175,8 +177,15 @@ export class FactStore {
     const factsDir = join(memDir, 'facts');
     mkdirSync(factsDir, { recursive: true });
 
-    writeFileSync(join(factsDir, 'facts.json'), JSON.stringify(allEntries, null, 2));
-    writeFileSync(join(factsDir, 'facts.md'), this.formatFactsMd(allEntries));
+    // Enforce character bounds — drop lowest-confidence facts until under limit
+    const bounded = this.enforceCharBound(allEntries);
+
+    writeFileSync(join(factsDir, 'facts.json'), JSON.stringify(bounded, null, 2));
+    writeFileSync(join(factsDir, 'facts.md'), this.formatFactsMd(bounded));
+
+    if (bounded.length < allEntries.length) {
+      console.log(`[FactStore] Char bound: trimmed ${allEntries.length - bounded.length} low-confidence facts to stay under ${FactStore.MAX_FACTS_CHARS} chars`);
+    }
 
     // Invalidate cache
     this.invalidateCache(senderId);
@@ -460,6 +469,28 @@ export class FactStore {
     if (entry.entities.length > 0) lines.push(`entities: [${entry.entities.join(', ')}]`);
     lines.push('---', '', entry.text, '');
     return lines.join('\n');
+  }
+
+  /**
+   * Enforce character bounds by dropping lowest-confidence facts until
+   * the rendered markdown is under MAX_FACTS_CHARS.
+   */
+  private enforceCharBound(entries: FactEntry[]): FactEntry[] {
+    let md = this.formatFactsMd(entries);
+    if (md.length <= FactStore.MAX_FACTS_CHARS) return entries;
+
+    // Sort by confidence ascending — drop lowest first
+    const sorted = [...entries].sort((a, b) => a.confidence - b.confidence);
+    const kept = [...entries];
+
+    while (md.length > FactStore.MAX_FACTS_CHARS && sorted.length > 0) {
+      const lowest = sorted.shift()!;
+      const idx = kept.findIndex(e => e.hash === lowest.hash);
+      if (idx !== -1) kept.splice(idx, 1);
+      md = this.formatFactsMd(kept);
+    }
+
+    return kept;
   }
 
   private formatFactsMd(entries: FactEntry[]): string {
