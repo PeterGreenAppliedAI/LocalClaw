@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "setup": "tsx src/setup/index.ts"
+    "setup": "tsx src/setup/index.ts",
+    "cli": "tsx src/cli/index.ts"
   },
   "dependencies": {
     "@azure/identity": "^4.13.0",

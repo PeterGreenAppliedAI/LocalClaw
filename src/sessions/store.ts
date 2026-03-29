@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { sessionIoError } from '../errors.js';
 import type { ConversationTurn, SessionMetadata, CompactionSummary, SessionState } from './types.js';
@@ -154,6 +154,20 @@ export class SessionStore {
       writeFileSync(path, JSON.stringify(meta, null, 2));
     } catch {
       // Non-critical — don't throw
+    }
+  }
+
+  /** List all session keys for an agent (from transcript files on disk). */
+  listSessions(agentId: string): string[] {
+    const dir = join(this.baseDir, agentId);
+    if (!existsSync(dir)) return [];
+    try {
+      return readdirSync(dir)
+        .filter(f => f.endsWith('.json') && !f.endsWith('.meta.json') && !f.endsWith('.summary.json') && !f.endsWith('.state.json'))
+        .map(f => f.replace(/\.json$/, ''))
+        .sort();
+    } catch {
+      return [];
     }
   }
 }
