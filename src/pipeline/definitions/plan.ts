@@ -128,6 +128,11 @@ function parsePlan(raw: string): PlanStep[] {
   try {
     const arr = JSON.parse(jsonMatch[0]);
     if (!Array.isArray(arr)) return [];
+    const VALID_SPECIALISTS = new Set([
+      'web_search', 'research', 'memory', 'task', 'cron', 'exec', 'multi',
+      'chat', 'message', 'website', 'config',
+    ]);
+
     return arr
       .filter((s: any) => s && (typeof s.specialist === 'string' || typeof s.tool === 'string'))
       .map((s: any) => {
@@ -139,6 +144,18 @@ function parsePlan(raw: string): PlanStep[] {
           message: `Use ${s.tool} with params: ${JSON.stringify(s.params)}`,
           purpose: s.purpose ?? '',
         };
+      })
+      .filter((s: PlanStep) => {
+        // Validate specialist is real and message exists
+        if (!s.message || s.message === 'undefined') {
+          console.log(`[Plan] Dropping step with missing message: ${s.specialist}`);
+          return false;
+        }
+        if (!VALID_SPECIALISTS.has(s.specialist)) {
+          console.log(`[Plan] Dropping step with invalid specialist: "${s.specialist}"`);
+          return false;
+        }
+        return true;
       });
   } catch {
     return [];
