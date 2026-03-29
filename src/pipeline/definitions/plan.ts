@@ -14,69 +14,85 @@ import { findMatchingSkill } from '../../skills/matcher.js';
  *   5. LLM summarizes what was accomplished
  */
 
-const PLAN_PROMPT = `You are a task planner. Given the user's goal, create a concrete step-by-step plan.
+const PLAN_PROMPT = `You are a task decomposer. Break the user's goal into concrete executable steps using the available tools. Choose the SIMPLEST tools that get the job done — don't use the browser when web_search or web_fetch would work.
 
-Available tools you can use in your plan:
-- web_search: Search the internet. Params: { query: string }
-- web_fetch: Fetch a URL and extract text. Params: { url: string }
-- browser: Interactive browser control. Params: { action, url?, ref?, text? }
-    Actions:
-    - "open": Launch browser and optionally navigate. Params: { action: "open", url?: string }
-    - "navigate": Go to a URL. Params: { action: "navigate", url: string }
-    - "snapshot": See the page with numbered interactive elements. Params: { action: "snapshot" }
-    - "text_content": Read all visible text on the page (best for reading content on modern sites). Params: { action: "text_content" }
-    - "click": Click an element by number from snapshot OR by text description. Params: { action: "click", ref: string }
-      ref can be: "3" (element number), "#submit-btn" (CSS selector), or "Events tab" (text description — auto-escalates to visual mode if DOM fails)
-    - "type": Type into a field by number or description. Params: { action: "type", ref: string, text: string }
-    - "select": Select dropdown option. Params: { action: "select", ref: string, text: string }
-
-- memory_save: Save information. Params: { content: string }
+Available tools:
+- web_search: Search the internet. Fast, no browser needed. Params: { query: string }
+- web_fetch: Fetch a URL and extract text content. Fast, no browser needed. Params: { url: string }
+- browser: Interactive browser for sites that REQUIRE clicking, typing, or form filling. ONLY use when web_search/web_fetch can't do the job (e.g., signing up, filling forms, navigating SPAs).
+    Actions: "open", "navigate", "snapshot", "text_content", "click", "type", "select"
+    For click/type: use element numbers from snapshot, CSS selectors, or text descriptions.
+- memory_save: Save information for later. Params: { content: string }
 - memory_search: Search saved info. Params: { query: string }
+- task_add: Add to user's LOCAL task list. Params: { title: string, priority?: string, dueDate?: string }
+- task_list: Show current tasks. Params: {}
+- cron_add: Schedule a recurring job. Params: { name, schedule, category, message, channel, target }
+- cron_list: Show scheduled jobs. Params: {}
 - exec: Run a shell command. Params: { command: string }
-- task_add: Create a task on the USER'S LOCAL TASK LIST (not on a website). Params: { title: string, priority?: string, dueDate?: string }
-- task_list: List tasks from the user's local task list. Params: {}
+
+TOOL SELECTION GUIDE:
+- "Find info about X" → web_search (fast, reliable)
+- "What's on this website" → web_fetch with the URL (fast, no browser)
+- "Research X and give me a summary" → web_search + web_fetch (parallel fetches)
+- "Go to X site and sign up" → browser (needs interaction)
+- "Fill out this form" → browser (needs typing/clicking)
+- "Search X site and add to tasks" → browser (site-specific search) + task_add
+- "Schedule a daily X" → cron_add
+- "Remember that X" → memory_save
+- "Find X and schedule weekly updates" → web_search + cron_add (decomposed)
 
 RULES:
-- Each step must have: tool (tool name), params (object), purpose (what this achieves)
-- DO NOT include send_message steps. The user automatically receives your final summary.
-- Only use task_add when the user EXPLICITLY asked to add something to their task list. If the user just says "find X" or "search for X", do NOT create a task — just find the information and present it with links. The task list is LOCAL, managed by the task_add tool — never click a website button.
-- After navigating, use "snapshot" to see interactive elements OR "text_content" to read page text.
-- Use "text_content" when you need to READ content (event names, search results, article text). Prefer text_content over clicking into detail pages — listing/search pages usually have enough info.
-- Use "snapshot" when you need to SEE interactive elements to click/type.
-- For click/type: use element numbers from snapshot when available, text descriptions when not (e.g., "Events tab", "Search button").
-- Be specific with search queries — not generic.
-- CRITICAL: task_add title must use REAL data from the page — never placeholders like "Attend event". Use text_content to read the actual names/dates first.
-- FILTERING: Do NOT blindly pick the first search result. Read results with text_content, then pick the most relevant one.
+- Each step: { tool, params, purpose }
+- Choose the CHEAPEST tool that works. web_search > web_fetch > browser.
+- Only use task_add when user EXPLICITLY asked to add to their task list.
+- Only use browser when the task genuinely requires clicking, typing, or navigating a site interactively.
+- DO NOT include send_message steps. User receives your summary automatically.
 - Keep plans to 10 steps or fewer.
-- LINKS: The plan should always capture the URL of any page visited. The final summary MUST include links to pages/articles/events found so the user can go there directly.
+- Be specific with search queries.
+- LINKS: Always capture URLs. Final summary MUST include links so the user can go there directly.
+- task_add titles must use REAL data — never placeholders.
 
-Return ONLY a JSON array of steps. No explanation. Example:
+Return ONLY a JSON array of steps. No explanation.
+
+Example 1 — information gathering (no browser needed):
+[
+  {"tool": "web_search", "params": {"query": "top AI news today March 2026"}, "purpose": "Find current AI headlines"},
+  {"tool": "web_fetch", "params": {"url": "USES: top result URL from step 1"}, "purpose": "Read the full article"}
+]
+
+Example 2 — compound task with scheduling:
+[
+  {"tool": "web_search", "params": {"query": "AI news sources daily digest"}, "purpose": "Find best AI news aggregators"},
+  {"tool": "cron_add", "params": {"name": "Daily AI News", "schedule": "0 16 * * *", "category": "web_search", "message": "Search for top 10 AI news stories today and summarize"}, "purpose": "Schedule daily 4pm news digest"}
+]
+
+Example 3 — site interaction (browser needed):
 [
   {"tool": "browser", "params": {"action": "open", "url": "https://eventbrite.com"}, "purpose": "Navigate to Eventbrite"},
   {"tool": "browser", "params": {"action": "type", "ref": "Search events input", "text": "tech events Huntington Station NY"}, "purpose": "Enter search query"},
   {"tool": "browser", "params": {"action": "click", "ref": "Search button"}, "purpose": "Execute search"},
-  {"tool": "browser", "params": {"action": "text_content"}, "purpose": "Read search results to find most relevant tech event"}
+  {"tool": "browser", "params": {"action": "text_content"}, "purpose": "Read search results"}
 ]
 
-Example 2 (user explicitly asked to add to task list):
+Example 4 — add to task list (user explicitly asked):
 [
-  {"tool": "browser", "params": {"action": "open", "url": "https://eventbrite.com"}, "purpose": "Navigate to Eventbrite"},
-  {"tool": "browser", "params": {"action": "text_content"}, "purpose": "Read page content to find events"},
-  {"tool": "task_add", "params": {"title": "USES: event name from text_content", "dueDate": "USES: date"}, "purpose": "Add event to task list (user requested)"}
+  {"tool": "web_search", "params": {"query": "tech meetups Huntington Station NY"}, "purpose": "Find upcoming tech meetups"},
+  {"tool": "task_add", "params": {"title": "USES: meetup name from step 1", "dueDate": "USES: date from step 1"}, "purpose": "Add meetup to task list (user requested)"}
 ]`;
 
 const REFLECT_PROMPT = `You are a plan reviewer. Critique the proposed plan below and suggest improvements.
 
 Check for these common issues:
-1. MISSING SNAPSHOT: Browser interactions MUST have a snapshot or text_content step AFTER navigation and BEFORE any click/type. The agent cannot interact with elements it hasn't seen.
-2. WRONG ORDER: Steps that depend on previous results must come after those results are available.
-3. UNREALISTIC: Steps that assume information not yet gathered (e.g., clicking element #5 before taking a snapshot).
-4. MISSING CONTENT READ: Before creating a task or saving to memory, there should be a text_content step to read the actual page content (event names, dates, etc.).
-5. TOO VAGUE: Search queries should be specific, not generic like "find things".
-6. GENERIC DATA: If task_add uses a placeholder title like "Attend event" instead of referencing real data from a text_content step, flag it.
-7. NO FILTERING: If the plan picks the first search result without reading and evaluating results, flag it. There should be a text_content step followed by task_add using the most relevant result.
-8. UNNECESSARY STEPS: Don't navigate to event detail pages just to read the name — text_content on the search results page usually has enough info. Keep it simple.
-9. SEND_MESSAGE: Plans should NOT include send_message steps. The user receives the summary automatically.
+1. OVERKILL TOOL: If the plan uses browser when web_search or web_fetch would work, flag it. Browser is expensive and slow — only use it when the task requires clicking, typing, or form interaction. "Find information" = web_search. "Read a page" = web_fetch.
+2. MISSING SNAPSHOT: Browser click/type MUST have a snapshot or text_content step first. The agent can't interact with elements it hasn't seen.
+3. WRONG ORDER: Steps that depend on previous results must come after those results.
+4. UNREALISTIC: Steps that assume information not yet gathered.
+5. TOO VAGUE: Search queries should be specific.
+6. GENERIC DATA: task_add with placeholder titles like "Attend event" instead of real data.
+7. NO FILTERING: Picking the first result without evaluating relevance.
+8. UNNECESSARY TASK: task_add when user didn't explicitly ask to add to their task list. "Find X" should just present results, not create tasks.
+9. SEND_MESSAGE: Plans should NOT include send_message steps.
+10. TOO MANY STEPS: If the plan can be done in fewer steps with simpler tools, simplify it.
 
 Return a JSON object:
 {
