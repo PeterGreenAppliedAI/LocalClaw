@@ -19,6 +19,7 @@ import { dispatchMessage } from '../dispatch.js';
 import { resolveWorkspacePath } from '../agents/scope.js';
 import { bootstrapWorkspace } from '../agents/workspace.js';
 import { FactStore } from '../memory/fact-store.js';
+import { TaskStore } from '../tasks/store.js';
 import type { OllamaMessage } from '../ollama/types.js';
 import { handleCommand, type CommandContext } from './commands.js';
 import {
@@ -49,10 +50,14 @@ async function main() {
   bootstrapWorkspace(workspacePath);
 
   const factStore = new FactStore(workspacePath);
+  const taskStore = new TaskStore(
+    `data/tasks.json`,
+    `${workspacePath}/TASKS.md`,
+  );
 
   const { embeddingStore } = await registerAllTools(registry, config, {
     ollamaClient: client,
-    taskStore: undefined, // TODO: wire task store if needed
+    taskStore,
     factStore,
   });
 
@@ -93,6 +98,8 @@ async function main() {
     prompt: `${green('❯')} `,
   });
 
+  let processing = false;
+
   rl.prompt();
 
   rl.on('line', async (line) => {
@@ -102,12 +109,15 @@ async function main() {
       return;
     }
 
+    processing = true;
+
     // Slash commands
     const cmdResult = await handleCommand(message, cmdCtx);
     if (cmdResult) {
       console.log('');
       console.log(cmdResult.output);
       console.log('');
+      processing = false;
       rl.prompt();
       return;
     }
@@ -231,10 +241,19 @@ async function main() {
       console.log('');
     }
 
+    processing = false;
     rl.prompt();
   });
 
-  rl.on('close', () => {
+  rl.on('close', async () => {
+    // Wait for any pending async command to finish
+    if (processing) {
+      await new Promise<void>(resolve => {
+        const check = setInterval(() => {
+          if (!processing) { clearInterval(check); resolve(); }
+        }, 100);
+      });
+    }
     console.log(dim('\n  Goodbye!\n'));
     process.exit(0);
   });
