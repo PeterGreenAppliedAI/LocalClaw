@@ -29,6 +29,11 @@ Available tools:
 - cron_add: Schedule a recurring job. Params: { name, schedule, category, message, channel, target }
 - cron_list: Show scheduled jobs. Params: {}
 - exec: Run a shell command. Params: { command: string }
+- code_session: Run code in a persistent REPL session (Python, Node, or Bash). Params: { action: "start"|"run"|"stop", session?: string, runtime?: "python"|"node"|"bash", code?: string }
+  Use for: data processing, scraping scripts, analysis, file generation, anything that needs code execution.
+  Start a session first, then run code in it. Sessions persist between steps.
+- write_file: Write content to a file. Params: { path: string, content: string }
+- read_file: Read a file. Params: { path: string }
 
 TOOL SELECTION GUIDE:
 - "Find info about X" → web_search (fast, reliable)
@@ -78,6 +83,15 @@ Example 4 — add to task list (user explicitly asked):
 [
   {"tool": "web_search", "params": {"query": "tech meetups Huntington Station NY"}, "purpose": "Find upcoming tech meetups"},
   {"tool": "task_add", "params": {"title": "USES: meetup name from step 1", "dueDate": "USES: date from step 1"}, "purpose": "Add meetup to task list (user requested)"}
+]
+
+Example 5 — data processing with code:
+[
+  {"tool": "web_search", "params": {"query": "top 10 AI companies by funding 2026"}, "purpose": "Find AI company data"},
+  {"tool": "web_fetch", "params": {"url": "USES: best source URL from step 1"}, "purpose": "Get detailed funding data"},
+  {"tool": "code_session", "params": {"action": "start", "session": "analysis", "runtime": "python"}, "purpose": "Start Python session for data processing"},
+  {"tool": "code_session", "params": {"action": "run", "session": "analysis", "code": "USES: Python script to parse and analyze data from step 2"}, "purpose": "Process and analyze the data"},
+  {"tool": "write_file", "params": {"path": "USES: output filename", "content": "USES: processed results"}, "purpose": "Save results to file"}
 ]`;
 
 const REFLECT_PROMPT = `You are a plan reviewer. Critique the proposed plan below and suggest improvements.
