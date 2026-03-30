@@ -11,7 +11,8 @@ const MEDIA_DIR = 'data/media/browser';
 
 export function createBrowserTool(config?: BrowserConfig, ollamaUrl?: string): LocalClawTool {
   // Build visual config for automatic escalation (only used when DOM fails)
-  const visualConfig: VisualBrowserConfig | null = config?.display
+  // Enable when display is set (Xvfb) OR when running headed (real display)
+  const visualConfig: VisualBrowserConfig | null = (config?.display || config?.headless === false)
     ? {
         ollamaUrl: ollamaUrl ?? 'http://127.0.0.1:11434',
         visionModel: config.visionModel ?? 'qwen3.5:35b',
@@ -63,29 +64,24 @@ tab (optional): Tab ID.`,
       const action = params.action as string;
       if (!action) return 'Error: action parameter is required';
 
-      // Lazy-init browser
+      // Lazy-init browser — auto-launch if not running
       if (!sharedClient || !sharedClient.isRunning()) {
-        const needsRunning = [
-          'close', 'tabs', 'snapshot', 'text_content', 'screenshot',
-          'click', 'type', 'select', 'wait', 'visual_snapshot',
-        ];
-        if (needsRunning.includes(action)) {
-          return 'Browser is not running. Use action "open" first.';
+        if (action === 'close') {
+          return 'Browser is already closed.';
         }
 
-        if (action === 'open' || action === 'navigate') {
-          sharedClient = new BrowserClient();
-          try {
-            await sharedClient.launch({
-              headless: config?.display ? false : (config?.headless ?? true),
-              executablePath: config?.executablePath,
-              display: config?.display,
-            });
-            // Wire visual config for automatic escalation
-            sharedClient.visualConfig = visualConfig;
-          } catch (err) {
-            return `Error launching browser: ${err instanceof Error ? err.message : err}`;
-          }
+        sharedClient = new BrowserClient();
+        try {
+          await sharedClient.launch({
+            headless: config?.display ? false : (config?.headless ?? true),
+            executablePath: config?.executablePath,
+            display: config?.display,
+          });
+          // Wire visual config for automatic escalation
+          sharedClient.visualConfig = visualConfig;
+          console.log('[Browser] Auto-launched');
+        } catch (err) {
+          return `Error launching browser: ${err instanceof Error ? err.message : err}`;
         }
       }
 
@@ -98,7 +94,7 @@ tab (optional): Tab ID.`,
             const url = params.url as string;
             if (url) {
               await client.navigate(url, tab);
-              return `Browser opened and navigated to ${url}`;
+              return `Browser opened and navigated to ${url}. Take a snapshot to see the page elements.`;
             }
             return 'Browser launched';
           }
@@ -106,7 +102,7 @@ tab (optional): Tab ID.`,
             const url = params.url as string;
             if (!url) return 'Error: url parameter required for navigate';
             const finalUrl = await client.navigate(url, tab);
-            return `Navigated to ${finalUrl}`;
+            return `Navigated to ${finalUrl}. Take a snapshot to see the page elements.`;
           }
           case 'snapshot': {
             return await client.snapshot(tab);

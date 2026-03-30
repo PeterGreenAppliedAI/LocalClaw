@@ -356,10 +356,12 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
         }
 
         // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5)
-        if (observation.length > MAX_TOOL_RESULT_CHARS) {
+        // Browser snapshots get a higher limit to preserve element ref numbers
+        const effectiveLimit = toolName === 'browser' ? MAX_TOOL_RESULT_CHARS * 4 : MAX_TOOL_RESULT_CHARS;
+        if (observation.length > effectiveLimit) {
           const original = observation.length;
-          observation = observation.slice(0, MAX_TOOL_RESULT_CHARS) + `\n... [truncated from ${original} chars]`;
-          console.log(`[ReAct] Tool "${toolName}" output truncated: ${original} → ${MAX_TOOL_RESULT_CHARS} chars`);
+          observation = observation.slice(0, effectiveLimit) + `\n... [truncated from ${original} chars]`;
+          console.log(`[ReAct] Tool "${toolName}" output truncated: ${original} → ${effectiveLimit} chars`);
         }
 
         steps.push({

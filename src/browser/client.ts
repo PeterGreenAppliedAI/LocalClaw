@@ -100,12 +100,17 @@ export class BrowserClient {
   }
 
   /**
-   * Re-index interactive elements on the page before resolving a reference.
-   * This ensures element numbers are fresh even if the page changed since
-   * the last snapshot (navigation, dynamic content, etc.).
+   * Resolve a snapshot ref number to a DOM selector.
+   * First tries the existing data-ref attributes (set by the last snapshot).
+   * Only re-indexes if the ref isn't found, to avoid shifting numbers.
    */
   private async freshResolveRef(page: any, refNum: number): Promise<string | null> {
-    // Re-run the snapshot script to assign fresh data-ref attributes
+    // Try existing data-ref attributes first (stable from last snapshot)
+    const existing = await page.evaluate(RESOLVE_REF_SCRIPT, refNum);
+    if (existing) return existing;
+
+    // Element not found — DOM may have changed. Re-index and try again.
+    console.log(`[Browser] Ref #${refNum} stale, re-indexing DOM`);
     await page.evaluate(SNAPSHOT_SCRIPT);
     return page.evaluate(RESOLVE_REF_SCRIPT, refNum);
   }
@@ -135,7 +140,7 @@ export class BrowserClient {
           await page.click(selector, { timeout: 5_000 });
           await page.waitForLoadState('domcontentloaded', { timeout: 5_000 }).catch(() => {});
           console.log(`[Browser] DOM click #${ref} succeeded`);
-          return `Clicked element #${ref}. Page: ${page.url()}`;
+          return `Clicked element #${ref}. Page: ${page.url()}\nNote: Element refs may have changed — take a new snapshot before clicking another element.`;
         } catch (err) {
           console.log(`[Browser] DOM click #${ref} failed: ${err instanceof Error ? err.message : err}`);
         }
