@@ -53,6 +53,50 @@ export const ChannelConfigSchema = z.object({
   security: ChannelSecuritySchema.optional(),
 }).passthrough();
 
+// --- iMessage-specific config (BlueBubbles bridge) ---
+
+export const IMessageContactOverrideSchema = z.object({
+  mode: z.enum(['auto', 'prefix', 'silent']).optional(),
+  prefix: z.string().optional(),
+  cooldownMs: z.number().optional(),
+});
+
+export const IMessageConfigSchema = ChannelConfigSchema.extend({
+  url: z.string(),
+  password: z.string(),
+
+  // Core gating mode — 'silent' = read-only monitor (safe default)
+  mode: z.enum(['silent', 'allowlist', 'denylist', 'prefix', 'auto']).default('silent'),
+
+  // Trigger prefix for 'prefix' mode
+  prefix: z.string().default('!claw'),
+
+  // Group chat handling
+  groups: z.object({
+    enabled: z.boolean().default(false),
+    requirePrefix: z.boolean().default(true),
+  }).default({}),
+
+  // Contact lists
+  contacts: z.object({
+    allow: z.array(z.string()).default([]),
+    deny: z.array(z.string()).default([]),
+    overrides: z.record(z.string(), IMessageContactOverrideSchema).default({}),
+  }).default({}),
+
+  // Rate limiting
+  cooldown: z.object({
+    perContactMs: z.number().default(30_000),
+    globalMs: z.number().default(5_000),
+    maxPerContactPerHour: z.number().default(20),
+  }).default({}),
+
+  // Monitoring
+  monitor: z.object({
+    logMessages: z.boolean().default(true),
+  }).default({}),
+});
+
 export const AgentBindingMatchSchema = z.object({
   channel: z.string().optional(),
   guildId: z.string().optional(),

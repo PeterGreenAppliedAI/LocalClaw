@@ -75,6 +75,11 @@ async function runOrchestrator(config: ReturnType<typeof loadConfig>) {
           channelRegistry.register(new WhatsAppAdapter());
           break;
         }
+        case 'imessage': {
+          const { IMessageAdapter } = await import('./channels/imessage/index.js');
+          channelRegistry.register(new IMessageAdapter());
+          break;
+        }
         default:
           console.warn(`[LocalClaw] Unknown channel: ${channelId}`);
       }

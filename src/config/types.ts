@@ -7,6 +7,8 @@ import type {
   SpecialistConfigSchema,
   ChannelConfigSchema,
   ChannelSecuritySchema,
+  IMessageConfigSchema,
+  IMessageContactOverrideSchema,
   AgentsConfigSchema,
   AgentSchema,
   AgentBindingSchema,
@@ -41,6 +43,8 @@ export type RouterCategory = z.infer<typeof RouterCategorySchema>;
 export type SpecialistConfig = z.infer<typeof SpecialistConfigSchema>;
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 export type ChannelSecurity = z.infer<typeof ChannelSecuritySchema>;
+export type IMessageConfig = z.infer<typeof IMessageConfigSchema>;
+export type IMessageContactOverride = z.infer<typeof IMessageContactOverrideSchema>;
 export type AgentsConfig = z.infer<typeof AgentsConfigSchema>;
 export type AgentConfig = z.infer<typeof AgentSchema>;
 export type AgentBinding = z.infer<typeof AgentBindingSchema>;
