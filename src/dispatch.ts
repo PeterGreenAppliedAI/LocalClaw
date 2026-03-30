@@ -283,7 +283,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   if (params.factStore && senderId) {
     try {
       const stableFacts = params.factStore.loadFactsJson(senderId)
-        .filter(f => f.category === 'stable')
+        .filter(f => f.category === 'stable' && f.confidence >= 0.7)
         .sort((a, b) => b.confidence - a.confidence)
         .slice(0, 10)
         .map(f => `- ${f.text}`);
