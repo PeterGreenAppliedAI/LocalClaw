@@ -7,6 +7,8 @@ export class BrowserClient {
   private browser: any = null;
   private pages = new Map<string, any>();
   private activeTabId = 'default';
+  /** Last snapshot text — used to extract element descriptions for visual fallback */
+  private lastSnapshotText = '';
 
   async launch(options?: { headless?: boolean; executablePath?: string; display?: string }): Promise<void> {
     let pw: any;
@@ -68,8 +70,19 @@ export class BrowserClient {
 
     // AI-friendly snapshot with indexed interactive elements
     const text: string = await page.evaluate(SNAPSHOT_SCRIPT);
+    this.lastSnapshotText = text;
 
     return `Page: ${title}\nURL: ${url}\n\n${text.slice(0, 10000)}`;
+  }
+
+  /** Extract the description of a ref number from the last snapshot (e.g., "2" → "input text (Search for anything)") */
+  descriptionForRef(refNum: number): string | null {
+    const pattern = new RegExp(`\\[${refNum}:\\s*([^\\]]+)\\]\\s*(.*)`, 'm');
+    const match = this.lastSnapshotText.match(pattern);
+    if (!match) return null;
+    const type = match[1].trim();
+    const label = match[2].trim();
+    return label ? `${type}: ${label}` : type;
   }
 
   /**
@@ -163,12 +176,14 @@ export class BrowserClient {
 
     // Attempt 3: Visual escalation — use vision model to find and click by description
     if (this.visualConfig) {
-      console.log(`[Browser] Escalating to visual mode for: "${ref}"`);
+      // Use the snapshot description instead of bare ref number for better visual matching
+      const desc = isIndex ? this.descriptionForRef(parseInt(ref, 10)) ?? ref : ref;
+      console.log(`[Browser] Escalating to visual mode for: "${desc}"`);
       const { visualClick } = await import('./visual.js');
-      return await visualClick(this, this.visualConfig, ref, tabId);
+      return await visualClick(this, this.visualConfig, desc, tabId);
     }
 
-    return `Element "${ref}" not found via DOM. Visual mode not available for fallback.`;
+    return `Element "${ref}" not found via DOM. Try using a CSS selector, a text description of the element, or navigate directly by URL instead.`;
   }
 
   /**
@@ -207,12 +222,13 @@ export class BrowserClient {
 
     // Attempt 3: Visual escalation
     if (this.visualConfig) {
-      console.log(`[Browser] Escalating to visual mode for type: "${ref}"`);
+      const desc = isIndex ? this.descriptionForRef(parseInt(ref, 10)) ?? ref : ref;
+      console.log(`[Browser] Escalating to visual mode for type: "${desc}"`);
       const { visualType } = await import('./visual.js');
-      return await visualType(this, this.visualConfig, ref, text, tabId);
+      return await visualType(this, this.visualConfig, desc, text, tabId);
     }
 
-    return `Element "${ref}" not found via DOM. Visual mode not available for fallback.`;
+    return `Element "${ref}" not found via DOM. Try using a CSS selector, a text description of the element, or navigate directly by URL instead.`;
   }
 
   /**
