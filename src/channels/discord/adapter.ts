@@ -147,10 +147,16 @@ export class DiscordAdapter implements ChannelAdapter {
         sendable = await user.createDM();
       }
 
-      // Send audio as file attachment if present
-      const files = content.audio
-        ? [{ attachment: content.audio.data, name: 'response.ogg' }]
-        : undefined;
+      // Build file attachments (audio + images)
+      const files: Array<{ attachment: Buffer; name: string }> = [];
+      if (content.audio) {
+        files.push({ attachment: content.audio.data, name: 'response.ogg' });
+      }
+      if (content.attachments) {
+        for (const att of content.attachments) {
+          files.push({ attachment: att.data, name: att.filename });
+        }
+      }
 
       const chunks = splitMessage(content.text, DISCORD_MAX_LENGTH);
 
@@ -158,7 +164,7 @@ export class DiscordAdapter implements ChannelAdapter {
         await sendable.send({
           content: chunks[i],
           reply: target.replyToId ? { messageReference: target.replyToId } : undefined,
-          files: i === 0 ? files : undefined, // attach audio to first chunk only
+          files: i === 0 && files.length > 0 ? files : undefined,
         });
       }
     } catch (err) {

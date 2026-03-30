@@ -31,6 +31,35 @@ import type { ConsoleApiDeps } from './console/types.js';
 import type { WebApiAdapter } from './channels/web/adapter.js';
 // Pipeline utilities kept in src/services/tts-stream.ts for future use with slower TTS models
 
+const IMAGE_TOKEN_RE = /\[IMAGE:([^\]]+)\]/g;
+
+/**
+ * Extract [IMAGE:path] tokens from text, read files, return attachments + cleaned text.
+ */
+function extractMediaAttachments(text: string): {
+  cleanText: string;
+  attachments: Array<{ data: Buffer; mimeType: string; filename: string }>;
+} {
+  const attachments: Array<{ data: Buffer; mimeType: string; filename: string }> = [];
+  const cleanText = text.replace(IMAGE_TOKEN_RE, (match, filePath: string) => {
+    try {
+      const data = readFileSync(filePath.trim());
+      const ext = filePath.split('.').pop()?.toLowerCase() ?? 'png';
+      const mimeMap: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+      attachments.push({
+        data,
+        mimeType: mimeMap[ext] ?? 'image/png',
+        filename: filePath.split('/').pop() ?? 'image.png',
+      });
+      return ''; // Strip the token from text
+    } catch {
+      return match; // Leave token if file can't be read
+    }
+  }).trim();
+
+  return { cleanText, attachments };
+}
+
 /** Append (message, category) training pairs from a transcript before it's cleared. */
 function extractTrainingPairs(transcript: Array<{ role: string; content: string; category?: string }>): void {
   const TRAINING_FILE = 'data/training/router-pairs.jsonl';
@@ -895,7 +924,8 @@ export class Orchestrator {
         console.log(`[Orchestrator] → ${result.category} (${result.iterations} steps)`);
 
         if (streamMsg) {
-          const chunks = splitFinalMessage(result.answer, 2000);
+          const media = extractMediaAttachments(result.answer);
+          const chunks = splitFinalMessage(media.cleanText || result.answer, 2000);
           await streamMsg.edit(chunks[0]);
           if (chunks.length > 1) {
             for (let i = 1; i < chunks.length; i++) {
@@ -908,10 +938,21 @@ export class Orchestrator {
               }
             }
           }
+          // Send image attachments as follow-up (can't attach to edited stream message)
+          if (media.attachments.length > 0) {
+            const adapter = this.channelRegistry.get(msg.channel);
+            if (adapter) {
+              await adapter.send(
+                { channel: msg.channel, channelId: msg.channelId! },
+                { text: '', attachments: media.attachments },
+              );
+            }
+          }
         } else {
+          const media = extractMediaAttachments(result.answer);
           await this.channelRegistry.send(
             { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId, replyToId: msg.id },
-            { text: result.answer },
+            { text: media.cleanText || result.answer, attachments: media.attachments.length > 0 ? media.attachments : undefined },
           );
         }
       }

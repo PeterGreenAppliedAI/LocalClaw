@@ -169,6 +169,26 @@ export class TelegramAdapter implements ChannelAdapter {
         }
       }
 
+      // Send image attachments
+      if (content.attachments) {
+        try {
+          const mod = 'grammy';
+          const grammy = await import(/* webpackIgnore: true */ mod);
+          const replyOpts = { reply_to_message_id: target.replyToId ? Number(target.replyToId) : undefined };
+          for (const att of content.attachments) {
+            if (att.mimeType.startsWith('image/')) {
+              const inputFile = new grammy.InputFile(att.data, att.filename);
+              await this.bot.api.sendPhoto(target.channelId, inputFile, replyOpts);
+            } else {
+              const inputFile = new grammy.InputFile(att.data, att.filename);
+              await this.bot.api.sendDocument(target.channelId, inputFile, replyOpts);
+            }
+          }
+        } catch (err) {
+          console.warn('[Telegram] Attachment send failed:', err instanceof Error ? err.message : err);
+        }
+      }
+
       const chunks = splitTelegramMessage(content.text, TELEGRAM_MAX_LENGTH);
       for (const chunk of chunks) {
         await this.bot.api.sendMessage(target.channelId, chunk, {

@@ -106,6 +106,8 @@ export interface DispatchParams {
   pipelineRegistry?: PipelineRegistry;
   /** Execution metrics store for recording pipeline run data */
   executionMetrics?: import('./metrics/execution-store.js').ExecutionMetricsStore;
+  /** Skip pipeline — force ReAct tool-loop (used by plan sub-dispatch to prevent recursion) */
+  skipPipeline?: boolean;
 }
 
 export interface DispatchResult {
@@ -115,6 +117,7 @@ export interface DispatchResult {
   iterations: number;
   hitMaxIterations: boolean;
   steps?: Array<{ tool?: string; params?: Record<string, unknown>; observation?: string }>;
+  attachments?: Array<{ data: Buffer; mimeType: string; filename: string }>;
 }
 
 function resolveChannelSecurity(
@@ -324,10 +327,10 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   } else if (specialistConfig.tools.length === 0) {
     // No tools — skip ReAct loop, just chat directly
     result = await runAsBareChat(client, config, effectiveMessage, classification, history, specialistConfig, params.onStream, agentId, params.sourceContext, !!params.modelOverride, statePreamble, userPriming);
-  } else if (specialistConfig.pipeline && params.pipelineRegistry?.has(specialistConfig.pipeline)) {
+  } else if (!params.skipPipeline && specialistConfig.pipeline && params.pipelineRegistry?.has(specialistConfig.pipeline)) {
     // Deterministic pipeline — LLM fills params, code decides workflow
     result = await runPipelineDispatch(effectiveParams, classification, specialistConfig, history, statePreamble, userPriming);
-  } else if (effectiveCategory === 'multi') {
+  } else if (!params.skipPipeline && effectiveCategory === 'multi') {
     result = await runMultiOrchestration(effectiveParams, classification, specialistConfig, history, statePreamble);
   } else {
     result = await runSpecialist(effectiveParams, classification, specialistConfig, history, statePreamble, userPriming);
@@ -566,6 +569,7 @@ async function runPipelineDispatch(
         ...params,
         message: subMessage,
         overrideCategory: subCategory,
+        skipPipeline: true, // go to tool-loop, not pipeline (prevents plan→plan recursion)
         onStream: undefined, // don't stream sub-task responses
       });
       return { answer: result.answer, steps: result.steps };

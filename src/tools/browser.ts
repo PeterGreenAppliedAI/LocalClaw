@@ -1,9 +1,13 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { LocalClawTool } from './types.js';
 import { BrowserClient } from '../browser/client.js';
 import type { BrowserConfig } from '../config/types.js';
 import { visualSnapshot, type VisualBrowserConfig } from '../browser/visual.js';
 
 let sharedClient: BrowserClient | null = null;
+
+const MEDIA_DIR = 'data/media/browser';
 
 export function createBrowserTool(config?: BrowserConfig, ollamaUrl?: string): LocalClawTool {
   // Build visual config for automatic escalation (only used when DOM fails)
@@ -112,7 +116,11 @@ tab (optional): Tab ID.`,
           }
           case 'screenshot': {
             const buf = await client.screenshot(tab);
-            return `Screenshot taken (${buf.length} bytes). [Binary data — use snapshot for text content]`;
+            mkdirSync(MEDIA_DIR, { recursive: true });
+            const filename = `screenshot-${Date.now()}.png`;
+            const filepath = join(MEDIA_DIR, filename);
+            writeFileSync(filepath, buf);
+            return `Screenshot saved.\n[IMAGE:${filepath}]`;
           }
           case 'click': {
             const ref = params.ref as string;

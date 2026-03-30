@@ -33,6 +33,7 @@ export interface MessageContent {
   text: string;
   embeds?: Array<{ title?: string; description?: string; url?: string }>;
   audio?: { data: Buffer; mimeType: string };
+  attachments?: Array<{ data: Buffer; mimeType: string; filename: string }>;
 }
 
 export type ChannelStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
