@@ -15,6 +15,8 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   // Research — only trigger on clear research *requests*, not casual mentions
   { pattern: /\b(research|analyze)\b.*\b(for me|this topic|in depth|deep dive)\b/i, category: 'research' },
   { pattern: /\b(chart|graph|plot|visualize)\b.*\b(data|stock|trend|performance|price)\b/i, category: 'research' },
+  // Browser interaction → multi (plan pipeline with browser tool)
+  { pattern: /\b(screenshot|browse|go to|navigate to|visit)\b.*\b(\.com|\.org|\.net|\.io|site|website|page)\b/i, category: 'multi' },
   // Specific action categories before broad ones
   { pattern: /\b(config|configure|setting|settings|preference|edit.*cron|modify.*cron|update.*cron|change.*cron|enable|disable|workspace|tools\.md)\b/i, category: 'config' },
   { pattern: /\b(add.*heartbeat|remove.*heartbeat|list.*heartbeat|periodic check|periodic task|autonomous check)\b/i, category: 'cron' },
@@ -43,6 +45,8 @@ export interface ClassifyResult {
  * These patterns must be very specific to avoid false positives.
  */
 const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
+  // Browser interaction — compound: action + site/domain reference
+  { pattern: /\b(screenshot|browse|go to|navigate to|visit)\b.*(\.\w{2,}|site|website|page)\b/i, category: 'multi' },
   // Research — only compound intent patterns, not bare keywords
   { pattern: /\b(research|analyze)\b.*\b(stock|market|data|trend|performance|price)\b/i, category: 'research' },
   { pattern: /\b(stock|market|data|trend|performance)\b.*\b(research|analyze|analysis)\b/i, category: 'research' },

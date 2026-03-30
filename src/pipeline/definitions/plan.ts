@@ -23,7 +23,7 @@ Available specialists:
 - task: Create, list, update, or complete tasks. Give it the task details.
 - cron: Schedule recurring jobs. Give it the job name, schedule, and what to do. Valid categories for cron jobs: chat, web_search, memory, exec, task, research.
 - exec: Run shell commands or code. Give it the command.
-- multi: Interactive browser tasks — signing up, filling forms, navigating sites. ONLY when the task requires clicking/typing on a website.
+- multi: Browser tasks — navigating sites, taking screenshots, signing up, filling forms. Use when the task involves opening a specific website and doing something with it.
 
 CHOOSING THE RIGHT SPECIALIST:
 - "Find info about X" → web_search
@@ -33,6 +33,7 @@ CHOOSING THE RIGHT SPECIALIST:
 - "Schedule daily X at 4pm" → cron (automated recurring jobs — do NOT also create a task, the cron job IS the automation)
 - "Run this command" → exec
 - "Go to X website and sign up" → multi (browser interaction)
+- "Take a screenshot of X.com" → multi (browser opens site and screenshots it)
 - "Find X and schedule updates" → web_search THEN cron (chained)
 - "Search for events and add to tasks" → web_search THEN task (chained)
 
@@ -71,7 +72,12 @@ Example 4 — browser interaction:
   {"specialist": "task", "message": "Add a task: [event from previous step]", "purpose": "Add event to task list"}
 ]
 
-Example 5 — research and schedule:
+Example 5 — screenshot of a website:
+[
+  {"specialist": "multi", "message": "Open google.com in the browser and take a screenshot", "purpose": "Screenshot the Google homepage"}
+]
+
+Example 6 — research and schedule:
 [
   {"specialist": "research", "message": "Research the current state of AI regulation in the US", "purpose": "Deep research on AI regulation"},
   {"specialist": "cron", "message": "Schedule a weekly job on Mondays at 9am called 'AI Regulation Update' that researches new AI regulation developments. Category: research", "purpose": "Set up weekly monitoring"}
@@ -80,7 +86,7 @@ Example 5 — research and schedule:
 const REFLECT_PROMPT = `You are a plan reviewer. Critique the proposed plan below and suggest improvements.
 
 Check for these common issues:
-1. OVERKILL SPECIALIST: If the plan uses "multi" (browser) when "web_search" would work, flag it. Browser is expensive and slow — only use it when the task requires clicking, typing, or form interaction. "Find information" = web_search. "Read a page" = web_search.
+1. OVERKILL SPECIALIST: If the plan uses "multi" (browser) when "web_search" would work, flag it. But if the user asks to visit a specific site, take a screenshot, or interact with a page, "multi" IS correct. "Find information" = web_search. "Go to X.com and do Y" = multi.
 2. WRONG ORDER: Steps that depend on previous results must come after those results.
 3. UNREALISTIC: Steps that assume information not yet gathered by a previous step.
 4. TOO VAGUE: Instructions to specialists should be specific and clear.
