@@ -108,6 +108,8 @@ export interface DispatchParams {
   executionMetrics?: import('./metrics/execution-store.js').ExecutionMetricsStore;
   /** Skip pipeline — force ReAct tool-loop (used by plan sub-dispatch to prevent recursion) */
   skipPipeline?: boolean;
+  /** Bypass confirmation gate — set when user confirmed a pending action */
+  confirmed?: boolean;
 }
 
 export interface DispatchResult {
@@ -424,8 +426,22 @@ async function runSpecialist(
   }
 
   const toolDefs = registry.getDefinitions(tools);
-  const executor = registry.createExecutor();
+  const baseExecutor = registry.createExecutor();
   const workspacePath = resolveWorkspacePath(agentId, config);
+
+  // Confirmation gate: tools in confirmTools return a preview instead of executing
+  const channelSecurity = resolveChannelSecurity(config, params.sourceContext?.channel);
+  const confirmSet = new Set(channelSecurity?.confirmTools ?? []);
+  const executor: import('./tools/types.js').ToolExecutor = !params.confirmed && confirmSet.size > 0
+    ? async (toolName, toolParams, ctx) => {
+        if (confirmSet.has(toolName)) {
+          const preview = JSON.stringify(toolParams, null, 2);
+          console.log(`[Dispatch] Confirmation required for ${toolName}`);
+          return `⚠️ Confirmation required — about to run **${toolName}**:\n\`\`\`\n${preview}\n\`\`\`\nTell the user what you're about to do and ask them to reply "confirm" to proceed.`;
+        }
+        return baseExecutor(toolName, toolParams, ctx);
+      }
+    : baseExecutor;
   const toolContext: ToolContext = {
     agentId,
     sessionKey,

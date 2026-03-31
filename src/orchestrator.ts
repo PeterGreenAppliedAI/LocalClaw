@@ -843,6 +843,9 @@ export class Orchestrator {
       const mimeMap: Record<string, string> = { opus: 'audio/ogg', wav: 'audio/wav', mp3: 'audio/mpeg' };
       const audioMime = mimeMap[format] ?? 'audio/ogg';
 
+      // Detect confirmation follow-up (user confirming a pending destructive tool action)
+      const isConfirmation = /^(confirm|yes,?\s*do it|approved?|go ahead|proceed)\s*[.!]?$/i.test(trimmed);
+
       const dispatchBase = {
         client: this.client,
         registry: this.toolRegistry,
@@ -854,6 +857,7 @@ export class Orchestrator {
         pipelineRegistry: this.pipelineRegistry,
             executionMetrics: this.executionMetrics,
         ...(hasImageAttachment ? { overrideCategory: 'chat' as const } : {}),
+        ...(isConfirmation ? { confirmed: true } : {}),
         sourceContext: {
           channel: msg.channel,
           channelId: msg.channelId ?? '',

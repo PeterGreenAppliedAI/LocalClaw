@@ -44,6 +44,8 @@ export const ChannelSecuritySchema = z.object({
   trustedUsers: z.array(z.string()).optional(),
   restrictedCategories: z.array(z.string()).optional(),
   restrictedTools: z.array(z.string()).optional(),
+  /** Tools that show a preview instead of executing — user must confirm in a follow-up message */
+  confirmTools: z.array(z.string()).optional(),
 });
 
 export const ChannelConfigSchema = z.object({
