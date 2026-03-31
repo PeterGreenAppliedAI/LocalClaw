@@ -12,7 +12,7 @@ export function createReadFileTool(): LocalClawTool {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'File path relative to workspace' },
-        maxLines: { type: 'string', description: 'Maximum number of lines to return' },
+        maxLines: { type: 'number', description: 'Maximum number of lines to return' },
       },
       required: ['path'],
     },

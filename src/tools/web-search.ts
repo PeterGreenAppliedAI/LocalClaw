@@ -19,7 +19,7 @@ export function createWebSearchTool(config?: WebSearchConfig): LocalClawTool {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'The search query' },
-        count: { type: 'string', description: 'Number of results to return (default 5)' },
+        count: { type: 'number', description: 'Number of results to return (default 5)' },
         freshness: { type: 'string', description: 'Time filter', enum: ['day', 'week', 'month'] },
       },
       required: ['query'],

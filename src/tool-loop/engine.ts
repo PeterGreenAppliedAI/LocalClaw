@@ -113,6 +113,65 @@ function toOllamaTools(tools: ToolDefinition[]): OllamaTool[] {
 }
 
 /**
+ * Validate and coerce tool params against the tool's parameter schema.
+ * - Coerces string→number for numeric fields (models often pass "5" instead of 5)
+ * - Coerces string→boolean for boolean fields
+ * - Validates enum values
+ * - Checks required fields
+ * Returns { params, errors } — errors is empty if valid.
+ */
+function validateToolParams(
+  toolName: string,
+  params: Record<string, unknown>,
+  tools: ToolDefinition[],
+): { params: Record<string, unknown>; errors: string[] } {
+  const tool = tools.find(t => t.name === toolName);
+  if (!tool?.parameters?.properties) return { params, errors: [] };
+
+  const schema = tool.parameters;
+  const coerced = { ...params };
+  const errors: string[] = [];
+
+  // Check required fields
+  if (schema.required) {
+    for (const key of schema.required) {
+      if (coerced[key] === undefined || coerced[key] === null || coerced[key] === '') {
+        errors.push(`Missing required parameter: ${key}`);
+      }
+    }
+  }
+
+  // Coerce and validate each property
+  for (const [key, propSchema] of Object.entries(schema.properties)) {
+    const val = coerced[key];
+    if (val === undefined || val === null) continue;
+
+    // Type coercion
+    if (propSchema.type === 'number' || propSchema.type === 'integer') {
+      if (typeof val === 'string') {
+        const num = Number(val);
+        if (!isNaN(num)) {
+          coerced[key] = num;
+        } else {
+          errors.push(`Parameter "${key}" should be a number, got "${val}"`);
+        }
+      }
+    } else if (propSchema.type === 'boolean') {
+      if (typeof val === 'string') {
+        coerced[key] = val === 'true' || val === '1';
+      }
+    }
+
+    // Enum validation
+    if (propSchema.enum && !propSchema.enum.includes(String(coerced[key]))) {
+      errors.push(`Parameter "${key}" must be one of: ${propSchema.enum.join(', ')}. Got: "${coerced[key]}"`);
+    }
+  }
+
+  return { params: coerced, errors };
+}
+
+/**
  * Fallback parser: extract tool calls from text content when models narrate
  * instead of using structured tool_calls.
  *
@@ -341,18 +400,30 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
           toolParams = toolParams.parameters as Record<string, unknown>;
         }
 
+        // Validate and coerce params against tool schema
+        const validation = validateToolParams(toolName, toolParams, tools);
+        toolParams = validation.params;
+
         let observation: string;
         const toolStart = Date.now();
-        console.log(`[ReAct] → ${toolName}(${JSON.stringify(toolParams).slice(0, 200)})`);
-        try {
-          observation = await executor(toolName, toolParams, toolContext);
-          logToolCall({ tool: toolName, category: config.model, durationMs: Date.now() - toolStart, success: true });
-          console.log(`[ReAct] ← ${toolName}: ${observation.slice(0, 200)}${observation.length > 200 ? '...' : ''}`);
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          observation = `Tool "${toolName}" failed: ${errMsg}. Try a different approach or tool.`;
-          logToolCall({ tool: toolName, category: config.model, durationMs: Date.now() - toolStart, success: false, error: errMsg });
-          console.warn(`[ReAct] TOOL_EXECUTION_ERROR: ${toolName} — ${errMsg}`);
+
+        // Short-circuit on validation errors
+        if (validation.errors.length > 0) {
+          observation = `Invalid parameters for "${toolName}": ${validation.errors.join('; ')}`;
+          console.warn(`[ReAct] Param validation failed for ${toolName}: ${validation.errors.join('; ')}`);
+          logToolCall({ tool: toolName, category: config.model, durationMs: 0, success: false, error: observation });
+        } else {
+          console.log(`[ReAct] → ${toolName}(${JSON.stringify(toolParams).slice(0, 200)})`);
+          try {
+            observation = await executor(toolName, toolParams, toolContext);
+            logToolCall({ tool: toolName, category: config.model, durationMs: Date.now() - toolStart, success: true });
+            console.log(`[ReAct] ← ${toolName}: ${observation.slice(0, 200)}${observation.length > 200 ? '...' : ''}`);
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            observation = `Tool "${toolName}" failed: ${errMsg}. Try a different approach or tool.`;
+            logToolCall({ tool: toolName, category: config.model, durationMs: Date.now() - toolStart, success: false, error: errMsg });
+            console.warn(`[ReAct] TOOL_EXECUTION_ERROR: ${toolName} — ${errMsg}`);
+          }
         }
 
         // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5)

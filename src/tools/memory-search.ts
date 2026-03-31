@@ -28,7 +28,7 @@ export function createMemorySearchTool(
       type: 'object',
       properties: {
         query: { type: 'string', description: 'What to search for in memories' },
-        maxResults: { type: 'string', description: 'Maximum number of results to return (default 5)' },
+        maxResults: { type: 'number', description: 'Maximum number of results to return (default 5)' },
         source: { type: 'string', description: 'Filter: "memory" (structured facts + markdown) or "knowledge" (imported documents)', enum: ['memory', 'knowledge'] },
       },
       required: ['query'],

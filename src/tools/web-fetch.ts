@@ -17,7 +17,7 @@ export function createWebFetchTool(config?: WebFetchConfig): LocalClawTool {
       properties: {
         url: { type: 'string', description: 'The URL to fetch' },
         extractMode: { type: 'string', description: 'Extract mode', enum: ['markdown', 'text'] },
-        maxChars: { type: 'string', description: 'Maximum characters to return' },
+        maxChars: { type: 'number', description: 'Maximum characters to return' },
       },
       required: ['url'],
     },
