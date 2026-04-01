@@ -104,7 +104,7 @@ filename (optional): Output filename without extension (default: "document").`,
         if (sourceExt === format) {
           const finalPath = join(OUTPUT_DIR, `${filename}.${format}`);
           writeFileSync(finalPath, content);
-          return `Document created: ${finalPath}`;
+          return `Document created: ${finalPath} [FILE:${finalPath}]`;
         }
 
         // Convert
@@ -117,7 +117,7 @@ filename (optional): Output filename without extension (default: "document").`,
           renameSync(outputPath, desiredPath);
         }
 
-        return `Document created: ${desiredPath}`;
+        return `Document created: ${desiredPath} [FILE:${desiredPath}]`;
 
       } else if (action === 'convert') {
         const inputPath = params.inputPath as string;
@@ -129,7 +129,7 @@ filename (optional): Output filename without extension (default: "document").`,
         }
 
         const outputPath = convertFile(resolved, format, OUTPUT_DIR);
-        return `Converted: ${resolved} → ${outputPath}`;
+        return `Converted: ${resolved} → ${outputPath} [FILE:${outputPath}]`;
 
       } else {
         return `Unknown action "${action}". Use "create" or "convert".`;
