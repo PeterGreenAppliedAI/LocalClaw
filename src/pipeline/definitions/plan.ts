@@ -93,6 +93,7 @@ Check for these common issues:
 5. UNNECESSARY TASK: "task" specialist used when user didn't explicitly ask to add to their task list. "Find X" should just present results. "Schedule X" = cron only, do NOT also create a task — the cron job IS the automation.
 6. TOO MANY STEPS: Most tasks need 1-3 specialists. If the plan has more than 5, simplify.
 7. MISSING CONTEXT THREADING: If step 2 depends on step 1's results, the message should reference it (e.g., "Based on the results above...").
+8. MISSING DOCUMENT OUTPUT: If the user asks for a specific file format (PDF, DOCX, spreadsheet, XLSX, Word doc, slide deck), the plan MUST include a step using the "exec" specialist with the "document" tool to create/convert the output. Do NOT render decks or custom HTML — use the document tool.
 
 Return a JSON object:
 {

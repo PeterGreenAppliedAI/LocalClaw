@@ -8,6 +8,8 @@ import { buildRouterPrompt } from './prompt.js';
  * Order matters — more specific patterns (exec, cron) come before broader ones (web_search).
  */
 const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
+  // Document format requests → multi (uses document tool for PDF/DOCX/XLSX generation)
+  { pattern: /\b(pdf|docx|xlsx|pptx|word doc|spreadsheet|slide deck|presentation)\b/i, category: 'multi' },
   // Multi first (longest match / compound intent)
   { pattern: /\b(save|write file|read file).*(search|send|remind)/i, category: 'multi' },
   { pattern: /\b(search|find).*(save|send|remind|sign.*(up|me)|register|subscribe)/i, category: 'multi' },
