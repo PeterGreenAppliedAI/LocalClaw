@@ -5,6 +5,7 @@ import type { ToolContext } from './tools/types.js';
 import type { OllamaMessage } from './ollama/types.js';
 import { classifyMessage, type ClassifyResult } from './router/classifier.js';
 import { runToolLoop } from './tool-loop/engine.js';
+import { ErrorLearningStore } from './learnings/error-store.js';
 import { SessionStore } from './sessions/store.js';
 import type { ConversationTurn, SessionState } from './sessions/types.js';
 import { createEmptySessionState } from './sessions/types.js';
@@ -428,6 +429,7 @@ async function runSpecialist(
   const toolDefs = registry.getDefinitions(tools);
   const baseExecutor = registry.createExecutor();
   const workspacePath = resolveWorkspacePath(agentId, config);
+  const errorStore = new ErrorLearningStore(workspacePath);
 
   // Confirmation gate: tools in confirmTools return a preview instead of executing
   const channelSecurity = resolveChannelSecurity(config, params.sourceContext?.channel);
@@ -491,6 +493,7 @@ async function runSpecialist(
       workspacePath,
       userPriming: userPriming || undefined,
     },
+    errorStore,
   });
 
   return {

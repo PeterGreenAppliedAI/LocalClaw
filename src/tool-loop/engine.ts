@@ -6,6 +6,7 @@ import type { ReActConfig, ReActResult, ReActStep } from './types.js';
 import { estimateMessagesTokens } from '../context/tokens.js';
 import { buildReActSystemPrompt, type PromptContext } from './prompt-builder.js';
 import { parseReActResponse } from './parser.js';
+import type { ErrorLearningStore } from '../learnings/error-store.js';
 
 export interface RunReActLoopParams {
   client: OllamaClient;
@@ -17,6 +18,8 @@ export interface RunReActLoopParams {
   history?: OllamaMessage[];
   workspaceContext?: string;
   promptContext?: PromptContext;
+  /** Error learning store for recording failures and hinting from past errors */
+  errorStore?: ErrorLearningStore;
 }
 
 /**
@@ -255,7 +258,7 @@ const MAX_TOOL_RESULT_CHARS = 2000;
  *   5. Safety: max iterations limit
  */
 export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResult> {
-  const { client, config, tools, executor, toolContext, userMessage, history, workspaceContext, promptContext } = params;
+  const { client, config, tools, executor, toolContext, userMessage, history, workspaceContext, promptContext, errorStore } = params;
 
   // Build system prompt with full ReAct format instructions, tool list, and examples
   const systemPrompt = buildReActSystemPrompt(config.systemPrompt, tools, workspaceContext, promptContext);
@@ -404,6 +407,16 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
         const validation = validateToolParams(toolName, toolParams, tools);
         toolParams = validation.params;
 
+        // Check for past error hints before executing (Feature 1: Error Learning Loop)
+        let hintPrefix = '';
+        if (errorStore) {
+          const hints = errorStore.findHints(toolName, toolParams);
+          if (hints.length > 0) {
+            hintPrefix = `[Hint from past errors: ${hints.join('; ')}]\n`;
+            console.log(`[ReAct] Error hints for ${toolName}: ${hints.length} found`);
+          }
+        }
+
         let observation: string;
         const toolStart = Date.now();
 
@@ -423,8 +436,15 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
             observation = `Tool "${toolName}" failed: ${errMsg}. Try a different approach or tool.`;
             logToolCall({ tool: toolName, category: config.model, durationMs: Date.now() - toolStart, success: false, error: errMsg });
             console.warn(`[ReAct] TOOL_EXECUTION_ERROR: ${toolName} — ${errMsg}`);
+            // Record error for future learning (Feature 1)
+            if (errorStore) {
+              errorStore.recordError({ tool: toolName, params: toolParams, error: errMsg, step: i + 1, category: config.model });
+            }
           }
         }
+
+        // Prepend past error hints to observation
+        if (hintPrefix) observation = hintPrefix + observation;
 
         // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5)
         // Browser snapshots get a higher limit to preserve element ref numbers
