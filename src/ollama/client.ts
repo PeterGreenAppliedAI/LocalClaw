@@ -38,20 +38,29 @@ export class OllamaClient {
       keep_alive: this.keepAlive,
     };
 
-    let res: Response;
-    try {
-      res = await fetch(`${this.baseUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(300_000),
-      });
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'TimeoutError') {
-        throw ollamaInferenceError('Stream request timed out');
+    let res: Response | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        res = await fetch(`${this.baseUrl}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(300_000),
+        });
+        break;
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'TimeoutError') {
+          throw ollamaInferenceError('Stream request timed out');
+        }
+        if (attempt === 0) {
+          console.warn('[Ollama] Stream connection failed, retrying in 2s...');
+          await new Promise(r => setTimeout(r, 2_000));
+          continue;
+        }
+        throw ollamaUnreachable(this.baseUrl, err);
       }
-      throw ollamaUnreachable(this.baseUrl, err);
     }
+    if (!res) throw ollamaUnreachable(this.baseUrl, new Error('Connection failed after retry'));
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -130,27 +139,40 @@ export class OllamaClient {
 
   private async post<T>(path: string, body: unknown, timeoutMs = 300_000): Promise<T> {
     const jsonBody = JSON.stringify(body);
-    let res: Response;
-    try {
-      res = await fetch(`${this.baseUrl}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: jsonBody,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'TimeoutError') {
-        throw ollamaInferenceError(`Request to ${path} timed out after ${timeoutMs}ms`);
+    let lastErr: unknown;
+
+    // Retry once on connection failure (handles transient network drops, e.g., Mac sleep/wake)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(`${this.baseUrl}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: jsonBody,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'TimeoutError') {
+          throw ollamaInferenceError(`Request to ${path} timed out after ${timeoutMs}ms`);
+        }
+        lastErr = err;
+        if (attempt === 0) {
+          console.warn(`[Ollama] Connection failed, retrying in 2s...`);
+          await new Promise(r => setTimeout(r, 2_000));
+          continue;
+        }
+        throw ollamaUnreachable(this.baseUrl, err);
       }
-      throw ollamaUnreachable(this.baseUrl, err);
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw ollamaInferenceError(`${res.status} ${res.statusText}: ${text}`);
+      }
+
+      return res.json() as Promise<T>;
     }
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw ollamaInferenceError(`${res.status} ${res.statusText}: ${text}`);
-    }
-
-    return res.json() as Promise<T>;
+    throw ollamaUnreachable(this.baseUrl, lastErr);
   }
 
   private async get<T>(path: string): Promise<T> {
