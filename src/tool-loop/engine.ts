@@ -7,6 +7,7 @@ import { estimateMessagesTokens } from '../context/tokens.js';
 import { buildReActSystemPrompt, type PromptContext } from './prompt-builder.js';
 import { parseReActResponse } from './parser.js';
 import type { ErrorLearningStore } from '../learnings/error-store.js';
+import { enrichObservation } from '../learnings/pattern-matcher.js';
 
 export interface RunReActLoopParams {
   client: OllamaClient;
@@ -445,6 +446,9 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
         // Prepend past error hints to observation
         if (hintPrefix) observation = hintPrefix + observation;
+
+        // Enrich observation with error pattern detection + past learnings (Feature 2)
+        observation = enrichObservation(observation, errorStore, toolName);
 
         // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5)
         // Browser snapshots get a higher limit to preserve element ref numbers
