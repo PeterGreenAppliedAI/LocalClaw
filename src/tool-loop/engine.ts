@@ -245,6 +245,54 @@ function claimsActionWithoutToolCall(text: string): boolean {
   return ACTION_CLAIM_PATTERNS.some(p => p.test(text));
 }
 
+/**
+ * DriftTracker — detects when the model is spinning without progress.
+ * Tracks response lengths, repeated tool calls, and hedging language.
+ */
+class DriftTracker {
+  private responseLengths: number[] = [];
+  private lastToolSigs: string[] = [];
+  private hedgingCount = 0;
+
+  private static readonly HEDGING = /\b(I think|perhaps|maybe|I believe|let me try|I'm not sure|it seems|I'll try)\b/gi;
+  private static readonly RESTATING = /\b(you asked|your question|the original|going back to|as I mentioned)\b/i;
+
+  checkDrift(response: string, toolCall?: { tool: string; params: Record<string, unknown> }): 'none' | 'growing' | 'repeating' | 'hedging' {
+    // Track response lengths
+    this.responseLengths.push(response.length);
+    if (this.responseLengths.length > 3) this.responseLengths.shift();
+
+    // Track tool call signatures
+    if (toolCall) {
+      const sig = toolCall.tool + ':' + JSON.stringify(toolCall.params);
+      this.lastToolSigs.push(sig);
+      if (this.lastToolSigs.length > 3) this.lastToolSigs.shift();
+
+      // Repeating: same tool+params called twice consecutively
+      if (this.lastToolSigs.length >= 2 &&
+          this.lastToolSigs[this.lastToolSigs.length - 1] === this.lastToolSigs[this.lastToolSigs.length - 2]) {
+        return 'repeating';
+      }
+    }
+
+    // Hedging: count phrases across responses
+    const hedges = response.match(DriftTracker.HEDGING);
+    if (hedges) this.hedgingCount += hedges.length;
+    if (DriftTracker.RESTATING.test(response)) this.hedgingCount++;
+    if (this.hedgingCount >= 4) return 'hedging';
+
+    // Growing: response length increasing >50% without tool variety
+    if (this.responseLengths.length >= 3) {
+      const [a, b, c] = this.responseLengths;
+      if (c > a * 1.5 && c > b * 1.5 && !toolCall) {
+        return 'growing';
+      }
+    }
+
+    return 'none';
+  }
+}
+
 /** Max chars for a single tool observation before truncation. */
 const MAX_TOOL_RESULT_CHARS = 2000;
 
@@ -278,6 +326,8 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
   const steps: ReActStep[] = [];
   const hasReasonTool = availableToolNames.has('reason');
   let repairAttempted = false;
+  let driftRepairAttempted = false;
+  const driftTracker = new DriftTracker();
 
   // Temperature lock: ≤0.3 for tool-calling specialists (ChatGPT feedback §6)
   const effectiveTemperature = ollamaTools.length > 0
@@ -370,6 +420,27 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       console.log(`[ReAct] Step ${i + 1}: tool_call=${toolCalls![0].function.name}`);
     } else {
       console.log(`[ReAct] Step ${i + 1}: answer=${(msg.content || '').slice(0, 80)}...`);
+    }
+
+    // Drift detection (Feature 3): check for spinning/repeating/hedging
+    // Only activate after 3+ iterations — early steps are normal exploration
+    if (!driftRepairAttempted && i >= 3) {
+      const toolCallInfo = hasTools
+        ? { tool: toolCalls![0].function.name, params: toolCalls![0].function.arguments ?? {} }
+        : undefined;
+      const drift = driftTracker.checkDrift(msg.content || '', toolCallInfo);
+      if (drift !== 'none') {
+        driftRepairAttempted = true;
+        console.log(`[ReAct] Step ${i + 1}: drift detected (${drift}) — injecting re-anchor`);
+        messages.push(msg);
+        messages.push({
+          role: 'user',
+          content: `You appear to be ${drift === 'repeating' ? 'repeating the same tool call' : drift === 'hedging' ? 'hedging instead of acting' : 'generating longer responses without progress'}. `
+            + `Original request: "${userMessage}". `
+            + `Progress: ${steps.length} tool calls completed. Focus on the next concrete action to answer the request, or provide your final answer if you have enough information.`,
+        });
+        continue;
+      }
     }
 
     // If model returns tool calls, execute them
