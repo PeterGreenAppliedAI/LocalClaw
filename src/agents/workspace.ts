@@ -11,6 +11,7 @@ export const BOOTSTRAP_FILES = {
   MEMORY: 'MEMORY.md',
   HEARTBEAT: 'HEARTBEAT.md',
   BOOTSTRAP: 'BOOTSTRAP.md',
+  LEARNINGS: 'LEARNINGS.md',
 } as const;
 
 /**
@@ -219,9 +220,10 @@ export function buildWorkspaceContext(
     // Subagents: operating instructions only
     allowed.add(BOOTSTRAP_FILES.AGENTS);
   } else if (category === 'minimal') {
-    // Minimal: persona grounding only (for tool-using specialists)
+    // Minimal: persona grounding + learnings (for tool-using specialists)
     allowed.add(BOOTSTRAP_FILES.SOUL);
     allowed.add(BOOTSTRAP_FILES.IDENTITY);
+    allowed.add(BOOTSTRAP_FILES.LEARNINGS);
   } else {
     // Full context: chat, tool (legacy), cron
     allowed.add(BOOTSTRAP_FILES.SOUL);
@@ -249,6 +251,7 @@ export function buildWorkspaceContext(
     BOOTSTRAP_FILES.IDENTITY,
     BOOTSTRAP_FILES.USER,
     BOOTSTRAP_FILES.TOOLS,
+    BOOTSTRAP_FILES.LEARNINGS,
     BOOTSTRAP_FILES.HEARTBEAT,
     BOOTSTRAP_FILES.BOOTSTRAP,
   ];
@@ -271,8 +274,9 @@ export function buildWorkspaceContext(
       }
     }
 
-    // USER.md gets truncated more aggressively (summarized)
-    const limit = filename === BOOTSTRAP_FILES.USER ? Math.min(maxChars, 500) : maxChars;
+    // USER.md and LEARNINGS.md get truncated more aggressively to protect token budget
+    const limit = (filename === BOOTSTRAP_FILES.USER || filename === BOOTSTRAP_FILES.LEARNINGS)
+      ? Math.min(maxChars, 500) : maxChars;
     const truncated = truncateBootstrapContent(content, limit);
     sections.push(`## ${filename}\n\n${truncated}\n`);
   }

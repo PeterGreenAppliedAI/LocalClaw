@@ -293,6 +293,12 @@ export class Orchestrator {
         console.log(`[Heartbeat] Committed ${extractedFacts.length} facts from transcript review`);
       }
 
+      // Promote recurring error patterns to LEARNINGS.md
+      const promoted = await this.promoteRecurringLearnings(workspacePath);
+      if (promoted > 0) {
+        console.log(`[Heartbeat] Promoted ${promoted} learnings from error patterns`);
+      }
+
       // Query heartbeat tasks from cron store
       const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
 
@@ -478,6 +484,60 @@ export class Orchestrator {
    * Review recent session transcripts and extract facts via FactStore.
    * Called by the heartbeat — autonomous, no user approval needed.
    */
+  /**
+   * Scan error store for recurring patterns (3+ occurrences) and promote
+   * them to LEARNINGS.md in the workspace root for injection into context.
+   */
+  private async promoteRecurringLearnings(workspacePath: string): Promise<number> {
+    try {
+      const { ErrorLearningStore } = await import('./learnings/error-store.js');
+      const store = new ErrorLearningStore(workspacePath);
+      const entries = store.loadAll();
+      if (entries.length === 0) return 0;
+
+      // Group by tool + normalized error prefix (first 60 chars)
+      const groups = new Map<string, { tool: string; error: string; count: number }>();
+      for (const e of entries) {
+        const key = `${e.tool}:${e.error.slice(0, 60).toLowerCase().trim()}`;
+        const existing = groups.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          groups.set(key, { tool: e.tool, error: e.error.slice(0, 150), count: 1 });
+        }
+      }
+
+      // Filter to patterns with 3+ occurrences
+      const recurring = [...groups.values()].filter(g => g.count >= 3);
+      if (recurring.length === 0) return 0;
+
+      // Read existing LEARNINGS.md for dedup
+      const learningsPath = join(workspacePath, 'LEARNINGS.md');
+      let existing = '';
+      try { existing = readFileSync(learningsPath, 'utf-8'); } catch { /* doesn't exist yet */ }
+
+      const newLines: string[] = [];
+      for (const r of recurring) {
+        const line = `- **${r.tool}**: ${r.error} (${r.count}x)`;
+        // Dedup: skip if tool+error prefix already in file
+        if (existing.includes(r.tool) && existing.includes(r.error.slice(0, 40))) continue;
+        newLines.push(line);
+      }
+
+      if (newLines.length === 0) return 0;
+
+      const content = existing
+        ? existing.trimEnd() + '\n' + newLines.join('\n') + '\n'
+        : `# Learnings\n\nRecurring error patterns promoted from tool execution history.\n\n${newLines.join('\n')}\n`;
+
+      writeFileSync(learningsPath, content);
+      return newLines.length;
+    } catch (err) {
+      console.warn('[Heartbeat] Learning promotion failed:', err instanceof Error ? err.message : err);
+      return 0;
+    }
+  }
+
   private async reviewTranscripts(workspacePath: string, agentId: string): Promise<FactInput[]> {
     const sessionsDir = join(this.config.session.transcriptDir, agentId);
     if (!existsSync(sessionsDir)) return [];
@@ -674,6 +734,27 @@ export class Orchestrator {
         { text: replyText },
       ).catch((err) => {
         console.warn('[Orchestrator] Failed to send discard reply:', err instanceof Error ? err.message : err);
+      });
+      return;
+    }
+
+    if (trimmed === '!promote') {
+      const route = resolveRoute(
+        { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
+        this.config,
+      );
+      const workspacePath = resolveWorkspacePath(route.agentId, this.config);
+
+      const promoted = await this.promoteRecurringLearnings(workspacePath);
+      const replyText = promoted > 0
+        ? `Promoted ${promoted} recurring error patterns to LEARNINGS.md.`
+        : 'No recurring patterns found to promote (need 3+ occurrences of the same error).';
+
+      await this.channelRegistry.send(
+        { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+        { text: replyText },
+      ).catch((err) => {
+        console.warn('[Orchestrator] Failed to send promote reply:', err instanceof Error ? err.message : err);
       });
       return;
     }
