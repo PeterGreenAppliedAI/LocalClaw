@@ -344,6 +344,14 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   // Strip thinking tags from models that emit <think>...</think> blocks
   result.answer = result.answer.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
+  // Post-task self-review (Feature 4): lightweight quality check for tool-heavy responses
+  if (!params.cronMode) {
+    const correction = await runPostTaskReview(client, config, message, result.answer, result.steps, effectiveCategory);
+    if (correction) {
+      result.answer += `\n\n${correction}`;
+    }
+  }
+
   logDispatch({
     category: effectiveCategory,
     confidence: classification.confidence,
@@ -508,6 +516,61 @@ async function runSpecialist(
       observation: s.observation,
     })),
   };
+}
+
+/** Categories that benefit from post-task review */
+const REVIEW_CATEGORIES = new Set(['exec', 'multi', 'web_search']);
+
+/**
+ * Post-task self-review — lightweight quality check on specialist output.
+ * Uses the router model (fast) to verify the answer addresses the request
+ * and tool errors weren't glossed over. Returns a correction note or null.
+ */
+async function runPostTaskReview(
+  client: OllamaClient,
+  config: LocalClawConfig,
+  originalMessage: string,
+  answer: string,
+  steps: Array<{ tool?: string; observation?: string }> | undefined,
+  category: string,
+): Promise<string | null> {
+  // Only review tool-heavy responses in relevant categories
+  if (!REVIEW_CATEGORIES.has(category)) return null;
+  const toolSteps = steps?.filter(s => s.tool) ?? [];
+  if (toolSteps.length < 2) return null;
+
+  const toolSummary = toolSteps.map(s => `${s.tool}: ${(s.observation ?? '').slice(0, 80)}`).join('\n');
+
+  try {
+    const response = await client.chat({
+      model: config.router.model,
+      messages: [{
+        role: 'user',
+        content: `Review this AI response for quality. Be brief.
+
+Request: "${originalMessage.slice(0, 200)}"
+Response: "${answer.slice(0, 500)}"
+Tool calls (${toolSteps.length}):
+${toolSummary.slice(0, 400)}
+
+Check: (1) Does it answer the question? (2) Were tool errors ignored? (3) Is info fabricated?
+If issues found, respond starting with "Note:" and a brief correction.
+If adequate, respond with just "OK".`,
+      }],
+      options: { num_predict: 256, temperature: 0.2 },
+    });
+
+    const text = (response.message?.content ?? '').trim();
+    if (text.startsWith('Note:') || text.startsWith('note:')) {
+      console.log(`[Dispatch] Post-task review correction: ${text.slice(0, 100)}`);
+      return text;
+    }
+    return null;
+  } catch (err) {
+    // Review is best-effort — don't block the response
+    console.warn('[Dispatch] Post-task review failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 /**
