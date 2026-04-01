@@ -345,10 +345,11 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   result.answer = result.answer.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
   // Post-task self-review (Feature 4): lightweight quality check for tool-heavy responses
+  // Corrections are logged for learning but NOT appended to user-facing answer
   if (!params.cronMode) {
     const correction = await runPostTaskReview(client, config, message, result.answer, result.steps, effectiveCategory);
     if (correction) {
-      result.answer += `\n\n${correction}`;
+      console.log(`[Dispatch] Post-task review: ${correction.slice(0, 150)}`);
     }
   }
 
