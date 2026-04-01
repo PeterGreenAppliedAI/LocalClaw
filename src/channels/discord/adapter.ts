@@ -112,6 +112,24 @@ export class DiscordAdapter implements ChannelAdapter {
       }
     });
 
+    // Track connection state changes (discord.js handles reconnection internally)
+    this.client.on('error', (err) => {
+      console.warn('[Discord] Client error:', err.message);
+      this.currentStatus = 'error';
+    });
+    this.client.on('shardDisconnect', () => {
+      console.warn('[Discord] Shard disconnected');
+      this.currentStatus = 'connecting';
+    });
+    this.client.on('shardReconnecting', () => {
+      console.log('[Discord] Reconnecting...');
+      this.currentStatus = 'connecting';
+    });
+    this.client.on('shardResume', () => {
+      console.log('[Discord] Reconnected');
+      this.currentStatus = 'connected';
+    });
+
     await this.client.login(config.token);
     this.currentStatus = 'connected';
     console.log(`[Discord] Logged in as ${this.client.user?.tag}`);

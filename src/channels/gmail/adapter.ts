@@ -32,10 +32,19 @@ export class GmailAdapter implements ChannelAdapter {
       throw channelConnectError('gmail', err);
     }
 
-    // Start polling for unread messages
+    // Start polling for unread messages (poll errors are transient — keep retrying)
+    let consecutiveErrors = 0;
     this.pollTimer = setInterval(() => {
-      this.poll().catch((err) => {
-        console.warn('[Gmail] CHANNEL_CONNECT_ERROR: Poll error —', err instanceof Error ? err.message : err);
+      this.poll().then(() => {
+        if (consecutiveErrors > 0) {
+          console.log('[Gmail] Poll recovered');
+          this.currentStatus = 'connected';
+          consecutiveErrors = 0;
+        }
+      }).catch((err) => {
+        consecutiveErrors++;
+        console.warn(`[Gmail] Poll error (${consecutiveErrors}):`, err instanceof Error ? err.message : err);
+        if (consecutiveErrors >= 5) this.currentStatus = 'error';
       });
     }, POLL_INTERVAL_MS);
 

@@ -124,6 +124,13 @@ export class TelegramAdapter implements ChannelAdapter {
       await this.handler(inbound);
     });
 
+    // grammy's bot.start() handles long-polling with automatic retry on transient errors.
+    // Catch fatal errors (e.g., invalid token) and update status.
+    bot.catch((err: any) => {
+      console.warn('[Telegram] Bot error:', err.message ?? err);
+      this.currentStatus = 'error';
+    });
+
     bot.start();
     this.currentStatus = 'connected';
     console.log('[Telegram] Bot started');

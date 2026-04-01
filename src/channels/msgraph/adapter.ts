@@ -38,10 +38,19 @@ export class MsGraphAdapter implements ChannelAdapter {
       throw channelConnectError('msgraph', err);
     }
 
-    // Start polling for unread messages
+    // Start polling for unread messages (poll errors are transient — keep retrying)
+    let consecutiveErrors = 0;
     this.pollTimer = setInterval(() => {
-      this.poll().catch((err) => {
-        console.warn('[MsGraph] CHANNEL_CONNECT_ERROR: Poll error —', err instanceof Error ? err.message : err);
+      this.poll().then(() => {
+        if (consecutiveErrors > 0) {
+          console.log('[MsGraph] Poll recovered');
+          this.currentStatus = 'connected';
+          consecutiveErrors = 0;
+        }
+      }).catch((err) => {
+        consecutiveErrors++;
+        console.warn(`[MsGraph] Poll error (${consecutiveErrors}):`, err instanceof Error ? err.message : err);
+        if (consecutiveErrors >= 5) this.currentStatus = 'error';
       });
     }, POLL_INTERVAL_MS);
 

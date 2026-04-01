@@ -99,6 +99,13 @@ export class SlackAdapter implements ChannelAdapter {
       await this.handler(inbound);
     });
 
+    // Slack Bolt handles WebSocket reconnection internally in Socket Mode.
+    // Catch unhandled errors to update status.
+    this.app.error(async (err: any) => {
+      console.warn('[Slack] App error:', err.message ?? err);
+      this.currentStatus = 'error';
+    });
+
     await this.app.start();
     this.currentStatus = 'connected';
     console.log('[Slack] Bot started (Socket Mode)');
