@@ -37,6 +37,7 @@ import { createTaskDoneTool } from './task-done.js';
 import { createTaskRemoveTool } from './task-remove.js';
 import { createReasonTool } from './reason.js';
 import { createMemoryCleanupTool } from './memory-cleanup.js';
+import { createDocumentTool } from './document.js';
 
 export interface RegisterToolsOptions {
   cronService?: CronService;
@@ -149,6 +150,9 @@ export async function registerAllTools(
   if (options?.ollamaClient && config.reasoning) {
     registry.register(createReasonTool(options.ollamaClient, config.reasoning));
   }
+
+  // Document tool (LibreOffice headless)
+  registry.register(createDocumentTool());
 
   // Workspace tools (always available)
   registry.register(createWorkspaceReadTool());
