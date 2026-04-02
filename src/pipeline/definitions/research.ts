@@ -262,7 +262,7 @@ export const researchPipeline: PipelineDefinition = {
         ctx.params._allSearchResults = results.join('\n\n---\n\n');
         const allText = ctx.params._allSearchResults as string;
         const urlMatches = allText.match(/https?:\/\/[^\s)"\]]+/g) ?? [];
-        const unique = [...new Set(urlMatches)].slice(0, 5);
+        const unique = [...new Set(urlMatches)].slice(0, 8);
         ctx.params._urls = unique;
         return unique;
       },
@@ -279,17 +279,79 @@ export const researchPipeline: PipelineDefinition = {
       },
     },
 
-    // --- Collect fetched pages ---
+    // --- Collect fetched pages, filter failures ---
     {
       name: 'collect_pages',
       type: 'code',
       execute: (ctx) => {
         const results = ctx.stageResults.fetch_all as string[];
         const urls = ctx.params._urls as string[];
-        ctx.params._fetchedPages = results.map((content, i) =>
-          `[Source: ${urls[i]}]\n${content}`
-        );
-        return ctx.params._fetchedPages;
+        const pages: string[] = [];
+        const failedUrls: string[] = [];
+
+        for (let i = 0; i < results.length; i++) {
+          const content = results[i];
+          if (content.startsWith('Error') || content.length < 100) {
+            failedUrls.push(urls[i]);
+          } else {
+            pages.push(`[Source: ${urls[i]}]\n${content}`);
+          }
+        }
+
+        ctx.params._fetchedPages = pages;
+        ctx.params._failedUrlCount = failedUrls.length;
+        console.log(`[Research] Fetched ${pages.length} pages, ${failedUrls.length} failed`);
+        return pages;
+      },
+    },
+
+    // --- Supplementary search if too many fetches failed ---
+    {
+      name: 'supplementary_search',
+      type: 'parallel_tool',
+      tool: 'web_search',
+      when: (ctx) => (ctx.params._failedUrlCount as number ?? 0) >= 3,
+      resolveParamsList: (ctx) => {
+        console.log('[Research] Too many fetch failures — running supplementary search');
+        return [{ query: `${ctx.params.topic} ${new Date().getFullYear()} analysis`, count: '5' }];
+      },
+    },
+
+    // --- Supplementary fetch ---
+    {
+      name: 'supplementary_fetch',
+      type: 'parallel_tool',
+      tool: 'web_fetch',
+      when: (ctx) => !!(ctx.stageResults.supplementary_search),
+      resolveParamsList: (ctx) => {
+        const results = ctx.stageResults.supplementary_search as string[];
+        const allText = (results ?? []).join('\n');
+        const urlMatches = allText.match(/https?:\/\/[^\s)"\]]+/g) ?? [];
+        const existingUrls = new Set(ctx.params._urls as string[]);
+        const newUrls = [...new Set(urlMatches)].filter(u => !existingUrls.has(u)).slice(0, 4);
+        ctx.params._supplementaryUrls = newUrls;
+        return newUrls.map(url => ({ url, extractMode: 'text', maxChars: '4000' }));
+      },
+    },
+
+    // --- Merge supplementary pages ---
+    {
+      name: 'merge_supplementary',
+      type: 'code',
+      when: (ctx) => !!(ctx.stageResults.supplementary_fetch),
+      execute: (ctx) => {
+        const results = ctx.stageResults.supplementary_fetch as string[];
+        const urls = ctx.params._supplementaryUrls as string[];
+        const pages = ctx.params._fetchedPages as string[];
+
+        for (let i = 0; i < results.length; i++) {
+          if (!results[i].startsWith('Error') && results[i].length >= 100) {
+            pages.push(`[Source: ${urls[i]}]\n${results[i]}`);
+          }
+        }
+
+        ctx.params._fetchedPages = pages;
+        console.log(`[Research] After supplementary: ${pages.length} total pages`);
       },
     },
 
