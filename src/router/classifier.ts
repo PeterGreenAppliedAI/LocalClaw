@@ -89,15 +89,22 @@ function isGreeting(message: string): boolean {
   return GREETING_PATTERNS.some(p => p.test(message));
 }
 
-function isLikelyFollowUp(message: string): boolean {
+/** Categories where multi-turn sticky makes sense (conversation-oriented) */
+const STICKY_CATEGORIES = new Set(['chat', 'memory']);
+
+function isLikelyFollowUp(message: string, previousCategory?: string): boolean {
   const trimmed = message.trim();
+  // Commands are never follow-ups
+  if (trimmed.startsWith('!')) return false;
+  // Only stick on conversation-oriented categories — tool specialists finish in one turn
+  if (previousCategory && !STICKY_CATEGORIES.has(previousCategory)) return false;
   // Long, self-contained messages are likely new topics
   if (trimmed.length > 200) return false;
   // Strong new-topic signals override stickiness
   if (hasStrongNewTopicSignal(trimmed)) return false;
   // Simple greetings are never follow-ups
   if (isGreeting(trimmed)) return false;
-  // Under 200 chars without strong new-topic signals — likely a follow-up
+  // Short continuation of a conversation-oriented specialist
   return true;
 }
 
@@ -123,7 +130,7 @@ export async function classifyMessage(
   // Sticky category: follow-ups stay on the previous specialist
   // Break out if: strong new-topic signal, long message, OR keywords point to a different category
   if (previousCategory && validCategories.has(previousCategory)) {
-    if (isLikelyFollowUp(message)) {
+    if (isLikelyFollowUp(message, previousCategory)) {
       // Check if keywords point to a DIFFERENT category — if so, don't stick
       const keywordHit = applyKeywordHeuristics(message, validCategories);
       if (keywordHit && keywordHit !== previousCategory) {
