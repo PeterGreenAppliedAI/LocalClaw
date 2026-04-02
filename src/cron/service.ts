@@ -5,12 +5,15 @@ import type { CronJob, CronJobCreate, CronJobUpdate } from './types.js';
 export interface CronServiceDeps {
   store: CronStore;
   onTrigger: (job: CronJob) => Promise<void>;
+  /** Called when a job fails all retry attempts — for notifying the delivery channel */
+  onFailure?: (job: CronJob, error: string) => Promise<void>;
   timezone?: string;
 }
 
 export class CronService {
   private store: CronStore;
   private onTrigger: (job: CronJob) => Promise<void>;
+  private onFailure?: (job: CronJob, error: string) => Promise<void>;
   private timezone: string;
   private schedulers = new Map<string, Cron>();
   private running = false;
@@ -18,6 +21,7 @@ export class CronService {
   constructor(deps: CronServiceDeps) {
     this.store = deps.store;
     this.onTrigger = deps.onTrigger;
+    this.onFailure = deps.onFailure;
     this.timezone = deps.timezone ?? 'America/New_York';
   }
 
@@ -114,13 +118,35 @@ export class CronService {
     }
   }
 
+  private static readonly MAX_RETRIES = 2;
+  private static readonly RETRY_DELAYS_MS = [30_000, 60_000]; // 30s, 60s
+
   private async executeJob(job: CronJob): Promise<void> {
     console.log(`[Cron] Triggering job: ${job.name} (${job.id})`);
-    try {
-      await this.onTrigger(job);
-      this.store.updateLastRun(job.id);
-    } catch (err) {
-      console.warn(`[Cron] TOOL_EXECUTION_ERROR: Job ${job.id} failed —`, err instanceof Error ? err.message : err);
+
+    for (let attempt = 0; attempt <= CronService.MAX_RETRIES; attempt++) {
+      try {
+        await this.onTrigger(job);
+        this.store.updateLastRun(job.id);
+        if (attempt > 0) {
+          console.log(`[Cron] Job ${job.id} succeeded on retry ${attempt}`);
+        }
+        return;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+
+        if (attempt < CronService.MAX_RETRIES) {
+          const delay = CronService.RETRY_DELAYS_MS[attempt];
+          console.warn(`[Cron] Job ${job.id} failed (attempt ${attempt + 1}/${CronService.MAX_RETRIES + 1}): ${errMsg} — retrying in ${delay / 1000}s`);
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          console.warn(`[Cron] Job ${job.id} failed after ${CronService.MAX_RETRIES + 1} attempts: ${errMsg}`);
+          // Notify via onTrigger's delivery channel if possible
+          if (this.onFailure) {
+            try { await this.onFailure(job, errMsg); } catch { /* best-effort */ }
+          }
+        }
+      }
     }
   }
 }

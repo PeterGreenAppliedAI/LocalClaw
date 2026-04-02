@@ -221,6 +221,14 @@ export class Orchestrator {
             );
           }
         },
+        onFailure: async (job, error) => {
+          if (job.delivery.target) {
+            await this.channelRegistry.send(
+              { channel: job.delivery.channel, channelId: job.delivery.target },
+              { text: `[Cron: ${job.name}] Failed after 3 attempts: ${error}` },
+            ).catch(() => {});
+          }
+        },
       });
     }
 
