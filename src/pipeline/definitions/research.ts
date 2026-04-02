@@ -572,6 +572,7 @@ export const researchPipeline: PipelineDefinition = {
                 ].join('\n'),
                 user: [
                   `Topic: ${ctx.params.topic}`,
+                  `Today's date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`,
                   `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
                   `Sections: ${JSON.stringify(synthesis?.slides ?? [], null, 2)}`,
                   `Available charts: ${JSON.stringify(fsChartPaths)}`,
