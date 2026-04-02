@@ -1,6 +1,70 @@
+import { writeFileSync, mkdirSync, readdirSync, unlinkSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PipelineDefinition, PipelineContext } from '../types.js';
 import { SkillStore } from '../../skills/store.js';
 import { findMatchingSkill } from '../../skills/matcher.js';
+
+// --- Foreman handoff types ---
+
+interface CompletedStep {
+  index: number;
+  specialist: string;
+  purpose: string;
+  status: 'success' | 'error';
+  resultFile: string;
+  filePaths: string[];
+  urls: string[];
+}
+
+interface ForemanState {
+  goal: string;
+  plan: PlanStep[];
+  completedSteps: CompletedStep[];
+  currentStep: number;
+}
+
+const ARTIFACT_DIR = 'data/workspaces/main/.plan-artifacts';
+
+function cleanArtifactDir(): void {
+  if (!existsSync(ARTIFACT_DIR)) return;
+  try {
+    for (const f of readdirSync(ARTIFACT_DIR)) {
+      try { unlinkSync(join(ARTIFACT_DIR, f)); } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+}
+
+function buildHandoffMessage(step: PlanStep, stepIndex: number, state: ForemanState): string {
+  const sections: string[] = [];
+
+  // Task — the specialist's specific job
+  sections.push(`## Your Task\n${step.message}`);
+
+  // Plan context — where this fits
+  sections.push(`## Plan Context\nOverall goal: "${state.goal}"\nThis is step ${stepIndex + 1} of ${state.plan.length}. You are the ${step.specialist} specialist.`);
+
+  // Completed steps — status + artifact locations (no raw content)
+  if (state.completedSteps.length > 0) {
+    const lines = state.completedSteps.map(s => {
+      let line = `- Step ${s.index + 1} (${s.specialist}): ${s.purpose} → ${s.status}`;
+      line += `\n  Full result: ${s.resultFile} (use read_file to access)`;
+      if (s.filePaths.length > 0) line += `\n  Files: ${s.filePaths.join(', ')}`;
+      if (s.urls.length > 0) line += `\n  URLs: ${s.urls.slice(0, 5).join(', ')}`;
+      return line;
+    });
+    sections.push(`## What's Been Done\n${lines.join('\n')}`);
+  }
+
+  // All artifacts — flat list for quick reference
+  const allFiles = state.completedSteps.flatMap(s => [s.resultFile, ...s.filePaths]);
+  const allUrls = state.completedSteps.flatMap(s => s.urls);
+  if (allFiles.length > 0 || allUrls.length > 0) {
+    const items = [...allFiles.map(f => `- ${f}`), ...allUrls.slice(0, 8).map(u => `- ${u}`)];
+    sections.push(`## Available Artifacts\n${items.join('\n')}`);
+  }
+
+  return sections.join('\n\n');
+}
 
 /**
  * Plan pipeline — decomposes a complex goal into executable steps,
@@ -279,6 +343,17 @@ export const planPipeline: PipelineDefinition = {
         ctx.params._plan = steps;
         ctx.params._stepIndex = 0;
         ctx.params._results = [] as string[];
+
+        // Initialize foreman state + clean old artifacts
+        cleanArtifactDir();
+        mkdirSync(ARTIFACT_DIR, { recursive: true });
+        ctx.params._foremanState = {
+          goal: ctx.userMessage,
+          plan: steps,
+          completedSteps: [],
+          currentStep: 0,
+        } satisfies ForemanState;
+
         console.log(`[Plan] Generated ${steps.length} steps`);
       },
     },
@@ -366,14 +441,11 @@ export const planPipeline: PipelineDefinition = {
             }
 
             const step = plan[stepIndex];
+            const foremanState = ctx.params._foremanState as ForemanState;
             console.log(`[Plan] Step ${stepIndex + 1}/${plan.length}: ${step.specialist} — ${step.purpose}`);
 
-            // Thread context from previous steps into the message
-            let message = step.message;
-            if (stepIndex > 0 && results.length > 0) {
-              const priorContext = results.slice(-2).join('\n\n');
-              message = `${step.message}\n\nContext from previous steps:\n${priorContext}`;
-            }
+            // Build structured handoff message (foreman pattern)
+            const message = buildHandoffMessage(step, stepIndex, foremanState);
 
             const stepStart = Date.now();
 
@@ -389,6 +461,25 @@ export const planPipeline: PipelineDefinition = {
                 ctx.params._lastResult = observation;
                 ctx.params._lastSuccess = true;
 
+                // Write-through artifact: full result to disk
+                const resultFile = join(ARTIFACT_DIR, `step-${stepIndex + 1}.txt`);
+                try { writeFileSync(resultFile, observation); } catch { /* best-effort */ }
+
+                // Extract structured references
+                const filePaths = observation.match(/(?:data\/|research\/)[^\s,)"]+/g) ?? [];
+                const urls = [...new Set(observation.match(/https?:\/\/[^\s)"\]]+/g) ?? [])];
+
+                // Update foreman state
+                foremanState.completedSteps.push({
+                  index: stepIndex,
+                  specialist: step.specialist,
+                  purpose: step.purpose,
+                  status: 'success',
+                  resultFile,
+                  filePaths,
+                  urls,
+                });
+
                 ctx.metricsCollector?.trackStep({
                   index: stepIndex,
                   tool: step.specialist,
@@ -402,6 +493,20 @@ export const planPipeline: PipelineDefinition = {
                 results.push(`Step ${stepIndex + 1} (${step.specialist}): ${step.purpose}\nError: ${errMsg}`);
                 ctx.params._lastResult = `Error: ${errMsg}`;
                 ctx.params._lastSuccess = false;
+
+                // Write error artifact
+                const resultFile = join(ARTIFACT_DIR, `step-${stepIndex + 1}.txt`);
+                try { writeFileSync(resultFile, `Error: ${errMsg}`); } catch { /* best-effort */ }
+
+                foremanState.completedSteps.push({
+                  index: stepIndex,
+                  specialist: step.specialist,
+                  purpose: step.purpose,
+                  status: 'error',
+                  resultFile,
+                  filePaths: [],
+                  urls: [],
+                });
 
                 ctx.metricsCollector?.trackStep({
                   index: stepIndex,
@@ -419,6 +524,7 @@ export const planPipeline: PipelineDefinition = {
               ctx.params._lastSuccess = false;
             }
 
+            foremanState.currentStep = stepIndex + 1;
             ctx.params._stepIndex = stepIndex + 1;
           },
         },
