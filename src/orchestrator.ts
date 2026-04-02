@@ -770,6 +770,45 @@ export class Orchestrator {
       return;
     }
 
+    if (trimmed === '!cleanup') {
+      const route = resolveRoute(
+        { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
+        this.config,
+      );
+      const workspacePath = resolveWorkspacePath(route.agentId, this.config);
+
+      const cleanupTool = this.toolRegistry.get('memory_cleanup');
+      if (!cleanupTool) {
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+          { text: 'Memory cleanup tool not available.' },
+        ).catch(() => {});
+        return;
+      }
+
+      try {
+        const result = await cleanupTool.execute({}, {
+          agentId: route.agentId,
+          sessionKey: route.sessionKey,
+          workspacePath,
+          senderId: msg.senderId,
+        });
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+          { text: result },
+        ).catch((err) => {
+          console.warn('[Orchestrator] Failed to send cleanup reply:', err instanceof Error ? err.message : err);
+        });
+      } catch (err) {
+        console.warn('[Orchestrator] Cleanup failed:', err instanceof Error ? err.message : err);
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+          { text: 'Memory cleanup failed. Try again later.' },
+        ).catch(() => {});
+      }
+      return;
+    }
+
     if (trimmed === '!promote') {
       const route = resolveRoute(
         { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
