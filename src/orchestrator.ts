@@ -66,7 +66,27 @@ function extractMediaAttachments(text: string): {
       attachments.push({ data, mimeType: mimeMap[ext] ?? 'application/octet-stream', filename: filePath.split('/').pop() ?? 'file' });
       return '';
     } catch { return match; }
-  }).trim();
+  });
+
+  // Catch document file paths the model may have reformatted (markdown links, plain mentions)
+  // Matches paths like data/media/documents/name.pdf or absolute paths to media/documents/
+  const docPathRe = /(?:\[([^\]]*)\]\([^)]*\)|(?:^|\s))((?:\/[^\s]*|data)\/media\/documents\/[^\s)]+\.(?:pdf|docx|xlsx|pptx|csv))/gim;
+  const seenPaths = new Set(attachments.map(a => a.filename));
+  for (const m of cleanText.matchAll(docPathRe)) {
+    const filePath = (m[2] || '').trim();
+    const filename = filePath.split('/').pop() ?? 'file';
+    if (seenPaths.has(filename)) continue;
+    try {
+      const data = readFileSync(filePath);
+      const ext = filePath.split('.').pop()?.toLowerCase() ?? 'bin';
+      attachments.push({ data, mimeType: mimeMap[ext] ?? 'application/octet-stream', filename });
+      seenPaths.add(filename);
+      // Strip the markdown link or path reference from text
+      cleanText = cleanText.replace(m[0], '').trim();
+    } catch { /* file doesn't exist at this path */ }
+  }
+
+  cleanText = cleanText.trim();
 
   return { cleanText, attachments };
 }
