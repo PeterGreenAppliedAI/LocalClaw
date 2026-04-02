@@ -500,6 +500,13 @@ export const planPipeline: PipelineDefinition = {
         const results = ctx.params._results as string[];
         const planSummary = ctx.params._planSummary as string | undefined;
 
+        // Strip [FILE:] tokens from results before LLM sees them — collect for post-summary append
+        const fileTokens: string[] = [];
+        const cleanResults = results.map(r =>
+          r.replace(/\[FILE:([^\]]+)\]/g, (_m, p: string) => { fileTokens.push(p.trim()); return ''; }),
+        );
+        ctx.params._fileTokens = fileTokens;
+
         return {
           system: `Tell the user what you did and what they got. Be direct and concise.
 
@@ -512,8 +519,20 @@ RULES:
 - Do NOT add emoji section headers like ✅ ⚠️ 🕒 🔧.
 - If everything worked, just say what was done. No "limitations" section. No "next steps" section.
 - Short is better than long. 3-5 sentences is usually enough.`,
-          user: `Goal: "${ctx.userMessage}"\n\n${planSummary ? `Plan summary: ${planSummary}\n\n` : ''}Step results:\n${results.join('\n\n')}`,
+          user: `Goal: "${ctx.userMessage}"\n\n${planSummary ? `Plan summary: ${planSummary}\n\n` : ''}Step results:\n${cleanResults.join('\n\n')}`,
         };
+      },
+    },
+
+    // Stage 5.5: Re-append [FILE:] tokens stripped before summarization
+    {
+      name: 'attach_files',
+      type: 'code',
+      execute: (ctx) => {
+        const fileTokens = (ctx.params._fileTokens as string[]) ?? [];
+        if (fileTokens.length > 0 && ctx.answer) {
+          ctx.answer += fileTokens.map(p => ` [FILE:${p}]`).join('');
+        }
       },
     },
 
