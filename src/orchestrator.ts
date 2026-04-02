@@ -338,6 +338,12 @@ export class Orchestrator {
         console.log(`[Heartbeat] Promoted ${promoted} learnings from error patterns`);
       }
 
+      // Clean up old generated media files (PDFs, screenshots, research decks)
+      const cleaned = this.cleanupOldMedia();
+      if (cleaned > 0) {
+        console.log(`[Heartbeat] Cleaned up ${cleaned} old media files`);
+      }
+
       // Query heartbeat tasks from cron store
       const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
 
@@ -528,6 +534,49 @@ export class Orchestrator {
    * Scan error store for recurring patterns (3+ occurrences) and promote
    * them to LEARNINGS.md in the workspace root for injection into context.
    */
+  /** Delete generated media files older than 7 days. Returns count of files removed. */
+  private cleanupOldMedia(): number {
+    const MEDIA_DIRS = ['data/media/documents', 'data/media/browser'];
+    const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+    const now = Date.now();
+    let removed = 0;
+
+    for (const dir of MEDIA_DIRS) {
+      if (!existsSync(dir)) continue;
+      try {
+        for (const file of readdirSync(dir)) {
+          const filePath = join(dir, file);
+          try {
+            const stat = statSync(filePath);
+            if (stat.isFile() && now - stat.mtimeMs > MAX_AGE_MS) {
+              unlinkSync(filePath);
+              removed++;
+            }
+          } catch { /* skip unreadable files */ }
+        }
+      } catch { /* skip unreadable dirs */ }
+    }
+
+    // Also clean old research HTML files (not the workspace, just research output)
+    const researchDir = 'data/workspaces/main/research';
+    if (existsSync(researchDir)) {
+      try {
+        for (const entry of readdirSync(researchDir)) {
+          const entryPath = join(researchDir, entry);
+          try {
+            const stat = statSync(entryPath);
+            if (stat.isFile() && now - stat.mtimeMs > MAX_AGE_MS) {
+              unlinkSync(entryPath);
+              removed++;
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+
+    return removed;
+  }
+
   private async promoteRecurringLearnings(workspacePath: string): Promise<number> {
     try {
       const { ErrorLearningStore } = await import('./learnings/error-store.js');
