@@ -835,7 +835,7 @@ export class Orchestrator {
 
       // Parse --type flag
       const typeMatch = rawArgs.match(/^--(\w+)\s+/);
-      const validTypes = ['deck', 'brief', 'deepdive', 'market', 'teardown', 'memo'];
+      const validTypes = ['deck', 'brief', 'deepdive', 'market', 'teardown', 'memo', 'report'];
       const artifactType = typeMatch && validTypes.includes(typeMatch[1]) ? typeMatch[1] : 'memo';
       const topic = typeMatch ? rawArgs.slice(typeMatch[0].length).trim() : rawArgs;
 

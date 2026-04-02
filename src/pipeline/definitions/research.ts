@@ -8,6 +8,7 @@ const SECTION_GUIDES: Record<string, string> = {
   market: 'Title → Exec Summary → Industry Overview → Trends → Segments → Landscape Map → Competitors → Share → SWOT → Recommendations → Projections → Appendix (12-15 slides)',
   teardown: 'Title → Exec Summary → Competitor Overview → Product Matrix → Pricing → Strengths/Weaknesses → Positioning → Opportunities → Recommendations → Appendix (10-12 slides)',
   deepdive: 'Title → Context → Architecture → Flow → Deep Dive → Performance → Trade-offs → Limitations → Roadmap → Appendix (10-15 slides)',
+  report: 'Executive Summary → Background → Analysis Section 1 → Analysis Section 2 → Analysis Section 3 → Data & Evidence → Recommendations → Sources (6-10 sections)',
 };
 
 const CHART_RULES = `Chart rules:
@@ -90,6 +91,59 @@ const SLIDE_COMPONENTS = `Slide components:
 - Callout: <div class="callout">Key insight</div>
 - Source: <p class="source">Source: URL</p>`;
 
+// --- Report mode: professional document styling ---
+const REPORT_CSS = `
+body { font-family: Georgia, 'Times New Roman', serif; color: #1a1a1a; background: #fff; margin: 0; padding: 0; line-height: 1.7; }
+.report { max-width: 780px; margin: 0 auto; padding: 40px 50px; }
+h1.report-title { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #111; border-bottom: 3px solid #2563eb; padding-bottom: 12px; margin-bottom: 8px; }
+.report-meta { font-size: 13px; color: #666; margin-bottom: 30px; }
+h2 { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; font-weight: 600; color: #1e40af; margin-top: 32px; margin-bottom: 12px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+h3 { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 600; color: #374151; margin-top: 20px; }
+p { margin: 10px 0; font-size: 14px; }
+ul, ol { margin: 10px 0 10px 20px; font-size: 14px; }
+li { margin-bottom: 6px; }
+.executive-summary { background: #f0f4ff; border-left: 4px solid #2563eb; padding: 16px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }
+.executive-summary p { margin: 6px 0; }
+.callout { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+th { background: #1e40af; color: #fff; padding: 10px 12px; text-align: left; font-family: 'Segoe UI', system-ui, sans-serif; font-weight: 600; }
+td { padding: 8px 12px; border-bottom: 1px solid #e5e7eb; }
+tr:nth-child(even) td { background: #f9fafb; }
+img { max-width: 100%; height: auto; margin: 16px 0; border: 1px solid #e5e7eb; border-radius: 4px; }
+.sources { margin-top: 40px; border-top: 2px solid #e5e7eb; padding-top: 16px; }
+.sources h2 { color: #6b7280; font-size: 16px; }
+.sources ol { font-size: 12px; color: #4b5563; }
+.sources a { color: #2563eb; text-decoration: none; }
+.sources a:hover { text-decoration: underline; }
+a { color: #2563eb; }
+@media print { .report { padding: 20px; } h2 { page-break-after: avoid; } section { page-break-inside: avoid; } }
+`;
+
+const REPORT_TEMPLATE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>TITLE</title>
+<style>${REPORT_CSS}</style>
+</head>
+<body>
+<div class="report">
+<!-- CONTENT -->
+</div>
+</body>
+</html>`;
+
+const REPORT_COMPONENTS = `Report HTML components:
+- Title: <h1 class="report-title">Report Title</h1><div class="report-meta">Date | Source Count</div>
+- Executive Summary: <div class="executive-summary"><p>Key finding 1.</p><p>Key finding 2.</p></div>
+- Section: <section><h2>Section Title</h2><p>Full paragraph with detailed analysis...</p><p>Another paragraph...</p></section>
+- Subsection: <h3>Subtopic</h3><p>Details...</p>
+- Callout: <div class="callout"><strong>Key Insight:</strong> Important finding here.</div>
+- Table: <table><thead><tr><th>Column</th></tr></thead><tbody><tr><td>Data</td></tr></tbody></table>
+- Chart: <img src="ABSOLUTE_PATH/chart.png" alt="Description">
+- Sources: <div class="sources"><h2>Sources</h2><ol><li><a href="URL">Title - Domain</a></li></ol></div>
+- Inline citation: <sup>[1]</sup> (number matches source list)`;
+
 export const researchPipeline: PipelineDefinition = {
   name: 'research',
   stages: [
@@ -102,7 +156,7 @@ export const researchPipeline: PipelineDefinition = {
         artifactType: {
           type: 'string',
           description: 'Type of research artifact to produce',
-          enum: ['memo', 'brief', 'deck', 'market', 'teardown', 'deepdive'],
+          enum: ['memo', 'brief', 'deck', 'market', 'teardown', 'deepdive', 'report'],
         },
         slug: { type: 'string', description: 'URL-safe slug for output filename' },
       },
@@ -126,6 +180,22 @@ export const researchPipeline: PipelineDefinition = {
         ctx.params._allSearchResults = '';
         ctx.params._fetchedPages = [];
         ctx.params._chartPaths = [];
+      },
+    },
+
+    // --- Infer report type from natural language ---
+    {
+      name: 'infer_report_type',
+      type: 'code',
+      execute: (ctx) => {
+        const msg = ctx.userMessage.toLowerCase();
+        const currentType = ctx.params.artifactType as string;
+        if (!currentType || currentType === 'memo') {
+          if (/\b(pdf|docx)\b.*\breport\b/i.test(msg) || /\breport\b.*\b(pdf|docx)\b/i.test(msg) || /\bpdf report\b/i.test(msg)) {
+            ctx.params.artifactType = 'report';
+            console.log('[Research] Inferred artifact type: report (from message keywords)');
+          }
+        }
       },
     },
 
@@ -261,9 +331,16 @@ export const researchPipeline: PipelineDefinition = {
             `Section guide for ${type}: ${guide}`,
             '',
             'Rules:',
-            '- Max 4 bullet points per slide, max 15 words per bullet',
-            '- Every major claim needs a source URL from the research, not a homepage',
-            '- At least 2 charts. Identify data-heavy slides that benefit from visualization',
+            ...(type === 'report' ? [
+              '- Each section "bullets" should contain 2-4 FULL PARAGRAPHS (3-5 sentences each), not short bullets',
+              '- Include specific data points, statistics, and direct quotes from the source material',
+              '- Every claim MUST cite a source URL from the fetched pages (not a homepage)',
+              '- At least 1 chart for data visualization',
+            ] : [
+              '- Max 4 bullet points per slide, max 15 words per bullet',
+              '- Every major claim needs a source URL from the research, not a homepage',
+              '- At least 2 charts. Identify data-heavy slides that benefit from visualization',
+            ]),
             '- NEVER fabricate data — only use what is in the search results and fetched pages',
             '- Return ONLY the JSON object, no markdown or explanation',
           ].join('\n'),
@@ -376,88 +453,276 @@ export const researchPipeline: PipelineDefinition = {
       },
     },
 
-    // --- STAGE 5: RENDER — generate HTML deck ---
+    // --- STAGE 5: BRANCH — deck vs report rendering ---
     {
-      name: 'render_deck',
-      type: 'llm',
-      temperature: 0.2,
-      maxTokens: 8192,
-      buildPrompt: (ctx) => {
-        const synthesis = ctx.params._synthesis as any;
-        const slug = ctx.params.slug as string;
-        const type = ctx.params.artifactType as string;
-        const chartPaths = ctx.params._chartPaths as string[];
+      name: 'render_branch',
+      type: 'branch',
+      decide: (ctx) => (ctx.params.artifactType === 'report') ? 'report' : 'deck',
+      branches: {
+        // ======== DECK BRANCH (existing) ========
+        deck: [
+          {
+            name: 'render_deck',
+            type: 'llm',
+            temperature: 0.2,
+            maxTokens: 8192,
+            buildPrompt: (ctx) => {
+              const synthesis = ctx.params._synthesis as any;
+              const slug = ctx.params.slug as string;
+              const type = ctx.params.artifactType as string;
+              const chartPaths = ctx.params._chartPaths as string[];
+              return {
+                system: [
+                  'You are a presentation designer. Generate a complete reveal.js HTML deck from the slide outline.',
+                  'Output ONLY the complete HTML document, no markdown fences, no explanation.',
+                  '', `Use this template structure:\n${DECK_TEMPLATE}`, '',
+                  SLIDE_COMPONENTS.replace(/SLUG/g, slug), '',
+                  'Replace <!-- SLIDES --> with the actual <section> elements.',
+                  'Replace TITLE in <title> with the actual title.',
+                  `Chart images use absolute paths: /console/api/files/research/${slug}/chart_name.png`,
+                  'Max 4 bullets per slide, max 15 words per bullet.',
+                  'Include source URLs on relevant slides using <p class="source">.',
+                  'Place charts inline with relevant content, not grouped at end.',
+                ].join('\n'),
+                user: [
+                  `Artifact type: ${type}`,
+                  `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
+                  `Slides: ${JSON.stringify(synthesis?.slides ?? [], null, 2)}`,
+                  `Available charts: ${JSON.stringify(chartPaths)}`,
+                ].join('\n'),
+              };
+            },
+          },
+          {
+            name: 'write_deck',
+            type: 'tool',
+            tool: 'write_file',
+            resolveParams: (ctx) => {
+              let html = ctx.stageResults.render_deck as string;
+              html = html.replace(/^```(?:html)?\n?/m, '').replace(/\n?```$/m, '').trim();
+              const slug = ctx.params.slug as string;
+              return { path: `research/${slug}.html`, content: html };
+            },
+          },
+          {
+            name: 'summary',
+            type: 'llm',
+            stream: true,
+            temperature: 0.3,
+            maxTokens: 512,
+            buildPrompt: (ctx) => {
+              const synthesis = ctx.params._synthesis as any;
+              return {
+                system: 'Write a brief 3-5 sentence summary of the research findings. Be factual and concise. Do not mention the deck or file — just summarize what was found.',
+                user: `Thesis: ${synthesis?.thesis ?? ''}\nSlides: ${JSON.stringify((synthesis?.slides ?? []).map((s: any) => s.title))}`,
+              };
+            },
+          },
+          {
+            name: 'finalize',
+            type: 'code',
+            execute: (ctx) => {
+              const summary = ctx.stageResults.summary as string;
+              const slug = ctx.params.slug as string;
+              ctx.answer = `${summary}\n\n📊 **View your deck:** /console/api/files/research/${slug}.html`;
+            },
+          },
+        ],
 
-        return {
-          system: [
-            'You are a presentation designer. Generate a complete reveal.js HTML deck from the slide outline.',
-            'Output ONLY the complete HTML document, no markdown fences, no explanation.',
-            '',
-            `Use this template structure:\n${DECK_TEMPLATE}`,
-            '',
-            SLIDE_COMPONENTS.replace(/SLUG/g, slug),
-            '',
-            'Replace <!-- SLIDES --> with the actual <section> elements.',
-            'Replace TITLE in <title> with the actual title.',
-            `Chart images use absolute paths: /console/api/files/research/${slug}/chart_name.png`,
-            'Max 4 bullets per slide, max 15 words per bullet.',
-            'Include source URLs on relevant slides using <p class="source">.',
-            'Place charts inline with relevant content, not grouped at end.',
-          ].join('\n'),
-          user: [
-            `Artifact type: ${type}`,
-            `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
-            `Slides: ${JSON.stringify(synthesis?.slides ?? [], null, 2)}`,
-            `Available charts: ${JSON.stringify(chartPaths)}`,
-          ].join('\n'),
-        };
-      },
-    },
+        // ======== REPORT BRANCH (new) ========
+        report: [
+          // Render styled HTML report from synthesis data
+          {
+            name: 'render_report',
+            type: 'llm',
+            temperature: 0.3,
+            maxTokens: 8192,
+            buildPrompt: (ctx) => {
+              const synthesis = ctx.params._synthesis as any;
+              const slug = ctx.params.slug as string;
+              const chartPaths = ctx.params._chartPaths as string[];
+              // Convert web chart paths to filesystem paths for PDF rendering
+              const fsChartPaths = chartPaths.map((p: string) =>
+                p.replace('/console/api/files/', 'data/workspaces/main/'),
+              );
 
-    // --- Write deck to file ---
-    {
-      name: 'write_deck',
-      type: 'tool',
-      tool: 'write_file',
-      resolveParams: (ctx) => {
-        let html = ctx.stageResults.render_deck as string;
-        // Strip markdown fences if present
-        html = html.replace(/^```(?:html)?\n?/m, '').replace(/\n?```$/m, '').trim();
-        const slug = ctx.params.slug as string;
-        return {
-          path: `research/${slug}.html`,
-          content: html,
-        };
-      },
-    },
+              return {
+                system: [
+                  'You are a professional report writer. Generate a complete, styled HTML document from the research synthesis.',
+                  'Output ONLY the complete HTML document, no markdown fences, no explanation.',
+                  '',
+                  `Use this template:\n${REPORT_TEMPLATE}`,
+                  '',
+                  REPORT_COMPONENTS.replace(/ABSOLUTE_PATH/g, `data/workspaces/main/research/${slug}`),
+                  '',
+                  'Replace <!-- CONTENT --> with the full report content.',
+                  'Replace TITLE with the actual report title.',
+                  '',
+                  'CRITICAL RULES:',
+                  '- Write FULL PARAGRAPHS (3-5 sentences each), not bullet summaries',
+                  '- Every section must have substantive analysis, not just headlines',
+                  '- Include specific data points, statistics, and quotes from the source material',
+                  '- Use inline citations <sup>[1]</sup> linking to the numbered sources list',
+                  '- Include a Sources section at the end with ALL URLs from the research',
+                  '- Use tables for comparative data, callout boxes for key insights',
+                  '- Place charts inline with relevant content using absolute filesystem paths',
+                  `- Chart paths: ${JSON.stringify(fsChartPaths)}`,
+                ].join('\n'),
+                user: [
+                  `Topic: ${ctx.params.topic}`,
+                  `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
+                  `Sections: ${JSON.stringify(synthesis?.slides ?? [], null, 2)}`,
+                  `Available charts: ${JSON.stringify(fsChartPaths)}`,
+                ].join('\n'),
+              };
+            },
+          },
 
-    // --- Final summary ---
-    {
-      name: 'summary',
-      type: 'llm',
-      stream: true,
-      temperature: 0.3,
-      maxTokens: 512,
-      buildPrompt: (ctx) => {
-        const synthesis = ctx.params._synthesis as any;
-        const slug = ctx.params.slug as string;
-        const writeResult = ctx.stageResults.write_deck as string;
+          // Write HTML to file (for preview and revision)
+          {
+            name: 'write_report_html',
+            type: 'code',
+            execute: (ctx) => {
+              const { writeFileSync, mkdirSync } = require('node:fs');
+              const { join } = require('node:path');
+              let html = ctx.stageResults.render_report as string;
+              html = html.replace(/^```(?:html)?\n?/m, '').replace(/\n?```$/m, '').trim();
+              ctx.params._reportHtml = html;
+              const slug = ctx.params.slug as string;
+              const dir = join('data', 'workspaces', 'main', 'research');
+              mkdirSync(dir, { recursive: true });
+              writeFileSync(join(dir, `${slug}-report.html`), html);
+              console.log(`[Research] Report HTML written: research/${slug}-report.html`);
+            },
+          },
 
-        return {
-          system: 'Write a brief 3-5 sentence summary of the research findings. Be factual and concise. Do not mention the deck or file — just summarize what was found.',
-          user: `Thesis: ${synthesis?.thesis ?? ''}\nSlides: ${JSON.stringify((synthesis?.slides ?? []).map((s: any) => s.title))}`,
-        };
-      },
-    },
+          // Quality review — check content completeness and source citations
+          {
+            name: 'quality_review',
+            type: 'code',
+            execute: async (ctx) => {
+              const html = ctx.params._reportHtml as string;
+              if (!html || html.length < 200) {
+                console.log('[Research] Quality review: HTML too short, skipping');
+                return;
+              }
 
-    // --- Append deck link to answer ---
-    {
-      name: 'finalize',
-      type: 'code',
-      execute: (ctx) => {
-        const summary = ctx.stageResults.summary as string;
-        const slug = ctx.params.slug as string;
-        ctx.answer = `${summary}\n\n📊 **View your deck:** /console/api/files/research/${slug}.html`;
+              try {
+                const response = await ctx.client.chat({
+                  model: ctx.routerModel ?? ctx.model,
+                  messages: [{
+                    role: 'user',
+                    content: `Review this HTML report for quality. Be brief.
+
+${html.slice(0, 4000)}
+
+Check:
+1. Are there at least 3 substantive sections with full paragraphs (not just bullets)?
+2. Are source URLs cited (either inline or in a Sources section)?
+3. Is the content detailed enough to be useful (not just headlines)?
+
+Respond with JSON: {"pass": true} if adequate, or {"pass": false, "fix": "brief instruction to improve"} if not.`,
+                  }],
+                  options: { temperature: 0.2, num_predict: 256 },
+                });
+
+                const raw = response.message?.content ?? '';
+                const match = raw.match(/\{[\s\S]*\}/);
+                if (!match) { console.log('[Research] Quality review: no JSON, proceeding'); return; }
+
+                const result = JSON.parse(match[0]);
+                if (result.pass) {
+                  console.log('[Research] Quality review: PASS');
+                } else {
+                  console.log(`[Research] Quality review: FAIL — ${result.fix}`);
+                  ctx.params._revisionNeeded = true;
+                  ctx.params._revisionInstructions = result.fix;
+                }
+              } catch (err) {
+                console.warn('[Research] Quality review failed:', err instanceof Error ? err.message : err);
+              }
+            },
+          },
+
+          // Revision pass (conditional — only if quality review failed)
+          {
+            name: 'revision_pass',
+            type: 'code',
+            when: (ctx) => !!(ctx.params._revisionNeeded),
+            execute: async (ctx) => {
+              const html = ctx.params._reportHtml as string;
+              const instructions = ctx.params._revisionInstructions as string;
+
+              try {
+                console.log('[Research] Running revision pass...');
+                const response = await ctx.client.chat({
+                  model: ctx.model,
+                  messages: [{
+                    role: 'user',
+                    content: `Revise this HTML report. ${instructions}\n\nOutput ONLY the complete revised HTML, no markdown fences.\n\n${html}`,
+                  }],
+                  options: { temperature: 0.3, num_predict: 8192 },
+                });
+
+                let revised = (response.message?.content ?? '').trim();
+                revised = revised.replace(/^```(?:html)?\n?/m, '').replace(/\n?```$/m, '').trim();
+
+                if (revised.length > html.length * 0.5) {
+                  ctx.params._reportHtml = revised;
+                  const { writeFileSync } = require('node:fs');
+                  const { join } = require('node:path');
+                  const slug = ctx.params.slug as string;
+                  writeFileSync(join('data', 'workspaces', 'main', 'research', `${slug}-report.html`), revised);
+                  console.log('[Research] Revision applied');
+                } else {
+                  console.log('[Research] Revision too short, keeping original');
+                }
+              } catch (err) {
+                console.warn('[Research] Revision failed:', err instanceof Error ? err.message : err);
+              }
+            },
+          },
+
+          // Convert HTML to PDF via document tool
+          {
+            name: 'convert_pdf',
+            type: 'tool',
+            tool: 'document',
+            resolveParams: (ctx) => {
+              const html = ctx.params._reportHtml as string;
+              const slug = ctx.params.slug as string;
+              return { action: 'create', content: html, format: 'pdf', filename: slug };
+            },
+          },
+
+          // Summary for the user
+          {
+            name: 'report_summary',
+            type: 'llm',
+            stream: true,
+            temperature: 0.3,
+            maxTokens: 512,
+            buildPrompt: (ctx) => {
+              const synthesis = ctx.params._synthesis as any;
+              return {
+                system: 'Write a brief 3-5 sentence summary of the research findings. Be factual and concise. Do not mention files, PDFs, or technical details — just summarize what was found.',
+                user: `Thesis: ${synthesis?.thesis ?? ''}\nSections: ${JSON.stringify((synthesis?.slides ?? []).map((s: any) => s.title))}`,
+              };
+            },
+          },
+
+          // Append [FILE:] token for delivery
+          {
+            name: 'report_finalize',
+            type: 'code',
+            execute: (ctx) => {
+              const summary = ctx.stageResults.report_summary as string;
+              const slug = ctx.params.slug as string;
+              const pdfPath = `data/media/documents/${slug}.pdf`;
+              ctx.answer = `${summary} [FILE:${pdfPath}]`;
+            },
+          },
+        ],
       },
     },
   ],

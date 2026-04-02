@@ -47,9 +47,13 @@ export interface ClassifyResult {
  * These patterns must be very specific to avoid false positives.
  */
 const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
-  // Document format requests — user explicitly wants a file output, route to multi (plan + document tool)
-  { pattern: /\b(make|create|generate|build|write|give me|produce)\b.*\b(pdf|docx|xlsx|pptx|word doc|spreadsheet|slide)\b/i, category: 'multi' },
-  { pattern: /\b(pdf|docx|xlsx|spreadsheet)\b.*\b(report|summary|document|file)\b/i, category: 'multi' },
+  // PDF/DOCX report requests → research pipeline (deep content + formatting + quality review)
+  { pattern: /\b(make|create|generate|write|give me|produce)\b.*\b(pdf|docx)\b.*\breport\b/i, category: 'research' },
+  { pattern: /\breport\b.*\b(pdf|docx)\b/i, category: 'research' },
+  { pattern: /\bpdf report\b/i, category: 'research' },
+  // Other document format requests (spreadsheets, presentations) → multi
+  { pattern: /\b(make|create|generate|build|write|give me|produce)\b.*\b(xlsx|pptx|spreadsheet|slide)\b/i, category: 'multi' },
+  { pattern: /\b(pdf|docx)\b.*\b(spreadsheet|presentation)\b/i, category: 'multi' },
   // Browser interaction — compound: action + site/domain reference
   { pattern: /\b(screenshot|browse|go to|navigate to|visit)\b.*(\.\w{2,}|site|website|page)\b/i, category: 'multi' },
   // Research — only compound intent patterns, not bare keywords
