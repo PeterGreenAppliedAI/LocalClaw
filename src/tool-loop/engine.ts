@@ -328,6 +328,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
   let repairAttempted = false;
   let driftRepairAttempted = false;
   const driftTracker = new DriftTracker();
+  const fileTokens: string[] = []; // Collect [FILE:] paths stripped from observations
 
   // Temperature lock: ≤0.3 for tool-calling specialists (ChatGPT feedback §6)
   const effectiveTemperature = ollamaTools.length > 0
@@ -521,6 +522,12 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
         // Enrich observation with error pattern detection + past learnings (Feature 2)
         observation = enrichObservation(observation, errorStore, toolName);
 
+        // Strip [FILE:] tokens before model sees them — collect for post-loop attachment
+        observation = observation.replace(/\[FILE:([^\]]+)\]/g, (_match, path: string) => {
+          fileTokens.push(path.trim());
+          return ''; // Model doesn't see the token
+        });
+
         // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5)
         // Browser snapshots get a higher limit to preserve element ref numbers
         const effectiveLimit = toolName === 'browser' ? MAX_TOOL_RESULT_CHARS * 4 : MAX_TOOL_RESULT_CHARS;
@@ -608,7 +615,8 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
     }
 
     steps.push({ thought: '', finalAnswer: answer });
-    return { answer, steps, iterations: i + 1, hitMaxIterations: false };
+    const fileAppend = fileTokens.map(p => ` [FILE:${p}]`).join('');
+    return { answer: answer + fileAppend, steps, iterations: i + 1, hitMaxIterations: false };
   }
 
   // Max iterations reached — use reasoning pass if available, otherwise ask model to synthesize
@@ -632,12 +640,15 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       }, toolContext);
 
       steps.push({ thought: '', finalAnswer: answer });
-      return { answer, steps, iterations: config.maxIterations, hitMaxIterations: true };
+      const fileAppend = fileTokens.map(p => ` [FILE:${p}]`).join('');
+      return { answer: answer + fileAppend, steps, iterations: config.maxIterations, hitMaxIterations: true };
     } catch (err) {
       console.warn(`[ReAct] OLLAMA_INFERENCE_ERROR: Max-iter reasoning pass failed — ${err instanceof Error ? err.message : err}`);
       // Fall through to normal synthesis
     }
   }
+
+  const fileAppend = fileTokens.map(p => ` [FILE:${p}]`).join('');
 
   try {
     messages.push({
@@ -657,11 +668,11 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
     const answer = finalResponse.message?.content || 'I was unable to complete the request within the allowed steps.';
     steps.push({ thought: '', finalAnswer: answer });
-    return { answer, steps, iterations: config.maxIterations, hitMaxIterations: true };
+    return { answer: answer + fileAppend, steps, iterations: config.maxIterations, hitMaxIterations: true };
   } catch {
     // Synthesis failed — use last observation
     const lastStep = steps[steps.length - 1];
     const fallbackAnswer = lastStep?.observation ?? lastStep?.thought ?? 'I was unable to complete the request.';
-    return { answer: fallbackAnswer, steps, iterations: config.maxIterations, hitMaxIterations: true };
+    return { answer: fallbackAnswer + fileAppend, steps, iterations: config.maxIterations, hitMaxIterations: true };
   }
 }
