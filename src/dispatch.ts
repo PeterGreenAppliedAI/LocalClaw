@@ -611,9 +611,9 @@ async function runPipelineDispatch(
     senderId: params.sourceContext?.senderId,
   };
 
-  // Context isolation: the plan pipeline gets a fresh context (no parent history)
-  // and progressive workspace disclosure to maximize context budget for tool results.
-  const isolateContext = specialist.pipeline === 'plan';
+  // Context isolation: pipeline dispatches get fresh context (no parent history)
+  // to prevent prior session topics from biasing search/synthesis.
+  const isolateContext = !!specialist.pipeline;
 
   const wsCategory = category === 'cron'
     ? 'cron' as const
