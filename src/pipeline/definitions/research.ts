@@ -1,3 +1,5 @@
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PipelineDefinition } from '../types.js';
 
 // --- Artifact type slide structure guides ---
@@ -583,8 +585,6 @@ export const researchPipeline: PipelineDefinition = {
             name: 'write_report_html',
             type: 'code',
             execute: (ctx) => {
-              const { writeFileSync, mkdirSync } = require('node:fs');
-              const { join } = require('node:path');
               let html = ctx.stageResults.render_report as string;
               html = html.replace(/^```(?:html)?\n?/m, '').replace(/\n?```$/m, '').trim();
               ctx.params._reportHtml = html;
@@ -669,8 +669,6 @@ Respond with JSON: {"pass": true} if adequate, or {"pass": false, "fix": "brief 
 
                 if (revised.length > html.length * 0.5) {
                   ctx.params._reportHtml = revised;
-                  const { writeFileSync } = require('node:fs');
-                  const { join } = require('node:path');
                   const slug = ctx.params.slug as string;
                   writeFileSync(join('data', 'workspaces', 'main', 'research', `${slug}-report.html`), revised);
                   console.log('[Research] Revision applied');
