@@ -75,7 +75,7 @@ describe('classifyMessage', () => {
 
   it('keyword: detects exec patterns', async () => {
     const client = createFailingClient();
-    const result = await classifyMessage(client, defaultConfig, 'run the test suite');
+    const result = await classifyMessage(client, defaultConfig, 'install numpy with pip');
     expect(result.category).toBe('exec');
     expect(result.confidence).toBe('keyword');
   });

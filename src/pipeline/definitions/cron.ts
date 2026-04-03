@@ -29,7 +29,7 @@ export const cronPipeline: PipelineDefinition = {
                 type: 'string',
                 description: 'Specialist category to handle the job',
                 required: true,
-                enum: ['chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi'],
+                enum: ['chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi', 'research', 'task'],
               },
               message: { type: 'string', description: 'The prompt to run when triggered', required: true },
               channel: { type: 'string', description: 'Delivery channel (e.g., "discord", "telegram")', required: true },
@@ -145,7 +145,7 @@ export const cronPipeline: PipelineDefinition = {
               category: {
                 type: 'string',
                 description: 'New specialist category',
-                enum: ['chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi'],
+                enum: ['chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi', 'research', 'task'],
               },
               message: { type: 'string', description: 'New prompt/message' },
               enabled: { type: 'string', description: '"true" or "false"' },

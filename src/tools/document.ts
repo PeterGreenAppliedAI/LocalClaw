@@ -3,7 +3,7 @@ import { join, basename, extname } from 'node:path';
 import { execSync } from 'node:child_process';
 import type { LocalClawTool, ToolContext } from './types.js';
 
-const SOFFICE = '/opt/homebrew/bin/soffice';
+const SOFFICE = process.env.SOFFICE_PATH ?? '/opt/homebrew/bin/soffice';
 const OUTPUT_DIR = 'data/media/documents';
 const SUPPORTED_FORMATS = ['pdf', 'docx', 'xlsx', 'pptx', 'html', 'csv', 'txt', 'odt', 'ods', 'odp'];
 

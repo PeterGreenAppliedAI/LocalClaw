@@ -226,7 +226,7 @@ export class Orchestrator {
             await this.channelRegistry.send(
               { channel: job.delivery.channel, channelId: job.delivery.target },
               { text: `[Cron: ${job.name}] Failed after 3 attempts: ${error}` },
-            ).catch(() => {});
+            ).catch((err) => { console.warn('[Cron] Failed to send failure notification:', err instanceof Error ? err.message : err); });
           }
         },
       });
@@ -899,7 +899,7 @@ export class Orchestrator {
       if (!topic) {
         await this.channelRegistry.send(
           { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
-          { text: 'Usage: `!research [--deck|--brief|--deepdive|--market|--teardown|--memo] <topic>`\n\nExample: `!research --market EV battery trends`' },
+          { text: 'Usage: `!research [--deck|--brief|--deepdive|--market|--teardown|--memo|--report] <topic>`\n\nExample: `!research --report AI regulation trends`' },
         );
         return;
       }

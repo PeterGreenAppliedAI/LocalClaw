@@ -1,7 +1,7 @@
 import type { OllamaClient } from './ollama/client.js';
 import type { ToolRegistry } from './tools/registry.js';
 import type { LocalClawConfig, SpecialistConfig, ChannelSecurity } from './config/types.js';
-import type { ToolContext } from './tools/types.js';
+import type { ToolContext, ToolExecutor } from './tools/types.js';
 import type { OllamaMessage } from './ollama/types.js';
 import { classifyMessage, type ClassifyResult } from './router/classifier.js';
 import { runToolLoop } from './tool-loop/engine.js';
@@ -602,8 +602,21 @@ async function runPipelineDispatch(
     ? specialist.tools.filter(t => !CRON_BLOCKED_TOOLS.has(t))
     : specialist.tools;
 
-  const executor = registry.createExecutor();
+  const baseExecutor = registry.createExecutor();
   const workspacePath = resolveWorkspacePath(agentId, config);
+  const errorStore = new ErrorLearningStore(workspacePath);
+
+  // Wrap executor to record errors for learning
+  const executor: ToolExecutor = async (toolName, toolParams, ctx) => {
+    try {
+      return await baseExecutor(toolName, toolParams, ctx);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      errorStore.recordError({ tool: toolName, params: toolParams, error: errMsg, step: 0, category });
+      throw err;
+    }
+  };
+
   const toolContext: ToolContext = {
     agentId,
     sessionKey,
