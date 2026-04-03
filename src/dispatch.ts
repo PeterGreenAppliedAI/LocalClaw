@@ -262,15 +262,6 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     specialistConfig = { ...specialistConfig, model: params.modelOverride };
   }
 
-  // 3e. Smart model routing — use fast model for short simple chat messages
-  // Saves compute on the DGX Spark for "hey", "thanks", "ok" type messages
-  if (!params.modelOverride && specialistConfig && effectiveCategory === 'chat'
-    && specialistConfig.tools.length === 0 && shouldUseQuickModel(message)) {
-    const quickModel = 'phi4-mini';
-    console.log(`[Dispatch] Smart routing: "${message.slice(0, 40)}..." → ${quickModel} (simple message)`);
-    specialistConfig = { ...specialistConfig, model: quickModel };
-  }
-
   // 4. Session state — load structured state and inject preamble
   let sessionState: SessionState | null = null;
   let statePreamble = '';
