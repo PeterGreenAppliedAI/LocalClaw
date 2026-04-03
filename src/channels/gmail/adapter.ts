@@ -78,7 +78,7 @@ export class GmailAdapter implements ChannelAdapter {
     try {
       const to = target.channelId; // channelId holds the recipient email
       const subject = target.threadId ?? 'Re: LocalClaw';
-      const raw = buildRawEmail(to, subject, content.text);
+      const raw = buildRawEmail(to, subject, content.text, content.attachments);
 
       await this.gmail.users.messages.send({
         userId: 'me',
@@ -224,14 +224,49 @@ function findAttachmentParts(payload: any): any[] {
   return parts;
 }
 
-function buildRawEmail(to: string, subject: string, body: string): string {
-  const lines = [
+function buildRawEmail(
+  to: string,
+  subject: string,
+  body: string,
+  attachments?: Array<{ data: Buffer; mimeType: string; filename: string }>,
+): string {
+  if (!attachments?.length) {
+    const lines = [
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      body,
+    ];
+    return Buffer.from(lines.join('\r\n')).toString('base64url');
+  }
+
+  // Multipart MIME with attachments
+  const boundary = `boundary_${Date.now()}`;
+  const parts = [
     `To: ${to}`,
     `Subject: ${subject}`,
     'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
     'Content-Type: text/plain; charset=utf-8',
     '',
     body,
   ];
-  return Buffer.from(lines.join('\r\n')).toString('base64url');
+
+  for (const att of attachments) {
+    parts.push(
+      `--${boundary}`,
+      `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+      `Content-Disposition: attachment; filename="${att.filename}"`,
+      'Content-Transfer-Encoding: base64',
+      '',
+      att.data.toString('base64'),
+    );
+  }
+
+  parts.push(`--${boundary}--`);
+  return Buffer.from(parts.join('\r\n')).toString('base64url');
 }

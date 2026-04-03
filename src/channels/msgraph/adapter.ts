@@ -82,20 +82,30 @@ export class MsGraphAdapter implements ChannelAdapter {
     }
 
     try {
-      await this.client.api(`/users/${this.userId}/sendMail`).post({
-        message: {
-          subject: target.threadId ?? 'LocalClaw',
-          body: {
-            contentType: 'Text',
-            content: content.text,
-          },
-          toRecipients: [
-            {
-              emailAddress: { address: target.channelId },
-            },
-          ],
+      const message: Record<string, unknown> = {
+        subject: target.threadId ?? 'LocalClaw',
+        body: {
+          contentType: 'Text',
+          content: content.text,
         },
-      });
+        toRecipients: [
+          {
+            emailAddress: { address: target.channelId },
+          },
+        ],
+      };
+
+      // Add file attachments
+      if (content.attachments?.length) {
+        message.attachments = content.attachments.map(att => ({
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          name: att.filename,
+          contentType: att.mimeType,
+          contentBytes: att.data.toString('base64'),
+        }));
+      }
+
+      await this.client.api(`/users/${this.userId}/sendMail`).post({ message });
     } catch (err) {
       throw channelSendError('msgraph', err);
     }

@@ -143,6 +143,31 @@ export class IMessageAdapter implements ChannelAdapter {
     }
 
     try {
+      // Send file attachments via BlueBubbles multipart endpoint
+      if (content.attachments?.length) {
+        for (const att of content.attachments) {
+          try {
+            const form = new FormData();
+            form.append('chatGuid', target.channelId);
+            form.append('tempGuid', `temp-${randomUUID()}`);
+            form.append('message', '');
+            form.append('attachment', new Blob([att.data], { type: att.mimeType }), att.filename);
+
+            const res = await fetch(
+              `${this.baseUrl}/api/v1/message/attachment?password=${this.password}`,
+              { method: 'POST', body: form, signal: AbortSignal.timeout(30_000) },
+            );
+            if (!res.ok) {
+              const body = await res.text().catch(() => '');
+              console.warn(`[iMessage] Attachment send failed (${res.status}): ${body}`);
+            }
+          } catch (attErr) {
+            console.warn('[iMessage] Attachment send failed:', attErr instanceof Error ? attErr.message : attErr);
+          }
+        }
+      }
+
+      // Send text
       const chunks = splitMessage(content.text, IMESSAGE_MAX_LENGTH);
       for (const chunk of chunks) {
         const res = await fetch(

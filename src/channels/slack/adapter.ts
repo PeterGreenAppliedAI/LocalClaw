@@ -143,6 +143,22 @@ export class SlackAdapter implements ChannelAdapter {
         }
       }
 
+      // Send file attachments
+      if (content.attachments?.length) {
+        for (const att of content.attachments) {
+          try {
+            await this.app.client.files.uploadV2({
+              channel_id: target.channelId,
+              file: att.data,
+              filename: att.filename,
+              thread_ts: target.threadId,
+            });
+          } catch (attErr) {
+            console.warn('[Slack] Attachment upload failed:', attErr instanceof Error ? attErr.message : attErr);
+          }
+        }
+      }
+
       const chunks = splitMessage(content.text, SLACK_MAX_LENGTH);
       for (const chunk of chunks) {
         await this.app.client.chat.postMessage({

@@ -290,6 +290,21 @@ export class WhatsAppAdapter implements ChannelAdapter {
         }
       }
 
+      // Send file attachments
+      if (content.attachments?.length) {
+        for (const att of content.attachments) {
+          try {
+            const isImage = att.mimeType.startsWith('image/');
+            await this.sock.sendMessage(target.channelId, isImage
+              ? { image: att.data, mimetype: att.mimeType, caption: att.filename }
+              : { document: att.data, mimetype: att.mimeType, fileName: att.filename },
+            );
+          } catch (attErr) {
+            console.warn('[WhatsApp] Attachment send failed:', attErr instanceof Error ? attErr.message : attErr);
+          }
+        }
+      }
+
       // Send text (skip if audio was sent — voice in → voice only out)
       if (!content.audio) {
         const chunks = splitMessage(content.text, WHATSAPP_MAX_LENGTH);
