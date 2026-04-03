@@ -73,6 +73,14 @@ export function useToggleCronJob() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cron'] }),
   });
 }
+export function useEditCronJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...changes }: { id: string } & Partial<CronJob>) =>
+      fetchApi(`/cron/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cron'] }),
+  });
+}
 export function useDeleteCronJob() {
   const qc = useQueryClient();
   return useMutation({

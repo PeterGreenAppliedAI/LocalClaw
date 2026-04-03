@@ -20,12 +20,85 @@ const PRIORITY_COLORS: Record<string, string> = {
   low: 'text-zinc-400',
 };
 
+function EditTaskModal({ task, onClose }: { task: Task; onClose: () => void }) {
+  const updateTask = useUpdateTask();
+  const [title, setTitle] = useState(task.title);
+  const [details, setDetails] = useState(task.details ?? '');
+  const [priority, setPriority] = useState(task.priority);
+  const [status, setStatus] = useState(task.status);
+  const [dueDate, setDueDate] = useState(task.dueDate ?? '');
+
+  const handleSave = () => {
+    updateTask.mutate(
+      {
+        id: task.id,
+        title,
+        details: details || undefined,
+        priority,
+        status,
+        dueDate: dueDate || undefined,
+      },
+      { onSuccess: onClose },
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-zinc-800 border border-zinc-600 rounded-lg p-6 w-full max-w-md space-y-4" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold">Edit Task</h3>
+
+        <div>
+          <label className="text-xs text-zinc-400 block mb-1">Title</label>
+          <input className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm" value={title} onChange={e => setTitle(e.target.value)} />
+        </div>
+
+        <div>
+          <label className="text-xs text-zinc-400 block mb-1">Details</label>
+          <textarea className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm resize-none" rows={3} value={details} onChange={e => setDetails(e.target.value)} />
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs text-zinc-400 block mb-1">Priority</label>
+            <select className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm" value={priority} onChange={e => setPriority(e.target.value as Task['priority'])}>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 block mb-1">Status</label>
+            <select className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm" value={status} onChange={e => setStatus(e.target.value as Task['status'])}>
+              <option value="todo">To Do</option>
+              <option value="in_progress">In Progress</option>
+              <option value="done">Done</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 block mb-1">Due Date</label>
+            <input type="date" className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 pt-2">
+          <button className="text-sm text-zinc-400 hover:text-zinc-300 px-4 py-2" onClick={onClose}>Cancel</button>
+          <button className="text-sm bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded font-medium" onClick={handleSave} disabled={updateTask.isPending}>
+            {updateTask.isPending ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Tasks() {
   const { data: tasks = [], isLoading } = useTasks();
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
   const [showAdd, setShowAdd] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [title, setTitle] = useState('');
   const [details, setDetails] = useState('');
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
@@ -114,6 +187,9 @@ export default function Tasks() {
                     {task.details && (
                       <p className="text-xs text-zinc-400 mb-2 line-clamp-2">{task.details}</p>
                     )}
+                    {task.dueDate && (
+                      <p className="text-xs text-zinc-500 mb-1">Due: {task.dueDate}</p>
+                    )}
                     {task.tags && task.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mb-2">
                         {task.tags.map(tag => (
@@ -126,9 +202,15 @@ export default function Tasks() {
                     <div className="flex items-center justify-between text-xs text-zinc-500">
                       <span>{task.assignee || task.createdBy}</span>
                       <div className="opacity-0 group-hover:opacity-100 flex gap-2 transition-opacity">
+                        <button
+                          className="text-blue-400 hover:text-blue-300"
+                          onClick={() => setEditingTask(task)}
+                        >
+                          Edit
+                        </button>
                         {NEXT_STATUS[task.status] && (
                           <button
-                            className="text-blue-400 hover:text-blue-300"
+                            className="text-green-400 hover:text-green-300"
                             onClick={() => updateTask.mutate({ id: task.id, status: NEXT_STATUS[task.status]! })}
                           >
                             Advance
@@ -151,6 +233,8 @@ export default function Tasks() {
           );
         })}
       </div>
+
+      {editingTask && <EditTaskModal task={editingTask} onClose={() => setEditingTask(null)} />}
     </div>
   );
 }
