@@ -17,7 +17,7 @@ Existing agent frameworks (LangChain, CrewAI, AutoGen, etc.) are built for GPT-4
 
 Instead of giving one model all the tools, LocalClaw splits the work:
 
-1. **Router** — A tiny fast model (phi4-mini, ~50ms) classifies intent into categories
+1. **Router** — A fast model (phi4:14b) classifies intent into categories
 2. **Pipeline or Specialist** — Most categories use **deterministic pipelines** where code controls the workflow and the LLM only extracts parameters or synthesizes text. Open-ended categories fall back to a ReAct tool loop.
 3. **Execute** — Tools are called by the pipeline (deterministic) or via native Ollama tool calling API with fallback text parser (ReAct)
 4. **Respond** — Results flow back through the channel adapter
@@ -72,7 +72,8 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Heartbeat | *(autonomous)* | Scheduled autonomous task checks, memory cleanup, and status reports |
 | Knowledge Import | `knowledge_import` | Import PDFs, CSVs, markdown into vector-searchable knowledge base |
 | Context Compaction | *(automatic)* | Structured compression (Goal/Progress/Next Steps), proactive at 50% budget, tool-pair sanitization |
-| Smart Routing | *(automatic)* | Simple chat messages route to phi4-mini (fast), complex tasks use the full specialist model |
+| Document Gen | `document` | Create and convert documents via LibreOffice headless — HTML/CSV → PDF/DOCX/XLSX/PPTX |
+| Self-Improvement | *(automatic)* | Error learning store, pattern matching, drift detection, learning promotion via heartbeat |
 | CLI | `npm run cli` | Terminal interface with streaming, slash commands, markdown rendering, session persistence |
 
 ## Quick Start
@@ -166,7 +167,8 @@ localclaw/
 │   ├── console/              # Management console API (handlers, helpers, file serving)
 │   ├── services/             # TTS (Kokoro), STT (Whisper), Vision
 │   ├── tasks/                # Task board (types + JSON/Markdown store)
-│   ├── tools/                # 28 tool implementations
+│   ├── learnings/            # Self-improvement (error store, pattern matcher)
+│   ├── tools/                # 29 tool implementations
 │   ├── agents/               # Workspace files + routing (frozen snapshots per session)
 │   ├── context/              # Token estimation, budget calculator, structured compaction
 │   ├── sessions/             # Transcript persistence + compaction summaries
@@ -177,7 +179,7 @@ localclaw/
 │   ├── src/pages/            # Dashboard, Chat, Sessions, Tasks, Cron, Memory, Channels, Tools, Config
 │   ├── src/api/              # API client + React Query hooks
 │   └── dist/                 # Built static files (served by web adapter)
-├── test/                     # 174 tests across 15 suites
+├── test/                     # 226 tests across 20 suites
 ├── CLAUDE.md                 # AI code generation guidelines (for Claude Code)
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens
@@ -216,7 +218,7 @@ Most categories run through **deterministic pipelines** instead of letting the m
 | `cron` | Branched (4) | llm_branch → extract → tool → confirm |
 | `web_search` | Linear | extract → search → parallel fetch → synthesize |
 | `multi` | Plan | llm plan → self-reflect → execute loop (dynamic tools + visual browser) → smart select → verify → summarize |
-| `research` | Complex | plan queries → parallel search → parallel fetch → synthesize → charts → render deck |
+| `research` | Complex | plan queries → parallel search → parallel fetch → synthesize → charts → branch (deck OR report PDF) |
 | `exec` | Linear | extract → tool → format |
 | `message` | Linear | extract → tool → confirm |
 | `website` | Linear | extract → tool → format |
@@ -225,17 +227,20 @@ Most categories run through **deterministic pipelines** instead of letting the m
 
 ### Research Flow
 
-The `research` pipeline produces polished reveal.js slide decks through a fully templated workflow:
+The `research` pipeline produces polished slide decks or styled PDF reports through a fully templated workflow:
 
 1. **Plan** — LLM generates 3-5 targeted search queries from the topic
 2. **Search** — All queries run concurrently via `parallel_tool` (5 searches at once)
-3. **Fetch** — Top 5 URLs fetched concurrently
-4. **Synthesize** — LLM analyzes findings and produces a structured slide outline with thesis, bullets, sources, and chart specifications
+3. **Fetch** — Top 8 URLs fetched concurrently. If 3+ fail (403, timeout), a supplementary search + fetch round runs automatically
+4. **Synthesize** — LLM analyzes findings and produces a structured outline with thesis, sections, sources, and chart specifications. Report mode requests full paragraphs instead of bullet points
 5. **Visualize** — LLM generates matplotlib/seaborn chart code, executed in a Python code session
-6. **Render** — LLM generates the complete reveal.js HTML deck from the outline
-7. **Deliver** — Deck written to file, summary returned with link
+6. **Branch** — Routes to deck (reveal.js) or report (styled PDF) based on artifact type
+7. **Render** — LLM generates the complete HTML from the outline
+8. **Quality Review** (report only) — Router model checks content completeness, source citations, and substance. If issues found, a single revision pass runs before PDF conversion
+9. **Convert** (report only) — LibreOffice headless converts styled HTML to PDF
+10. **Deliver** — Deck written to file with link, or PDF attached to the channel message via `[FILE:]` token
 
-Supports artifact types: `memo`, `brief`, `deck`, `market`, `teardown`, `deepdive` — each with a different slide structure guide. Charts use a dark theme with explicit white text styling for readability.
+Supports artifact types: `memo`, `brief`, `deck`, `market`, `teardown`, `deepdive`, `report` — each with a different structure guide. The `report` type produces professional CSS-styled PDFs with executive summaries, full paragraphs, data tables, and numbered source citations. Charts use a dark theme for decks and are embedded with absolute paths for PDF rendering.
 
 ### Plan Pipeline (Autonomous Task Execution)
 
@@ -277,7 +282,9 @@ Second similar request:
 [Skill success] → success_count: 2
 ```
 
-**Context isolation:** The plan pipeline runs with fresh context (no parent history) and progressive workspace disclosure (~300 bytes instead of 4-6KB) to maximize the context budget for tool results.
+**Foreman handoffs:** Each specialist receives a structured briefing — its specific task, the overall goal, what prior steps accomplished (status + artifact file paths), and available artifacts (URLs, file paths). Full step results are written to disk as `.plan-artifacts/step-N.txt` — specialists can `read_file` to access complete content without prompt bloat. No extra model calls — handoff construction is pure code.
+
+**Context isolation:** All pipeline dispatches (plan, research, exec, etc.) run with fresh context (no parent history) to prevent prior session topics from biasing results. Progressive workspace disclosure (~300 bytes instead of 4-6KB) maximizes the context budget for tool results.
 
 ### Self-Improving Skills
 
@@ -311,11 +318,11 @@ LocalClaw includes a terminal interface (`npm run cli`) for direct interaction w
   /compress  Trigger context compression
 
 ❯ hey whats up
-  [chat (model) | 1 step | model:phi4-mini]
+  [chat (model) | 1 step | model:qwen3.5:9b]
   Hey there! How can I help you today?
 ```
 
-Features: streaming output, markdown rendering (headers, bold, code blocks), color-coded display, tool call visualization, smart model routing, session persistence.
+Features: streaming output, markdown rendering (headers, bold, code blocks), color-coded display, tool call visualization, session persistence.
 
 ### Pluggable Channel Adapters
 
@@ -331,7 +338,7 @@ interface ChannelAdapter {
 }
 ```
 
-Currently implemented: **Discord**, **Telegram**, **Web API + Console**, **Slack**, **Gmail**, **Microsoft Graph**, **WhatsApp**.
+Currently implemented: **Discord**, **Telegram**, **Web API + Console**, **Slack**, **Gmail**, **Microsoft Graph**, **WhatsApp**, **iMessage** (via BlueBubbles). All adapters support file attachment delivery (PDFs, images, documents).
 
 Adding a new adapter requires zero core code changes — implement the interface, register it, add config.
 
@@ -452,6 +459,35 @@ workspace/memory/
 
 Each fact has: category (`stable`/`context`/`decision`/`question`), confidence score, tags, entities, source, and optional expiration. The console Memory page lets you browse, search, and consolidate facts across all senders.
 
+### Self-Improvement System
+
+LocalClaw learns from its own mistakes through a 5-layer feedback system:
+
+1. **Error Learning Store** — When a tool fails, the error is recorded to `.learnings/errors.jsonl` with tool name, params, error message, and step number. Before executing a tool, the engine checks for past errors with matching tool+params and prepends hints to guide the model.
+
+2. **Error Pattern Matching** — After every tool execution, the observation is scanned for 8 known error patterns (permission denied, module not found, connection refused, timeout, HTTP 4xx, rate limiting, stack traces, OOM). Detected patterns are enriched with suggestions and past learnings.
+
+3. **Context Drift Detection** — Monitors for three drift signals during tool-loop execution: repeating tool calls (same tool+params twice), hedging language (4+ instances of "I think", "perhaps", "maybe"), and growing responses without progress. When detected, injects a re-anchor prompt with the original request. Fires once per loop run.
+
+4. **Post-Task Self-Review** — After tool-heavy specialists complete (exec, multi, web_search with 2+ tool calls), the router model runs a quality check on the response. Corrections are logged internally for learning.
+
+5. **Learning Promotion** — Every heartbeat cycle, the error store is scanned for recurring patterns (3+ occurrences of same tool + error). These are promoted to `LEARNINGS.md` in the workspace root, which is loaded into specialist context alongside SOUL.md and IDENTITY.md.
+
+### Document Generation
+
+LocalClaw generates professional documents using LibreOffice headless:
+
+```
+document[{"action": "create", "content": "<h1>Report</h1>...", "format": "pdf", "filename": "report"}]
+document[{"action": "convert", "inputPath": "data.csv", "format": "xlsx"}]
+```
+
+**Supported formats:** PDF, DOCX, XLSX, PPTX, HTML, CSV, TXT, ODT, ODS, ODP
+
+Output files are delivered as attachments through the channel adapters. The `[FILE:path]` token system ensures files are stripped from model observations (preventing the model from rewriting paths) and re-appended to the final answer for the media extraction pipeline to pick up.
+
+**Requirements:** LibreOffice installed (`brew install --cask libreoffice` on macOS). Path configurable via `SOFFICE_PATH` env var.
+
 ### WhatsApp
 
 LocalClaw connects to WhatsApp using [Baileys](https://github.com/WhiskeySockets/Baileys), a lightweight WebSocket-based library (no Puppeteer/Chrome required).
@@ -544,7 +580,11 @@ LocalClaw includes an autonomous heartbeat system that periodically checks the t
 5. **Format report** — Deterministic code builds the report with overdue, upcoming, and in-progress sections
 6. **Deliver** — Results are sent to the configured Discord channel or user DM
 
-The heartbeat runs in `cronMode` which strips mutation tools — it's strictly read-only (no creating duplicate tasks or modifying state).
+The heartbeat runs in `cronMode` which strips mutation tools — it's strictly read-only (no creating duplicate tasks or modifying state). It also promotes recurring error patterns to `LEARNINGS.md` and cleans up generated media files older than 7 days.
+
+**Commands:**
+- `!cleanup` — Manually trigger memory consolidation (substring dedup + LLM semantic dedup)
+- `!promote` — Manually promote recurring error patterns from the learning store to `LEARNINGS.md`
 
 **Configuration** (in `localclaw.config.json5`):
 
@@ -636,7 +676,8 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 - **SSRF protection** — Scheme whitelist, DNS pre-flight, redirect hop checking
 - **Path traversal prevention** — Writes validated to stay within workspace; file serving endpoint validates resolved paths
 - **Rate limiting** — 10 messages per minute per user
-- **Cron safety** — Automated tasks run in `cronMode` which strips mutation tools (`write_file`, `task_add`, `task_update`, `memory_save`, etc.) — cron jobs report, they don't modify
+- **Cron safety** — Automated tasks run in `cronMode` which strips mutation tools (`write_file`, `task_add`, `task_update`, `memory_save`, etc.) — cron jobs report, they don't modify. Jobs retry up to 2 times with exponential backoff on failure, and notify the delivery channel on final failure
+- **Confirmation mode** — Configurable `confirmTools` per channel — listed tools return a preview instead of executing, requiring user confirmation before proceeding
 - **Channel security** — Per-channel category restrictions, tool blocking, and per-user trust levels
 - **Web API auth** — Bearer token validation on HTTP endpoints
 - **TLS safety** — Verification enabled by default, opt-in override only
@@ -649,7 +690,7 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Runtime | Node.js 22+ (ESM) |
 | Language | TypeScript 5.7 (strict) |
 | AI Backend | Ollama |
-| Router Model | phi4-mini |
+| Router Model | phi4:14b |
 | Specialist Model | qwen3-coder:30b |
 | Embedding Model | qwen3-embedding:8b |
 | Reasoning Model | nemotron-3-nano:30b (optional) |
@@ -661,6 +702,8 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Telegram | grammy |
 | WhatsApp | @whiskeysockets/baileys |
 | Browser | playwright-core |
+| Document Gen | LibreOffice (headless) |
+| iMessage | BlueBubbles (REST API) |
 | Scheduling | croner |
 | Knowledge Store | better-sqlite3 (vector embeddings for imported documents) |
 | TTS | Kokoro TTS (HTTP, OpenAI-compatible) |
