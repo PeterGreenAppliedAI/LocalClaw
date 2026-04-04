@@ -297,7 +297,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
         .slice(0, 10)
         .map(f => `- ${f.text}`);
       if (stableFacts.length > 0) {
-        userPriming = `## About this user\n${stableFacts.join('\n')}`;
+        userPriming = `## Background context about this user (do NOT reference unless directly relevant to what they're asking about)\n${stableFacts.join('\n')}`;
       }
     } catch {
       // Non-critical — continue without priming
