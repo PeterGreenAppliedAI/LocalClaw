@@ -126,6 +126,47 @@ export class FactStore {
    * Rebuild facts.json and facts.md from all index files.
    * Deduplicates by hash, drops expired context entries.
    */
+  /**
+   * Remove a fact by matching text substring. Returns the number of facts removed.
+   * Rewrites JSONL index files to exclude matching entries, then rebuilds.
+   */
+  removeFact(query: string, senderId?: string): number {
+    const memDir = this.memDir(senderId);
+    const indexDir = join(memDir, 'index');
+    if (!existsSync(indexDir)) return 0;
+
+    const queryLower = query.toLowerCase();
+    let removed = 0;
+
+    const indexFiles = readdirSync(indexDir).filter(f => f.endsWith('.jsonl'));
+    for (const file of indexFiles) {
+      const filePath = join(indexDir, file);
+      const lines = readFileSync(filePath, 'utf-8').split('\n');
+      const kept: string[] = [];
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line);
+          if (entry.text?.toLowerCase().includes(queryLower)) {
+            removed++;
+            continue; // skip this fact
+          }
+        } catch { /* keep malformed lines to avoid data loss */ }
+        kept.push(line);
+      }
+
+      writeFileSync(filePath, kept.join('\n') + (kept.length > 0 ? '\n' : ''));
+    }
+
+    if (removed > 0) {
+      this.factsCache.delete(senderId ?? '__shared__');
+      this.rebuildFacts(senderId);
+    }
+
+    return removed;
+  }
+
   rebuildFacts(senderId?: string): void {
     const memDir = this.memDir(senderId);
     const indexDir = join(memDir, 'index');

@@ -1,9 +1,10 @@
 import type { PipelineDefinition } from '../types.js';
 
-const MEMORY_CLASSIFY_PROMPT = `You are a memory intent classifier. Given the user's message, decide if they want to SAVE something to memory or RECALL something from memory.
+const MEMORY_CLASSIFY_PROMPT = `You are a memory intent classifier. Given the user's message, decide if they want to SAVE, RECALL, or FORGET something in memory.
 
 - "save" — the user wants to STORE new information (e.g., "remember that I like dark mode", "save this", "note that the meeting is Thursday")
-- "recall" — the user wants to RETRIEVE or ASK about stored information (e.g., "what do you know about me", "do you remember my favorite color", "what did I say about the project")`;
+- "recall" — the user wants to RETRIEVE or ASK about stored information (e.g., "what do you know about me", "do you remember my favorite color", "what did I say about the project")
+- "forget" — the user wants to REMOVE or CORRECT wrong information (e.g., "forget that I'm taking a course", "that's wrong, remove it", "delete the fact about my job", "I'm not a student, fix that")`;
 
 export const memoryPipeline: PipelineDefinition = {
   name: 'memory',
@@ -12,7 +13,7 @@ export const memoryPipeline: PipelineDefinition = {
       name: 'route',
       type: 'llm_branch',
       prompt: MEMORY_CLASSIFY_PROMPT,
-      options: ['save', 'recall'],
+      options: ['save', 'recall', 'forget'],
       fallback: 'recall',
       branches: {
         // --- SAVE ---
@@ -91,6 +92,39 @@ export const memoryPipeline: PipelineDefinition = {
               system: 'You are a helpful assistant answering a question from memory. Use the search results to answer naturally. If nothing relevant was found, say so honestly. Do not make up information.',
               user: `User asked: "${ctx.userMessage}"\n\nMemory search results:\n${ctx.stageResults.search as string}`,
             }),
+          },
+        ],
+
+        // --- FORGET ---
+        forget: [
+          {
+            name: 'extract_forget',
+            type: 'extract',
+            schema: {
+              query: {
+                type: 'string',
+                description: 'Text to match against stored facts — matching facts will be removed',
+                required: true,
+              },
+            },
+            examples: [
+              { input: 'forget that I\'m taking an AI course', output: { query: 'taking a beginners AI course' } },
+              { input: 'that\'s wrong, I don\'t work at Google', output: { query: 'work at Google' } },
+              { input: 'remove the fact about my job title', output: { query: 'job title' } },
+            ],
+          },
+          {
+            name: 'forget',
+            type: 'tool',
+            tool: 'memory_forget',
+            resolveParams: (ctx) => ({ query: ctx.params.query }),
+          },
+          {
+            name: 'confirm_forget',
+            type: 'code',
+            execute: (ctx) => {
+              ctx.answer = ctx.stageResults.forget as string;
+            },
           },
         ],
       },

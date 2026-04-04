@@ -11,6 +11,7 @@ import { createWebFetchTool } from './web-fetch.js';
 import { createMemorySearchTool } from './memory-search.js';
 import { createMemoryGetTool } from './memory-get.js';
 import { createMemorySaveTool } from './memory-save.js';
+import { createMemoryForgetTool } from './memory-forget.js';
 import { createKnowledgeImportTool } from './knowledge-import.js';
 import { createExecTool } from './exec.js';
 import { createCodeSessionTool } from './code-session.js';
@@ -75,6 +76,7 @@ export async function registerAllTools(
   registry.register(createMemorySearchTool(workspace, options?.ollamaClient, embeddingStore, options?.factStore));
   registry.register(createMemoryGetTool(workspace));
   registry.register(createMemorySaveTool(workspace, options?.factStore));
+  registry.register(createMemoryForgetTool(workspace, options?.factStore));
   registry.register(createMemoryCleanupTool(
     options?.factStore,
     options?.ollamaClient,
