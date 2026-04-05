@@ -17,12 +17,13 @@ export function createCalendarListTool(): LocalClawTool {
   return {
     name: 'calendar_list',
     description: 'List upcoming events from Google Calendar. Returns event title, time, location, and description. Read-only — cannot create, modify, or delete events. WHEN TO USE: User asks about their schedule, upcoming meetings, what\'s on their calendar.',
-    parameterDescription: 'days (optional): How many days ahead to look (default 7). maxResults (optional): Max events to return (default 10).',
-    example: 'calendar_list[{"days": 7, "maxResults": 10}]',
+    parameterDescription: 'days (optional): How many days ahead to look (default 7). date (optional): Start date in YYYY-MM-DD format (default: today). maxResults (optional): Max events to return (default 10).',
+    example: 'calendar_list[{"days": 7}]',
     parameters: {
       type: 'object',
       properties: {
         days: { type: 'number', description: 'Days ahead to look (default 7)' },
+        date: { type: 'string', description: 'Start date in YYYY-MM-DD format (default: today). Use this for date-specific queries.' },
         maxResults: { type: 'number', description: 'Max events to return (default 10, max 50)' },
       },
     },
@@ -34,8 +35,9 @@ export function createCalendarListTool(): LocalClawTool {
 
       const days = (params.days as number) ?? 7;
       const maxResults = Math.min((params.maxResults as number) ?? 10, 50);
+      const dateStr = params.date as string | undefined;
 
-      const now = new Date();
+      const now = dateStr ? new Date(`${dateStr}T00:00:00`) : new Date();
       const until = new Date(now);
       until.setDate(until.getDate() + days);
 
