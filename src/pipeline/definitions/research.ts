@@ -294,7 +294,14 @@ export const researchPipeline: PipelineDefinition = {
           if (content.startsWith('Error') || content.length < 100) {
             failedUrls.push(urls[i]);
           } else {
-            pages.push(`[Source: ${urls[i]}]\n${content}`);
+            // Extract publication date from page content if present
+            const dateMatch = content.match(
+              /(?:Published|Updated|Posted|Date|Written)[:\s]*(\w+ \d{1,2},?\s*\d{4}|\d{4}-\d{2}-\d{2})/i,
+            ) ?? content.match(
+              /(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/i,
+            );
+            const dateTag = dateMatch ? ` [Published: ${dateMatch[1]}]` : '';
+            pages.push(`[Source: ${urls[i]}${dateTag}]\n${content}`);
           }
         }
 
@@ -406,6 +413,7 @@ export const researchPipeline: PipelineDefinition = {
               '- At least 2 charts. Identify data-heavy slides that benefit from visualization',
             ]),
             '- NEVER fabricate data — only use what is in the search results and fetched pages',
+            '- DATES: Use ONLY dates that appear in the source material. Each source has a [Published: date] tag — use those dates. Do NOT guess or infer release dates. If a source does not include a date, say "date not confirmed" rather than inventing one.',
             '- Return ONLY the JSON object, no markdown or explanation',
           ].join('\n'),
           user: `Topic: ${ctx.params.topic}\n\n## Search Results\n${searchResults.slice(0, 6000)}\n\n## Fetched Pages\n${pages.slice(0, 12000)}`,
@@ -626,6 +634,7 @@ export const researchPipeline: PipelineDefinition = {
                   '- Write FULL PARAGRAPHS (3-5 sentences each), not bullet summaries',
                   '- Every section must have substantive analysis, not just headlines',
                   '- Include specific data points, statistics, and quotes from the source material',
+                  '- DATES: Only use dates that appear in the source material (look for [Published: date] tags). NEVER guess release dates or event dates. If a date is not in the sources, write "date not confirmed".',
                   '- Use inline citations <sup>[1]</sup> linking to the numbered sources list',
                   '- Include a Sources section at the end with ALL URLs from the research',
                   '- Use tables for comparative data, callout boxes for key insights',
@@ -683,6 +692,7 @@ Check:
 1. Are there at least 3 substantive sections with full paragraphs (not just bullets)?
 2. Are source URLs cited (either inline or in a Sources section)?
 3. Is the content detailed enough to be useful (not just headlines)?
+4. Are dates accurate? If the report claims something was "released in April 2026" or similar, verify it matches the source dates. Dates should come from the source material, not be assumed.
 
 Respond with JSON: {"pass": true} if adequate, or {"pass": false, "fix": "brief instruction to improve"} if not.`,
                   }],
