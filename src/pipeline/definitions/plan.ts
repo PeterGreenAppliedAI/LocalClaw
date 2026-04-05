@@ -81,25 +81,29 @@ function buildHandoffMessage(step: PlanStep, stepIndex: number, state: ForemanSt
 const PLAN_PROMPT = `You are a task decomposer. Break the user's goal into sub-tasks, each handled by a specialist. Each specialist has its own tools and pipeline — you just decide WHICH specialist handles each sub-task and WHAT to tell them.
 
 Available specialists:
-- web_search: Search the internet and summarize findings. Give it a search query.
-- research: Deep research with charts and slide decks. Give it a topic.
-- memory: Save or recall information. Give it what to remember or what to look up.
+- web_search: Search the internet and summarize findings. Give it a search query. Has tools: web_search, web_fetch, browser.
+- research: Deep research with charts, slide decks, or PDF reports. Give it a topic. For PDF output, say "create a PDF report on X".
+- memory: Save, recall, or forget information. Give it what to remember, look up, or remove.
 - task: Create, list, update, or complete tasks. Give it the task details.
 - cron: Schedule recurring jobs. Give it the job name, schedule, and what to do. Valid categories for cron jobs: chat, web_search, memory, exec, task, research.
-- exec: Run shell commands or code. Give it the command.
+- exec: Run commands, code, read/write files, or create documents. Has tools: exec, read_file, write_file, code_session, document. For PDFs/DOCX/XLSX, tell it to use the document tool.
 - multi: Browser tasks — navigating sites, taking screenshots, signing up, filling forms. Use when the task involves opening a specific website and doing something with it.
 
 CHOOSING THE RIGHT SPECIALIST:
 - "Find info about X" → web_search
 - "Research X in depth" → research
+- "Make a PDF report on X" → research (with report artifact type)
 - "Remember that X" / "What do you know about X" → memory
+- "Forget that X" / "That's wrong, remove it" → memory
 - "Add X to my task list" → task (things the USER needs to do manually)
 - "Schedule daily X at 4pm" → cron (automated recurring jobs — do NOT also create a task, the cron job IS the automation)
 - "Run this command" → exec
+- "Create a PDF/DOCX/spreadsheet from this data" → exec (uses document tool internally)
 - "Go to X website and sign up" → multi (browser interaction)
 - "Take a screenshot of X.com" → multi (browser opens site and screenshots it)
 - "Find X and schedule updates" → web_search THEN cron (chained)
 - "Search for events and add to tasks" → web_search THEN task (chained)
+- "Read a file from a previous step" → exec (uses read_file tool, NOT exec[cat])
 
 RULES:
 - Each step: { "specialist": string, "message": string, "purpose": string }

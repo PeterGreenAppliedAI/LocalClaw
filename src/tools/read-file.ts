@@ -5,7 +5,7 @@ import type { LocalClawTool, ToolContext } from './types.js';
 export function createReadFileTool(): LocalClawTool {
   return {
     name: 'read_file',
-    description: 'Read the contents of a file within the workspace',
+    description: 'Read the contents of a file within the workspace. WHEN TO USE: Need to read a file from a prior step, check artifact contents, or load data for processing. Use this instead of exec[cat]. DO NOT use exec to read files — always use read_file.',
     parameterDescription: 'path (required): File path relative to workspace. maxLines (optional): Max lines to return (default: all).',
     example: 'read_file[{"path": "src/index.ts", "maxLines": 50}]',
     parameters: {

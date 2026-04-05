@@ -15,7 +15,7 @@ export function createExecTool(config?: ExecConfig, dockerBackend?: DockerBacken
     name: 'exec',
     description: useDocker
       ? 'Run a shell command inside a sandboxed Docker container.'
-      : `Run a shell command or inline code snippet. Allowed commands: ${[...allowlist].join(', ')}`,
+      : `Run a shell command or inline code snippet. Allowed commands: ${[...allowlist].join(', ')}. WHEN TO USE: Running shell commands, executing Python/Node code, system operations. DO NOT use exec for: reading files (use read_file), creating PDFs/documents (use document tool), searching memory (use memory_search).`,
     parameterDescription: 'command (required): The command to run. args (optional): Arguments for the command. code (optional): Inline code to execute — will be written to a temp file and run with the command as interpreter (e.g., command="python3", code="print(1+1)").',
     example: 'exec[{"command": "python3", "code": "import math; print(math.factorial(20))"}]',
     parameters: {

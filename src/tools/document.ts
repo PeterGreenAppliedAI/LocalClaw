@@ -54,10 +54,13 @@ Actions:
 
 Supported formats: ${SUPPORTED_FORMATS.join(', ')}.
 
-Tips:
-- For PDFs/DOCX: write content as HTML for best formatting (headings, tables, lists).
-- For spreadsheets: write content as CSV, then convert to XLSX.
-- For presentations: write content as HTML with <h1> for slide titles.`,
+WHEN TO USE: User asks for a PDF, DOCX, spreadsheet, Word doc, slide deck, or any formatted file output.
+DO NOT: Use exec to install pandoc/wkhtmltopdf. Do not use write_file to create PDFs. This tool handles all document conversion.
+
+Common chains:
+- PDF report: write HTML content → document[{action: "create", content: "<html>...", format: "pdf", filename: "name"}]
+- Spreadsheet: write CSV content → document[{action: "create", content: "col1,col2\\nval1,val2", format: "xlsx"}]
+- Convert existing file: document[{action: "convert", inputPath: "file.html", format: "pdf"}]`,
     parameterDescription: `action (required): "create" or "convert".
 content (for create): The document content. Use HTML for rich formatting, CSV for spreadsheets, plain text for simple docs.
 inputPath (for convert): Path to the file to convert (relative to workspace or absolute).
