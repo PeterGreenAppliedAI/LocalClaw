@@ -39,6 +39,8 @@ import { createTaskRemoveTool } from './task-remove.js';
 import { createReasonTool } from './reason.js';
 import { createMemoryCleanupTool } from './memory-cleanup.js';
 import { createDocumentTool } from './document.js';
+import { createGmailSearchTool, createGmailReadTool } from './gmail-read.js';
+import { createCalendarListTool, createCalendarSearchTool } from './calendar-read.js';
 
 export interface RegisterToolsOptions {
   cronService?: CronService;
@@ -155,6 +157,15 @@ export async function registerAllTools(
 
   // Document tool (LibreOffice headless)
   registry.register(createDocumentTool());
+
+  // Google tools (owner-only, read-only — requires OAuth2 credentials)
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN) {
+    registry.register(createGmailSearchTool());
+    registry.register(createGmailReadTool());
+    registry.register(createCalendarListTool());
+    registry.register(createCalendarSearchTool());
+    console.log('[Tools] Google tools registered (gmail_search, gmail_read, calendar_list, calendar_search)');
+  }
 
   // Workspace tools (always available)
   registry.register(createWorkspaceReadTool());

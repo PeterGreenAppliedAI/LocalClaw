@@ -48,6 +48,10 @@ export interface ClassifyResult {
  * These patterns must be very specific to avoid false positives.
  */
 const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
+  // Email/Calendar queries → multi (has gmail_search, calendar_list tools)
+  { pattern: /\b(email|gmail|inbox|unread)\b/i, category: 'multi' },
+  { pattern: /\b(calendar|schedule|meeting|appointment)\b.*\b(today|tomorrow|this week|next week|upcoming)\b/i, category: 'multi' },
+  { pattern: /\b(what'?s on|check) my (calendar|schedule)\b/i, category: 'multi' },
   // PDF/DOCX report requests → research pipeline (deep content + formatting + quality review)
   { pattern: /\b(make|create|generate|write|give me|produce)\b.*\b(pdf|docx)\b.*\breport\b/i, category: 'research' },
   { pattern: /\breport\b.*\b(pdf|docx)\b/i, category: 'research' },
