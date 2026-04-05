@@ -247,7 +247,18 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     }
   }
 
-  // 3c. Per-user tool restrictions — untrusted users can't use restricted tools
+  // 3c. Owner-only tools — stripped for everyone except the config-level ownerId
+  // This is a code gate — the model never sees these tools for non-owners
+  const isOwner = !!senderId && !!config.ownerId && senderId === config.ownerId;
+  if (!isOwner && specialistConfig && channelSecurity?.ownerOnlyTools) {
+    const filtered = specialistConfig.tools.filter(t => !channelSecurity.ownerOnlyTools!.includes(t));
+    if (filtered.length !== specialistConfig.tools.length) {
+      console.log(`[Dispatch] Non-owner "${senderId}" stripped owner-only tools: [${specialistConfig.tools.filter(t => channelSecurity.ownerOnlyTools!.includes(t)).join(', ')}]`);
+      specialistConfig = { ...specialistConfig, tools: filtered };
+    }
+  }
+
+  // 3d. Per-user tool restrictions — untrusted users can't use restricted tools
   if (!isTrusted && specialistConfig && channelSecurity?.restrictedTools) {
     const filtered = specialistConfig.tools.filter(t => !channelSecurity.restrictedTools!.includes(t));
     if (filtered.length !== specialistConfig.tools.length) {

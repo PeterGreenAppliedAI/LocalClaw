@@ -46,6 +46,8 @@ export const ChannelSecuritySchema = z.object({
   restrictedTools: z.array(z.string()).optional(),
   /** Tools that show a preview instead of executing — user must confirm in a follow-up message */
   confirmTools: z.array(z.string()).optional(),
+  /** Tools only accessible to the config-level ownerId — stripped for everyone else, including trusted users */
+  ownerOnlyTools: z.array(z.string()).optional(),
 });
 
 export const ChannelConfigSchema = z.object({
@@ -285,6 +287,8 @@ export const FactInputSchema = z.object({
 });
 
 export const LocalClawConfigSchema = z.object({
+  /** Owner user ID — the single person who can access owner-only tools (gmail, calendar, etc.). Checked in code, not by the model. */
+  ownerId: z.string().optional(),
   timezone: z.string().default('America/New_York'),
   ollama: OllamaConfigSchema.default({}),
   router: RouterConfigSchema.default({}),
