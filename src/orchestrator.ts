@@ -344,86 +344,96 @@ export class Orchestrator {
         console.log(`[Heartbeat] Cleaned up ${cleaned} old media files`);
       }
 
-      // Query heartbeat tasks from cron store
-      const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
-
-      let taskInstructions: string;
-      if (heartbeatTasks.length > 0) {
-        taskInstructions = heartbeatTasks
-          .map((t, i) => `${i + 1}. **${t.name}**: ${t.message}`)
-          .join('\n');
-      } else {
-        // Fallback: read HEARTBEAT.md (legacy / migration path)
-        const heartbeatPath = join(workspacePath, 'HEARTBEAT.md');
-        taskInstructions = readFileSync(heartbeatPath, 'utf-8');
-      }
-
-      // Inject current date/time and task board state for context
+      // --- Phase 1: Gather context directly (no dispatch, no plan pipeline) ---
       const now = new Date();
       const tz = this.config.timezone;
-      const formatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' });
-      const dayOfWeek = formatter.format(now);
       const dateStr = now.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
+      const executor = this.toolRegistry.createExecutor();
+      const toolCtx = { agentId: this.config.agents.default, sessionKey: 'heartbeat', workspacePath, senderId: hb.delivery.target };
 
-      let currentTasks = '';
+      // Gather task board
+      let taskBoard = '';
       try {
-        currentTasks = readFileSync(join(workspacePath, 'TASKS.md'), 'utf-8');
-      } catch { /* no tasks file */ }
+        taskBoard = await executor('task_list', {}, toolCtx);
+      } catch { taskBoard = '(could not load tasks)'; }
 
-      const prompt = [
-        `Current date/time: ${dateStr} (${dayOfWeek})`,
-        `The current YEAR is ${now.getFullYear()}. The current MONTH is ${now.getMonth() + 1}. Use these to determine if dates are past or future.`,
-        '',
-        'Execute each heartbeat task below using the available tools. Rules:',
-        '- Keep each task result SEPARATE with a clear header.',
-        '- Report ONLY what the tool returns. Do NOT add commentary, opinions, or suggestions.',
-        '- Do NOT repeat or paraphrase results from one task in another.',
-        '- Do NOT create, add, or duplicate tasks. You are READ-ONLY — report what you find, nothing more.',
-        '- NEVER ask questions. NEVER say "Would you like..." or "Should I..." or "Do you want...". This is a one-way report — the user cannot reply to it.',
-        '- If cleanup or action is needed, state what needs to be done as a fact (e.g., "3 duplicate entries found — send !cleanup to consolidate"). Do NOT ask for permission.',
-        '- A task is overdue ONLY if its due date is BEFORE today. Compare year, month, and day carefully. A 2027 date is NOT overdue in 2026.',
-        '',
-        '## Current Task Board',
-        currentTasks || '_Empty_',
-        '',
-        '## Heartbeat Tasks',
-        taskInstructions,
-      ].join('\n');
+      // Gather calendar (next 48 hours)
+      let calendar = '';
+      try {
+        calendar = await executor('calendar_list', { days: 2 }, toolCtx);
+      } catch { calendar = '(calendar not available)'; }
 
-      // No sessionStore — heartbeat runs are stateless so the model
-      // can't pattern-match from previous (potentially hallucinated) runs
-      const result = await dispatchMessage({
-        client: this.client,
-        registry: this.toolRegistry,
-        config: this.config,
-        message: prompt,
-        overrideCategory: 'multi',
-        cronMode: true, // strips write_file + marks as automated
-        pipelineRegistry: this.pipelineRegistry,
-            executionMetrics: this.executionMetrics,
-        // Pass delivery target as senderId so tools (memory_search etc.) know whose data to access
-        sourceContext: hb.delivery.target ? {
-          channel: hb.delivery.channel,
-          channelId: hb.delivery.target,
-          senderId: hb.delivery.target,
-        } : undefined,
-        factStore: this.factStore,
+      // Gather recent memory
+      let memory = '';
+      try {
+        memory = await executor('memory_search', { query: 'recent activity decisions context' }, toolCtx);
+      } catch { memory = '(memory not available)'; }
+
+      // Run memory cleanup
+      try {
+        const cleanupResult = await executor('memory_cleanup', {}, toolCtx);
+        if (cleanupResult && !cleanupResult.includes('0 substring') && !cleanupResult.includes('No duplicates')) {
+          console.log(`[Heartbeat] Memory cleanup: ${cleanupResult.slice(0, 100)}`);
+        }
+      } catch { /* best-effort */ }
+
+      console.log('[Heartbeat] Context gathered — running reasoning pass');
+
+      // --- Phase 2: CoT reasoning — think about what would be helpful ---
+      const reasoningModel = this.config.reasoning?.model ?? 'nemotron-3-nano:30b';
+
+      const reasoningResponse = await this.client.chat({
+        model: reasoningModel,
+        messages: [{
+          role: 'user',
+          content: `You are a proactive personal assistant. It is ${dateStr}.
+
+Here is everything you know about the user's current state:
+
+## Calendar (next 48 hours)
+${calendar}
+
+## Task Board
+${taskBoard}
+
+## Recent Memory
+${memory}
+
+Now THINK step by step:
+1. Are there any schedule conflicts or tight transitions in the next 48 hours?
+2. Are any tasks approaching their due date without progress?
+3. Are there connections between events and tasks worth surfacing? (e.g., a meeting related to an open task)
+4. Is there anything that seems off, duplicated, or worth flagging?
+5. Based on recent memory, is there anything the user mentioned that has an upcoming deadline or follow-up?
+
+Then write a SHORT, useful update. Rules:
+- Only surface things that MATTER. Don't list everything — highlight what's important.
+- Be specific: include dates, times, names.
+- If nothing notable is happening, say so in one sentence. Don't pad.
+- NEVER ask questions. This is a one-way notification.
+- Use plain language, not headers or bullet-heavy formatting.
+- If cleanup or action is needed, state the command (e.g., "send !cleanup to consolidate").`,
+        }],
+        options: { temperature: 0.4, num_predict: 1024 },
       });
 
-      console.log(`[Heartbeat] Completed (${result.iterations} steps)`);
+      const insight = (reasoningResponse.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
-      // Update lastRunAt for all heartbeat tasks
+      console.log(`[Heartbeat] Reasoning complete (${insight.length} chars)`);
+
+      // Update lastRunAt for heartbeat tasks
+      const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
       if (this.cronService) {
         for (const task of heartbeatTasks) {
           this.cronService.updateLastRun(task.id);
         }
       }
 
-      // Deliver results to configured channel
-      if (hb.delivery.target) {
+      // --- Phase 3: Deliver ---
+      if (hb.delivery.target && insight) {
         await this.channelRegistry.send(
           { channel: hb.delivery.channel, channelId: hb.delivery.target },
-          { text: `**[Heartbeat Report]**\n${result.answer}` },
+          { text: insight },
         );
       }
     } catch (err) {
