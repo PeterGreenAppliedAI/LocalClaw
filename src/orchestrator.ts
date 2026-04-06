@@ -415,9 +415,9 @@ ${taskBoard}
 ${memory}
 
 Think step by step:
-1. Schedule conflicts or tight transitions?
-2. Tasks approaching due dates without progress?
-3. Connections between events and tasks worth surfacing?
+1. Look for facts that are CONNECTED. If two things in the context relate to each other, reason about what that combination means. Don't just list items — think about how they interact and what the implication is for the user.
+2. Schedule conflicts or tight transitions?
+3. Tasks approaching due dates without progress?
 4. Anything that seems off or worth flagging?
 5. ${timeFrames[timeOfDay]}
 
