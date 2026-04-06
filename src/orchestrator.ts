@@ -368,15 +368,15 @@ export class Orchestrator {
       const now = new Date();
       const tz = this.config.timezone;
       const localHour = parseInt(now.toLocaleString('en-US', { timeZone: tz, hour: 'numeric', hour12: false }));
-      const briefingHours = [8, 13, 19];
-      const isBriefingTime = briefingHours.some(h => Math.abs(localHour - h) <= 0);
+      const briefingHours = [8, 16, 20]; // must align with even-hour cron schedule (0 */2 * * *)
+      const isBriefingTime = briefingHours.includes(localHour);
 
       if (!isBriefingTime) {
         console.log(`[Heartbeat] Maintenance complete (hour ${localHour}, no briefing scheduled)`);
         return; // early return — skip the briefing
       }
 
-      const timeOfDay = localHour <= 10 ? 'morning' : localHour <= 15 ? 'afternoon' : 'evening';
+      const timeOfDay = localHour <= 10 ? 'morning' : localHour <= 16 ? 'afternoon' : 'evening';
       const dateStr = now.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
       console.log(`[Heartbeat] Running ${timeOfDay} briefing...`);
 
