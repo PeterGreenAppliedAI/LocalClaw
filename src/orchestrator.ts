@@ -344,82 +344,17 @@ export class Orchestrator {
         console.log(`[Heartbeat] Cleaned up ${cleaned} old media files`);
       }
 
-      // --- Phase 1: Gather context directly (no dispatch, no plan pipeline) ---
-      const now = new Date();
-      const tz = this.config.timezone;
-      const dateStr = now.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
+      // --- Maintenance tasks (every heartbeat cycle — lightweight, no delivery) ---
       const executor = this.toolRegistry.createExecutor();
       const toolCtx = { agentId: this.config.agents.default, sessionKey: 'heartbeat', workspacePath, senderId: hb.delivery.target };
 
-      // Gather task board
-      let taskBoard = '';
-      try {
-        taskBoard = await executor('task_list', {}, toolCtx);
-      } catch { taskBoard = '(could not load tasks)'; }
-
-      // Gather calendar (next 48 hours)
-      let calendar = '';
-      try {
-        calendar = await executor('calendar_list', { days: 2 }, toolCtx);
-      } catch { calendar = '(calendar not available)'; }
-
-      // Gather recent memory
-      let memory = '';
-      try {
-        memory = await executor('memory_search', { query: 'recent activity decisions context' }, toolCtx);
-      } catch { memory = '(memory not available)'; }
-
-      // Run memory cleanup
+      // Memory cleanup (best-effort)
       try {
         const cleanupResult = await executor('memory_cleanup', {}, toolCtx);
         if (cleanupResult && !cleanupResult.includes('0 substring') && !cleanupResult.includes('No duplicates')) {
           console.log(`[Heartbeat] Memory cleanup: ${cleanupResult.slice(0, 100)}`);
         }
       } catch { /* best-effort */ }
-
-      console.log('[Heartbeat] Context gathered — running reasoning pass');
-
-      // --- Phase 2: CoT reasoning — think about what would be helpful ---
-      const reasoningModel = this.config.reasoning?.model ?? 'nemotron-3-nano:30b';
-
-      const reasoningResponse = await this.client.chat({
-        model: reasoningModel,
-        messages: [{
-          role: 'user',
-          content: `You are a proactive personal assistant. It is ${dateStr}.
-
-Here is everything you know about the user's current state:
-
-## Calendar (next 48 hours)
-${calendar}
-
-## Task Board
-${taskBoard}
-
-## Recent Memory
-${memory}
-
-Now THINK step by step:
-1. Are there any schedule conflicts or tight transitions in the next 48 hours?
-2. Are any tasks approaching their due date without progress?
-3. Are there connections between events and tasks worth surfacing? (e.g., a meeting related to an open task)
-4. Is there anything that seems off, duplicated, or worth flagging?
-5. Based on recent memory, is there anything the user mentioned that has an upcoming deadline or follow-up?
-
-Then write a SHORT, useful update. Rules:
-- Only surface things that MATTER. Don't list everything — highlight what's important.
-- Be specific: include dates, times, names.
-- If nothing notable is happening, say so in one sentence. Don't pad.
-- NEVER ask questions. This is a one-way notification.
-- Use plain language, not headers or bullet-heavy formatting.
-- If cleanup or action is needed, state the command (e.g., "send !cleanup to consolidate").`,
-        }],
-        options: { temperature: 0.4, num_predict: 1024 },
-      });
-
-      const insight = (reasoningResponse.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-      console.log(`[Heartbeat] Reasoning complete (${insight.length} chars)`);
 
       // Update lastRunAt for heartbeat tasks
       const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
@@ -429,7 +364,78 @@ Then write a SHORT, useful update. Rules:
         }
       }
 
-      // --- Phase 3: Deliver ---
+      // --- Briefing check: only run at 8am, 1pm, 7pm (±30 min window) ---
+      const now = new Date();
+      const tz = this.config.timezone;
+      const localHour = parseInt(now.toLocaleString('en-US', { timeZone: tz, hour: 'numeric', hour12: false }));
+      const briefingHours = [8, 13, 19];
+      const isBriefingTime = briefingHours.some(h => Math.abs(localHour - h) <= 0);
+
+      if (!isBriefingTime) {
+        console.log(`[Heartbeat] Maintenance complete (hour ${localHour}, no briefing scheduled)`);
+        return; // early return — skip the briefing
+      }
+
+      const timeOfDay = localHour <= 10 ? 'morning' : localHour <= 15 ? 'afternoon' : 'evening';
+      const dateStr = now.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
+      console.log(`[Heartbeat] Running ${timeOfDay} briefing...`);
+
+      // --- Gather context for briefing ---
+      let taskBoard = '';
+      try { taskBoard = await executor('task_list', {}, toolCtx); } catch { taskBoard = '(could not load tasks)'; }
+
+      let calendar = '';
+      try { calendar = await executor('calendar_list', { days: timeOfDay === 'evening' ? 2 : 1 }, toolCtx); } catch { calendar = '(calendar not available)'; }
+
+      let memory = '';
+      try { memory = await executor('memory_search', { query: 'recent activity decisions context' }, toolCtx); } catch { memory = '(memory not available)'; }
+
+      // --- CoT reasoning pass ---
+      const reasoningModel = this.config.reasoning?.model ?? 'nemotron-3-nano:30b';
+
+      const timeFrames: Record<string, string> = {
+        morning: "Focus on today's schedule. What should the user prepare for? Flag early meetings, deadlines, or things that need attention before the day gets busy.",
+        afternoon: "Focus on what's left today. Anything urgent that hasn't been addressed? Any prep needed for tomorrow?",
+        evening: "Focus on tomorrow. What's coming up? Anything to prep tonight? Flag early morning commitments.",
+      };
+
+      const reasoningResponse = await this.client.chat({
+        model: reasoningModel,
+        messages: [{
+          role: 'user',
+          content: `You are a proactive personal assistant. It is ${dateStr}. This is the ${timeOfDay} check-in.
+
+## Calendar
+${calendar}
+
+## Task Board
+${taskBoard}
+
+## Recent Memory
+${memory}
+
+Think step by step:
+1. Schedule conflicts or tight transitions?
+2. Tasks approaching due dates without progress?
+3. Connections between events and tasks worth surfacing?
+4. Anything that seems off or worth flagging?
+5. ${timeFrames[timeOfDay]}
+
+Write a SHORT, useful ${timeOfDay} update. Rules:
+- Only surface what MATTERS. Don't list everything.
+- Be specific: dates, times, names, locations.
+- If nothing notable, say so in one sentence.
+- NEVER ask questions. This is a one-way notification.
+- Plain language, conversational tone. No headers or heavy formatting.
+- If cleanup or action is needed, state the command.`,
+        }],
+        options: { temperature: 0.4, num_predict: 1024 },
+      });
+
+      const insight = (reasoningResponse.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      console.log(`[Heartbeat] ${timeOfDay} briefing complete (${insight.length} chars)`);
+
+      // --- Deliver ---
       if (hb.delivery.target && insight) {
         await this.channelRegistry.send(
           { channel: hb.delivery.channel, channelId: hb.delivery.target },
