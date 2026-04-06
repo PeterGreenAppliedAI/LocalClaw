@@ -294,7 +294,7 @@ export class Orchestrator {
       await this.cronService.start();
     }
 
-    // Set up heartbeat
+    // Set up heartbeat (maintenance only — transcript review, cleanup, promotion)
     if (this.config.heartbeat?.enabled) {
       const hb = this.config.heartbeat;
       this.heartbeatCron = new Cron(hb.schedule, { timezone: this.config.timezone }, async () => {
@@ -302,6 +302,15 @@ export class Orchestrator {
       });
       const next = this.heartbeatCron.nextRun();
       console.log(`[Heartbeat] Scheduled (${hb.schedule}) — next run: ${next?.toISOString() ?? 'unknown'}`);
+
+      // Briefings — separate schedule: 8:00am, 1:15pm, 5:00pm
+      const briefingSchedule = '0 8 * * *;15 13 * * *;0 17 * * *';
+      for (const schedule of briefingSchedule.split(';')) {
+        new Cron(schedule.trim(), { timezone: this.config.timezone }, async () => {
+          await this.runBriefing();
+        });
+      }
+      console.log('[Briefing] Scheduled at 8:00am, 1:15pm, 5:00pm');
     }
 
     const models = await this.client.listModels();
@@ -364,23 +373,32 @@ export class Orchestrator {
         }
       }
 
-      // --- Briefing check: only run at 8am, 1pm, 7pm (±30 min window) ---
-      const now = new Date();
-      const tz = this.config.timezone;
-      const localHour = parseInt(now.toLocaleString('en-US', { timeZone: tz, hour: 'numeric', hour12: false }));
-      const briefingHours = [8, 16, 20]; // must align with even-hour cron schedule (0 */2 * * *)
-      const isBriefingTime = briefingHours.includes(localHour);
+      console.log('[Heartbeat] Maintenance complete');
+    } catch (err) {
+      const wrapped = err instanceof LocalClawError ? err : new LocalClawError('TOOL_EXECUTION_ERROR', 'Heartbeat failed', err);
+      console.error(`[Heartbeat] ${wrapped.code}: ${wrapped.message}`);
+    }
+  }
 
-      if (!isBriefingTime) {
-        console.log(`[Heartbeat] Maintenance complete (hour ${localHour}, no briefing scheduled)`);
-        return; // early return — skip the briefing
-      }
+  /** Proactive briefing — gathers calendar, tasks, memory and reasons about what matters. */
+  private async runBriefing(): Promise<void> {
+    const hb = this.config.heartbeat;
+    if (!hb?.delivery.target) return;
 
-      const timeOfDay = localHour <= 10 ? 'morning' : localHour <= 16 ? 'afternoon' : 'evening';
-      const dateStr = now.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
-      console.log(`[Heartbeat] Running ${timeOfDay} briefing...`);
+    const now = new Date();
+    const tz = this.config.timezone;
+    const localHour = parseInt(now.toLocaleString('en-US', { timeZone: tz, hour: 'numeric', hour12: false }));
+    const timeOfDay = localHour <= 10 ? 'morning' : localHour <= 16 ? 'afternoon' : 'evening';
+    const dateStr = now.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
 
-      // --- Gather context for briefing ---
+    console.log(`[Briefing] Running ${timeOfDay} briefing...`);
+
+    try {
+      const workspacePath = resolveWorkspacePath(this.config.agents.default, this.config);
+      const executor = this.toolRegistry.createExecutor();
+      const toolCtx = { agentId: this.config.agents.default, sessionKey: 'briefing', workspacePath, senderId: hb.delivery.target };
+
+      // Gather context
       let taskBoard = '';
       try { taskBoard = await executor('task_list', {}, toolCtx); } catch { taskBoard = '(could not load tasks)'; }
 
@@ -390,7 +408,7 @@ export class Orchestrator {
       let memory = '';
       try { memory = await executor('memory_search', { query: 'recent activity decisions context' }, toolCtx); } catch { memory = '(memory not available)'; }
 
-      // --- CoT reasoning pass ---
+      // CoT reasoning pass
       const reasoningModel = this.config.reasoning?.model ?? 'nemotron-3-nano:30b';
 
       const timeFrames: Record<string, string> = {
@@ -399,7 +417,7 @@ export class Orchestrator {
         evening: "Focus on tomorrow. What's coming up? Anything to prep tonight? Flag early morning commitments.",
       };
 
-      const reasoningResponse = await this.client.chat({
+      const response = await this.client.chat({
         model: reasoningModel,
         messages: [{
           role: 'user',
@@ -432,19 +450,17 @@ Write a SHORT, useful ${timeOfDay} update. Rules:
         options: { temperature: 0.4, num_predict: 1024 },
       });
 
-      const insight = (reasoningResponse.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      console.log(`[Heartbeat] ${timeOfDay} briefing complete (${insight.length} chars)`);
+      const insight = (response.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      console.log(`[Briefing] ${timeOfDay} complete (${insight.length} chars)`);
 
-      // --- Deliver ---
-      if (hb.delivery.target && insight) {
+      if (insight) {
         await this.channelRegistry.send(
           { channel: hb.delivery.channel, channelId: hb.delivery.target },
           { text: insight },
         );
       }
     } catch (err) {
-      const wrapped = err instanceof LocalClawError ? err : new LocalClawError('TOOL_EXECUTION_ERROR', 'Heartbeat failed', err);
-      console.error(`[Heartbeat] ${wrapped.code}: ${wrapped.message}`);
+      console.warn('[Briefing] Failed:', err instanceof Error ? err.message : err);
     }
   }
 
