@@ -408,6 +408,8 @@ export class Orchestrator {
       let memory = '';
       try { memory = await executor('memory_search', { query: 'recent activity decisions context' }, toolCtx); } catch { memory = '(memory not available)'; }
 
+      console.log(`[Briefing] Context: calendar=${calendar.length} chars, tasks=${taskBoard.length} chars, memory=${memory.length} chars`);
+
       // CoT reasoning pass
       const reasoningModel = this.config.reasoning?.model ?? 'nemotron-3-nano:30b';
 
@@ -445,9 +447,10 @@ Write a SHORT, useful ${timeOfDay} update. Rules:
 - If nothing notable, say so in one sentence.
 - NEVER ask questions. This is a one-way notification.
 - Plain language, conversational tone. No headers or heavy formatting.
-- If cleanup or action is needed, state the command.`,
+- If cleanup or action is needed, state the command.
+- Your response should be at least 2-3 sentences. If there's genuinely nothing to report, explain why (e.g., "No events today, task board is clear, nothing flagged in memory.").`,
         }],
-        options: { temperature: 0.4, num_predict: 1024 },
+        options: { temperature: 0.6, num_predict: 1024 },
       });
 
       const insight = (response.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
