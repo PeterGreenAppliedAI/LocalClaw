@@ -410,8 +410,8 @@ export class Orchestrator {
 
       console.log(`[Briefing] Context: calendar=${calendar.length} chars, tasks=${taskBoard.length} chars, memory=${memory.length} chars`);
 
-      // CoT reasoning pass
-      const reasoningModel = this.config.reasoning?.model ?? 'nemotron-3-nano:30b';
+      // CoT reasoning pass — use specialist model (not reasoning/thinking model which wraps output in <think> tags)
+      const briefingModel = 'qwen3-coder:30b';
 
       const timeFrames: Record<string, string> = {
         morning: "Focus on today's schedule. What should the user prepare for? Flag early meetings, deadlines, or things that need attention before the day gets busy.",
@@ -420,7 +420,7 @@ export class Orchestrator {
       };
 
       const response = await this.client.chat({
-        model: reasoningModel,
+        model: briefingModel,
         messages: [{
           role: 'user',
           content: `You are a proactive personal assistant. It is ${dateStr}. This is the ${timeOfDay} check-in.
@@ -448,12 +448,26 @@ Write a SHORT, useful ${timeOfDay} update. Rules:
 - NEVER ask questions. This is a one-way notification.
 - Plain language, conversational tone. No headers or heavy formatting.
 - If cleanup or action is needed, state the command.
-- Your response should be at least 2-3 sentences. If there's genuinely nothing to report, explain why (e.g., "No events today, task board is clear, nothing flagged in memory.").`,
+- Your response should be at least 2-3 sentences. If there's genuinely nothing to report, explain why (e.g., "No events today, task board is clear, nothing flagged in memory.").
+- After your reasoning, write your final update OUTSIDE of any think tags.`,
         }],
         options: { temperature: 0.6, num_predict: 1024 },
       });
 
-      const insight = (response.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      const raw = response.message?.content ?? '';
+      // Extract content after </think> if present, otherwise use full response
+      let insight: string;
+      const thinkEnd = raw.indexOf('</think>');
+      if (thinkEnd !== -1) {
+        insight = raw.slice(thinkEnd + '</think>'.length).trim();
+      } else {
+        insight = raw.replace(/<think>[\s\S]*$/g, '').trim(); // unclosed think tag — take what's before it
+      }
+      // If still empty, the model put everything in think tags — extract the reasoning as the output
+      if (!insight && raw.includes('<think>')) {
+        insight = raw.replace(/<\/?think>/g, '').trim();
+        console.log(`[Briefing] Model put everything in <think> tags — extracting reasoning as output`);
+      }
       console.log(`[Briefing] ${timeOfDay} complete (${insight.length} chars)`);
 
       if (insight) {
