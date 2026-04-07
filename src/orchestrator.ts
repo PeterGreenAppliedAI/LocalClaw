@@ -365,15 +365,81 @@ export class Orchestrator {
         }
       } catch { /* best-effort */ }
 
-      // Update lastRunAt for heartbeat tasks
+      // Query heartbeat tasks and dispatch report
       const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
+
+      let taskInstructions: string;
+      if (heartbeatTasks.length > 0) {
+        taskInstructions = heartbeatTasks
+          .map((t, i) => `${i + 1}. **${t.name}**: ${t.message}`)
+          .join('\n');
+      } else {
+        const heartbeatPath = join(workspacePath, 'HEARTBEAT.md');
+        try { taskInstructions = readFileSync(heartbeatPath, 'utf-8'); } catch { taskInstructions = ''; }
+      }
+
+      if (taskInstructions) {
+        const now = new Date();
+        const tz = this.config.timezone;
+        const formatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' });
+        const dayOfWeek = formatter.format(now);
+        const dateStr = now.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
+
+        let currentTasks = '';
+        try { currentTasks = readFileSync(join(workspacePath, 'TASKS.md'), 'utf-8'); } catch { /* no tasks file */ }
+
+        const prompt = [
+          `Current date/time: ${dateStr} (${dayOfWeek})`,
+          `The current YEAR is ${now.getFullYear()}. The current MONTH is ${now.getMonth() + 1}. Use these to determine if dates are past or future.`,
+          '',
+          'Execute each heartbeat task below using the available tools. Rules:',
+          '- Keep each task result SEPARATE with a clear header.',
+          '- Report ONLY what the tool returns. Do NOT add commentary, opinions, or suggestions.',
+          '- Do NOT create, add, or duplicate tasks. You are READ-ONLY.',
+          '- NEVER ask questions. This is a one-way report.',
+          '- If cleanup or action is needed, state the command (e.g., "send !cleanup to consolidate").',
+          '- A task is overdue ONLY if its due date is BEFORE today.',
+          '',
+          '## Current Task Board',
+          currentTasks || '_Empty_',
+          '',
+          '## Heartbeat Tasks',
+          taskInstructions,
+        ].join('\n');
+
+        const result = await dispatchMessage({
+          client: this.client,
+          registry: this.toolRegistry,
+          config: this.config,
+          message: prompt,
+          overrideCategory: 'multi',
+          cronMode: true,
+          pipelineRegistry: this.pipelineRegistry,
+          executionMetrics: this.executionMetrics,
+          sourceContext: hb.delivery.target ? {
+            channel: hb.delivery.channel,
+            channelId: hb.delivery.target,
+            senderId: hb.delivery.target,
+          } : undefined,
+          factStore: this.factStore,
+        });
+
+        console.log(`[Heartbeat] Completed (${result.iterations} steps)`);
+
+        if (hb.delivery.target) {
+          await this.channelRegistry.send(
+            { channel: hb.delivery.channel, channelId: hb.delivery.target },
+            { text: `**[Heartbeat Report]**\n${result.answer}` },
+          );
+        }
+      }
+
+      // Update lastRunAt
       if (this.cronService) {
         for (const task of heartbeatTasks) {
           this.cronService.updateLastRun(task.id);
         }
       }
-
-      console.log('[Heartbeat] Maintenance complete');
     } catch (err) {
       const wrapped = err instanceof LocalClawError ? err : new LocalClawError('TOOL_EXECUTION_ERROR', 'Heartbeat failed', err);
       console.error(`[Heartbeat] ${wrapped.code}: ${wrapped.message}`);
