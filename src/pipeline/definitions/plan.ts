@@ -285,6 +285,9 @@ export const planPipeline: PipelineDefinition = {
         const workspacePath = ctx.toolContext.workspacePath;
         if (!workspacePath) return;
 
+        // Skip skill matching for heartbeat/cron dispatches — system operations shouldn't reuse user skills
+        if (ctx.userMessage.includes('Heartbeat Tasks') || ctx.userMessage.includes('Execute each heartbeat task')) return;
+
         try {
           const store = new SkillStore(workspacePath);
           const match = findMatchingSkill(store, ctx.userMessage);
