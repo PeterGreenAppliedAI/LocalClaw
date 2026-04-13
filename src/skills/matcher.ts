@@ -18,13 +18,14 @@ interface SkillMatch {
  * Scoring:
  * - Each keyword match in name: +3
  * - Each keyword match in description: +2
- * - Bonus for high success count: +1 per 3 successes (max +3)
- * - Minimum score threshold: 4 (prevents weak matches)
+ * - Bonus for high success count: +1 per 5 successes (max +2)
+ * - Minimum score threshold: 8 (prevents weak/generic matches)
+ * - At least 30% of goal keywords must match (prevents 2-of-20 false positives)
  */
 export function findMatchingSkill(
   store: SkillStore,
   goal: string,
-  threshold = 4,
+  threshold = 8,
 ): SkillMatch | null {
   const skills = store.list();
   if (skills.length === 0) return null;
@@ -35,6 +36,7 @@ export function findMatchingSkill(
     'is', 'it', 'my', 'me', 'i', 'do', 'go', 'then', 'from', 'with',
     'this', 'that', 'can', 'you', 'please', 'find', 'get', 'add', 'one',
     'first', 'next', 'near', 'them', 'their', 'some', 'using',
+    'make', 'create', 'search', 'report', 'today', 'current', 'latest',
   ]);
 
   const keywords = goal
@@ -51,14 +53,20 @@ export function findMatchingSkill(
     const nameLower = skill.name.toLowerCase();
     const descLower = skill.description.toLowerCase();
     let score = 0;
+    let matchedKeywords = 0;
 
     for (const kw of keywords) {
+      const matched = nameLower.includes(kw) || descLower.includes(kw);
+      if (matched) matchedKeywords++;
       if (nameLower.includes(kw)) score += 3;
       if (descLower.includes(kw)) score += 2;
     }
 
-    // Bonus for proven skills
-    score += Math.min(3, Math.floor(skill.successCount / 3));
+    // Require at least 30% of goal keywords to match
+    if (keywords.length > 3 && matchedKeywords / keywords.length < 0.3) continue;
+
+    // Bonus for proven skills (capped lower to prevent inflated counts from dominating)
+    score += Math.min(2, Math.floor(skill.successCount / 5));
 
     if (score >= threshold && (!best || score > best.score)) {
       best = { slug: skill.slug, name: skill.name, score };
