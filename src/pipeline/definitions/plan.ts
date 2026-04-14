@@ -657,6 +657,9 @@ RULES:
         const workspacePath = ctx.toolContext.workspacePath;
         if (!workspacePath) return;
 
+        // Skip skill saving for heartbeat/cron — system operations shouldn't become saved skills
+        if (ctx.userMessage.includes('Heartbeat Tasks') || ctx.userMessage.includes('Execute each heartbeat task')) return;
+
         const plan = ctx.params._plan as PlanStep[] | undefined;
         const results = ctx.params._results as string[] | undefined;
         if (!plan || !results || plan.length < 2) return;
