@@ -52,6 +52,8 @@ const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(email|gmail|inbox|unread)\b/i, category: 'personal' },
   { pattern: /\b(calendar|schedule|meeting|appointment)\b.*\b(today|tomorrow|this week|next week|upcoming)\b/i, category: 'personal' },
   { pattern: /\b(what'?s on|check) my (calendar|schedule)\b/i, category: 'personal' },
+  { pattern: /\bwhat do i have\b.*\b(today|tomorrow|this week|next week|rest of|the week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i, category: 'personal' },
+  { pattern: /\b(am i free|am i busy|do i have anything)\b.*\b(today|tomorrow|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i, category: 'personal' },
   // PDF/DOCX report requests → research pipeline (deep content + formatting + quality review)
   { pattern: /\b(make|create|generate|write|give me|produce)\b.*\b(pdf|docx)\b.*\breport\b/i, category: 'research' },
   { pattern: /\breport\b.*\b(pdf|docx)\b/i, category: 'research' },

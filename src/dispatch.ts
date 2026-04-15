@@ -356,7 +356,12 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   result.category = effectiveCategory;
 
   // Strip thinking tags from models that emit <think>...</think> blocks
-  result.answer = result.answer.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  // Also strip orphaned </think> tags and content before them (unclosed think blocks)
+  result.answer = result.answer
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/^[\s\S]*?<\/think>/g, '')
+    .replace(/<\/?think>/g, '')
+    .trim();
 
   // Post-task self-review (Feature 4): lightweight quality check for tool-heavy responses
   // Corrections are logged for learning but NOT appended to user-facing answer
