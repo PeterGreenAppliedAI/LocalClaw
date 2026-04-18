@@ -356,6 +356,26 @@ export class Orchestrator {
       // --- Intelligent memory management ---
       const senderId = hb.delivery.target;
 
+      // Auto-cancel overdue tasks (past due date by 7+ days)
+      if (this.taskStore) {
+        try {
+          const allTasks = this.taskStore.list();
+          const now = new Date();
+          now.setHours(0, 0, 0, 0);
+          const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+          const overdue = allTasks.filter(t =>
+            t.status === 'todo' && t.dueDate &&
+            (now.getTime() - new Date(t.dueDate).getTime()) > SEVEN_DAYS,
+          );
+          for (const task of overdue) {
+            this.taskStore.update(task.id, { status: 'cancelled' });
+            console.log(`[Heartbeat] Auto-cancelled overdue task: "${task.title}" (due: ${task.dueDate})`);
+          }
+        } catch (err) {
+          console.warn('[Heartbeat] Task cleanup failed:', err instanceof Error ? err.message : err);
+        }
+      }
+
       // Auto-expire stale date-referenced facts
       if (this.factStore && senderId) {
         const expired = this.factStore.expireStaleDateFacts(senderId);
