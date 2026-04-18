@@ -37,6 +37,12 @@ export function createMemoryForgetTool(
         return `No facts found matching "${query}". Try a different search term.`;
       }
 
+      // Record removal to prevent heartbeat re-extraction
+      if (ctx.senderId) {
+        factStore.recordRemoval(query, 'user_denied', ctx.senderId);
+      }
+      factStore.recordRemoval(query, 'user_denied');
+
       return `Removed ${removed} fact(s) matching "${query}" from memory.`;
     },
   };

@@ -353,7 +353,36 @@ export class Orchestrator {
         console.log(`[Heartbeat] Cleaned up ${cleaned} old media files`);
       }
 
-      // --- Maintenance tasks (every heartbeat cycle — lightweight, no delivery) ---
+      // --- Intelligent memory management ---
+      const senderId = hb.delivery.target;
+
+      // Auto-expire stale date-referenced facts
+      if (this.factStore && senderId) {
+        const expired = this.factStore.expireStaleDateFacts(senderId);
+        if (expired.length > 0) {
+          for (const e of expired) {
+            this.factStore.recordRemoval(e.text, 'date_expired', senderId);
+          }
+          console.log(`[Heartbeat] Auto-expired ${expired.length} stale date-referenced fact(s)`);
+        }
+      }
+
+      // Select facts for user review
+      let reviewCandidates: import('./config/types.js').FactEntry[] = [];
+      if (this.factStore && senderId) {
+        reviewCandidates = this.factStore.selectReviewCandidates(senderId, 3);
+        if (reviewCandidates.length > 0) {
+          const pendingReview = {
+            type: 'heartbeat_review',
+            createdAt: new Date().toISOString(),
+            senderId,
+            facts: reviewCandidates.map(f => ({ id: f.id, text: f.text, category: f.category })),
+          };
+          writeFileSync(this.heartbeatPendingPath(workspacePath, senderId), JSON.stringify(pendingReview, null, 2));
+        }
+      }
+
+      // --- Maintenance tasks ---
       const executor = this.toolRegistry.createExecutor();
       const toolCtx = { agentId: this.config.agents.default, sessionKey: 'heartbeat', workspacePath, senderId: hb.delivery.target };
 
@@ -427,9 +456,19 @@ export class Orchestrator {
         console.log(`[Heartbeat] Completed (${result.iterations} steps)`);
 
         if (hb.delivery.target) {
+          let reportText = `**[Heartbeat Report]**\n${result.answer}`;
+
+          // Append memory review section if there are candidates
+          if (reviewCandidates.length > 0) {
+            const reviewSection = reviewCandidates
+              .map((f, i) => `${i + 1}. [${f.category}] "${f.text}"`)
+              .join('\n');
+            reportText += `\n\n**Memory check** — still accurate?\n${reviewSection}\nReply **!heartbeat yes** to confirm all, or **!heartbeat no 2** to remove #2.`;
+          }
+
           await this.channelRegistry.send(
             { channel: hb.delivery.channel, channelId: hb.delivery.target },
-            { text: `**[Heartbeat Report]**\n${result.answer}` },
+            { text: reportText },
           );
         }
       }
@@ -474,6 +513,20 @@ export class Orchestrator {
       let memory = '';
       try { memory = await executor('memory_search', { query: 'recent activity decisions context' }, toolCtx); } catch { memory = '(memory not available)'; }
 
+      // Check for stale facts (non-stable, older than 10 days)
+      let staleFacts = '';
+      if (this.factStore && hb.delivery.target) {
+        try {
+          const allFacts = this.factStore.loadFactsJson(hb.delivery.target);
+          const now = Date.now();
+          const TEN_DAYS = 10 * 24 * 60 * 60 * 1000;
+          const staleList = allFacts.filter(f => f.category !== 'stable' && (now - new Date(f.createdAt).getTime()) > TEN_DAYS);
+          if (staleList.length > 0) {
+            staleFacts = staleList.map(f => `- [${f.category}] "${f.text}" (from ${f.createdAt.slice(0, 10)})`).join('\n');
+          }
+        } catch { /* best-effort */ }
+      }
+
       console.log(`[Briefing] Context: calendar=${calendar.length} chars, tasks=${taskBoard.length} chars, memory=${memory.length} chars`);
 
       // CoT reasoning pass — use specialist model (not reasoning/thinking model which wraps output in <think> tags)
@@ -499,6 +552,7 @@ ${taskBoard}
 
 ## Recent Memory
 ${memory}
+${staleFacts ? `\n## Stale Context (may be outdated — mention if relevant)\n${staleFacts}` : ''}
 
 Think step by step:
 1. Look for facts that are CONNECTED. If two things in the context relate to each other, reason about what that combination means. Don't just list items — think about how they interact and what the implication is for the user.
@@ -547,7 +601,10 @@ Write a SHORT, useful ${timeOfDay} update. Rules:
     }
   }
 
-  private async extractFacts(transcript: import('./sessions/types.js').ConversationTurn[]): Promise<FactInput[]> {
+  private async extractFacts(
+    transcript: import('./sessions/types.js').ConversationTurn[],
+    recentlyRemoved?: Array<{ text: string; reason: string }>,
+  ): Promise<FactInput[]> {
     const userTurns = transcript.filter(t => t.role === 'user');
     console.log(`[Facts] Transcript has ${transcript.length} turns (${userTurns.length} user)`);
     if (userTurns.length < 2) {
@@ -585,6 +642,11 @@ Write a SHORT, useful ${timeOfDay} update. Rules:
             'Return a JSON array: [{"text":"fact","cat":"stable|context|decision|question","conf":0.0-1.0,"tags":["keyword"],"entities":["ProperNoun"]}]',
             'Categories: stable = permanent facts (name, location, job, preferences), context = temporary/situational, decision = choices the user made, question = open questions.',
             'If nothing worth remembering, return [].',
+            ...(recentlyRemoved && recentlyRemoved.length > 0 ? [
+              '',
+              'IMPORTANT: The user has explicitly REMOVED these facts. Do NOT re-extract anything similar:',
+              ...recentlyRemoved.slice(0, 10).map(r => `- "${r.text}" (removed: ${r.reason})`),
+            ] : []),
           ].join('\n'),
         },
         { role: 'user', content: condensed },
@@ -639,6 +701,10 @@ Write a SHORT, useful ${timeOfDay} update. Rules:
 
   private pendingPath(workspacePath: string, senderId: string): string {
     return join(workspacePath, 'memory', senderId, 'pending.json');
+  }
+
+  private heartbeatPendingPath(workspacePath: string, senderId: string): string {
+    return join(workspacePath, 'memory', senderId, 'heartbeat-pending.json');
   }
 
   /**
@@ -775,7 +841,9 @@ Write a SHORT, useful ${timeOfDay} update. Rules:
         const transcript = JSON.parse(data) as import('./sessions/types.js').ConversationTurn[];
         if (!Array.isArray(transcript) || transcript.length === 0) continue;
 
-        const facts = await this.extractFacts(transcript);
+        // Load recently-removed facts to suppress re-extraction
+        const recentlyRemoved = this.factStore?.loadRecentlyRemoved(senderId) ?? [];
+        const facts = await this.extractFacts(transcript, recentlyRemoved);
         if (facts.length > 0) {
           allFacts.push(...facts);
           console.log(`[Heartbeat] Extracted ${facts.length} facts from ${file} (user: ${senderId})`);
@@ -978,6 +1046,75 @@ Write a SHORT, useful ${timeOfDay} update. Rules:
           { text: 'Memory cleanup failed. Try again later.' },
         ).catch(() => {});
       }
+      return;
+    }
+
+    if (trimmed.startsWith('!heartbeat')) {
+      const route = resolveRoute(
+        { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
+        this.config,
+      );
+      const workspacePath = resolveWorkspacePath(route.agentId, this.config);
+      const reviewFile = this.heartbeatPendingPath(workspacePath, msg.senderId);
+
+      let replyText: string;
+      try {
+        const raw = readFileSync(reviewFile, 'utf-8');
+        const pending = JSON.parse(raw) as {
+          type: string;
+          facts: Array<{ id: string; text: string; category: string }>;
+          senderId: string;
+        };
+
+        const args = msg.content.trim().slice('!heartbeat'.length).trim().toLowerCase();
+
+        if (args === 'yes' || args === 'confirm') {
+          for (const f of pending.facts) {
+            this.factStore?.boostConfidence(f.id, pending.senderId);
+          }
+          this.factStore?.rebuildFacts(pending.senderId);
+          unlinkSync(reviewFile);
+          replyText = `Confirmed ${pending.facts.length} fact(s). Confidence boosted.`;
+
+        } else if (args.startsWith('no')) {
+          const numMatch = args.match(/no\s+(\d+)/);
+          const toRemove = numMatch
+            ? [pending.facts[parseInt(numMatch[1]) - 1]].filter(Boolean)
+            : pending.facts;
+
+          for (const f of toRemove) {
+            this.factStore?.removeFact(f.text.slice(0, 40), pending.senderId);
+            this.factStore?.recordRemoval(f.text, 'user_denied', pending.senderId);
+          }
+          this.factStore?.rebuildFacts(pending.senderId);
+
+          if (numMatch && toRemove.length < pending.facts.length) {
+            pending.facts = pending.facts.filter(f => !toRemove.includes(f));
+            writeFileSync(reviewFile, JSON.stringify(pending, null, 2));
+            replyText = `Removed "${toRemove[0]?.text.slice(0, 60)}". ${pending.facts.length} fact(s) still pending review.`;
+          } else {
+            unlinkSync(reviewFile);
+            replyText = `Removed ${toRemove.length} fact(s) from memory. They won't come back.`;
+          }
+
+        } else {
+          replyText = 'Usage: **!heartbeat yes** (confirm all), **!heartbeat no** (remove all), or **!heartbeat no 2** (remove #2).';
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          replyText = 'No pending memory review. Wait for the next heartbeat.';
+        } else {
+          console.warn('[Orchestrator] Heartbeat review failed:', err instanceof Error ? err.message : err);
+          replyText = 'Failed to process review. Try again.';
+        }
+      }
+
+      await this.channelRegistry.send(
+        { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+        { text: replyText },
+      ).catch(err => {
+        console.warn('[Orchestrator] Failed to send heartbeat review reply:', err instanceof Error ? err.message : err);
+      });
       return;
     }
 

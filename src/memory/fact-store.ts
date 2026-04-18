@@ -568,4 +568,178 @@ export class FactStore {
     const key = senderId ?? '__shared__';
     this.factsCache.delete(key);
   }
+
+  // --- Intelligent memory management ---
+
+  /** Common date patterns in fact text */
+  private static readonly DATE_PATTERNS = [
+    /(\d{4}-\d{2}-\d{2})/,                                    // 2026-04-08
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})/i,  // April 8, 2026
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})\b/i,            // April 8 (assume current year)
+    /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/,                       // 04/08/2026
+  ];
+
+  /** Extract the first unambiguous date from fact text. Returns null if none found. */
+  private extractDateFromText(text: string): Date | null {
+    // ISO format
+    const iso = text.match(/(\d{4}-\d{2}-\d{2})/);
+    if (iso) return new Date(`${iso[1]}T00:00:00`);
+
+    // Month Day, Year
+    const monthDayYear = text.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})/i);
+    if (monthDayYear) return new Date(`${monthDayYear[1]} ${monthDayYear[2]}, ${monthDayYear[3]}`);
+
+    // Month Day (no year — assume current year)
+    const monthDay = text.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})\b/i);
+    if (monthDay) {
+      const d = new Date(`${monthDay[1]} ${monthDay[2]}, ${new Date().getFullYear()}`);
+      if (!isNaN(d.getTime())) return d;
+    }
+
+    return null;
+  }
+
+  /**
+   * Auto-expire non-stable facts that reference dates in the past.
+   * Returns the list of removed facts for logging.
+   */
+  expireStaleDateFacts(senderId?: string): FactEntry[] {
+    const entries = this.loadFactsJson(senderId);
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const stale: FactEntry[] = [];
+
+    for (const entry of entries) {
+      if (entry.category === 'stable') continue;
+      const refDate = this.extractDateFromText(entry.text);
+      if (refDate && refDate < now) {
+        stale.push(entry);
+      }
+    }
+
+    for (const entry of stale) {
+      this.removeFact(entry.text.slice(0, 40), senderId);
+    }
+
+    return stale;
+  }
+
+  /**
+   * Select facts for user review during heartbeat.
+   * Prioritizes oldest + lowest confidence. Skips recently reviewed.
+   */
+  selectReviewCandidates(senderId?: string, count = 3): FactEntry[] {
+    const entries = this.loadFactsJson(senderId);
+    const now = Date.now();
+    const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+    return entries
+      .filter(e => !e.lastReviewedAt || (now - new Date(e.lastReviewedAt).getTime()) > SEVEN_DAYS)
+      .filter(e => !(e.category === 'stable' && e.confidence >= 0.95))
+      .sort((a, b) => {
+        // Older + lower confidence = higher review priority
+        const ageA = now - new Date(a.createdAt).getTime();
+        const ageB = now - new Date(b.createdAt).getTime();
+        const scoreA = ageA / 1e9 + (1 - a.confidence) * 10;
+        const scoreB = ageB / 1e9 + (1 - b.confidence) * 10;
+        return scoreB - scoreA;
+      })
+      .slice(0, count);
+  }
+
+  /**
+   * Boost confidence on a fact after user confirms it during heartbeat review.
+   * Also updates lastReviewedAt to prevent review fatigue.
+   */
+  boostConfidence(factId: string, senderId?: string): void {
+    const memDir = this.memDir(senderId);
+    const indexDir = join(memDir, 'index');
+    if (!existsSync(indexDir)) return;
+
+    const indexFiles = readdirSync(indexDir).filter(f => f.endsWith('.jsonl'));
+    for (const file of indexFiles) {
+      const filePath = join(indexDir, file);
+      const lines = readFileSync(filePath, 'utf-8').split('\n');
+      let changed = false;
+
+      const updated = lines.map(line => {
+        if (!line.trim()) return line;
+        try {
+          const entry = JSON.parse(line);
+          if (entry.id === factId) {
+            entry.confidence = Math.min(1.0, (entry.confidence ?? 0.8) + 0.15);
+            entry.lastReviewedAt = new Date().toISOString();
+            changed = true;
+            return JSON.stringify(entry);
+          }
+        } catch { /* keep original */ }
+        return line;
+      });
+
+      if (changed) {
+        writeFileSync(filePath, updated.join('\n'));
+      }
+    }
+
+    if (indexFiles.length > 0) {
+      this.invalidateCache(senderId);
+      this.rebuildFacts(senderId);
+    }
+  }
+
+  /**
+   * Record a fact removal for re-extraction prevention.
+   * Stored in removed.jsonl with a 30-day rolling window.
+   */
+  recordRemoval(text: string, reason: string, senderId?: string): void {
+    const memDir = this.memDir(senderId);
+    mkdirSync(memDir, { recursive: true });
+    const filePath = join(memDir, 'removed.jsonl');
+    const entry = {
+      text,
+      reason,
+      removedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    try {
+      appendFileSync(filePath, JSON.stringify(entry) + '\n');
+    } catch (err) {
+      console.warn('[FactStore] Failed to record removal:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  /**
+   * Load recently-removed facts (last 30 days). Cleans expired entries on read.
+   */
+  loadRecentlyRemoved(senderId?: string): Array<{ text: string; reason: string }> {
+    const memDir = this.memDir(senderId);
+    const filePath = join(memDir, 'removed.jsonl');
+    if (!existsSync(filePath)) return [];
+
+    try {
+      const now = Date.now();
+      const lines = readFileSync(filePath, 'utf-8').split('\n').filter(l => l.trim());
+      const entries: Array<{ text: string; reason: string; removedAt: string; expiresAt: string }> = [];
+      const kept: string[] = [];
+
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line);
+          if (new Date(entry.expiresAt).getTime() > now) {
+            entries.push(entry);
+            kept.push(line);
+          }
+        } catch { /* skip corrupt lines */ }
+      }
+
+      // Clean expired entries
+      if (kept.length < lines.length) {
+        writeFileSync(filePath, kept.join('\n') + (kept.length > 0 ? '\n' : ''));
+      }
+
+      return entries.map(e => ({ text: e.text, reason: e.reason }));
+    } catch {
+      return [];
+    }
+  }
 }

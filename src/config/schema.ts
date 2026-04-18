@@ -273,6 +273,8 @@ export const FactEntrySchema = z.object({
   senderId: z.string().optional(),
   tags: z.array(z.string()).default([]),
   entities: z.array(z.string()).default([]),
+  /** Timestamp of last heartbeat review — prevents review fatigue */
+  lastReviewedAt: z.string().optional(),
 });
 
 /** Input shape for creating a new fact (id/hash/createdAt auto-generated). */
