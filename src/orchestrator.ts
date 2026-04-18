@@ -367,9 +367,11 @@ export class Orchestrator {
         }
       }
 
-      // Select facts for user review
+      // Select facts for user review (only during waking hours — 8am to 10pm)
+      const localHour = parseInt(new Date().toLocaleString('en-US', { timeZone: this.config.timezone, hour: 'numeric', hour12: false }));
+      const isWakingHours = localHour >= 8 && localHour <= 22;
       let reviewCandidates: import('./config/types.js').FactEntry[] = [];
-      if (this.factStore && senderId) {
+      if (this.factStore && senderId && isWakingHours) {
         reviewCandidates = this.factStore.selectReviewCandidates(senderId, 3);
         if (reviewCandidates.length > 0) {
           const pendingReview = {
