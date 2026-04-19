@@ -108,8 +108,8 @@ li { margin-bottom: 6px; }
 .executive-summary p { margin: 6px 0; }
 .callout { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0; font-size: 14px; }
 table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
-th { background: #1e40af; color: #fff; padding: 10px 12px; text-align: left; font-family: 'Segoe UI', system-ui, sans-serif; font-weight: 600; }
-td { padding: 8px 12px; border-bottom: 1px solid #e5e7eb; }
+th { background: #1e40af; color: #fff; padding: 10px 14px; text-align: left; font-family: 'Segoe UI', system-ui, sans-serif; font-weight: 600; white-space: nowrap; }
+td { padding: 8px 14px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
 tr:nth-child(even) td { background: #f9fafb; }
 img { max-width: 100%; height: auto; margin: 16px 0; border: 1px solid #e5e7eb; border-radius: 4px; }
 .sources { margin-top: 40px; border-top: 2px solid #e5e7eb; padding-top: 16px; }

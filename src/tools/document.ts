@@ -7,6 +7,21 @@ const SOFFICE = process.env.SOFFICE_PATH ?? '/opt/homebrew/bin/soffice';
 const OUTPUT_DIR = 'data/media/documents';
 const SUPPORTED_FORMATS = ['pdf', 'docx', 'xlsx', 'pptx', 'html', 'csv', 'txt', 'odt', 'ods', 'odp'];
 
+/** Default CSS injected into HTML content that doesn't have its own styles */
+const DEFAULT_DOC_CSS = `
+body { font-family: 'Segoe UI', system-ui, Arial, sans-serif; color: #1a1a1a; margin: 40px; line-height: 1.6; }
+h1 { font-size: 24px; font-weight: 700; color: #111; margin-bottom: 16px; }
+h2 { font-size: 18px; font-weight: 600; color: #1e40af; margin-top: 24px; }
+h3 { font-size: 15px; font-weight: 600; color: #374151; }
+p { margin: 8px 0; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+th { background: #1e40af; color: #fff; padding: 10px 14px; text-align: left; font-weight: 600; white-space: nowrap; }
+td { padding: 8px 14px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+tr:nth-child(even) td { background: #f9fafb; }
+ul, ol { margin: 8px 0 8px 20px; font-size: 14px; }
+li { margin-bottom: 4px; }
+`;
+
 /**
  * Resolve input path relative to workspace or absolute.
  */
@@ -99,9 +114,23 @@ filename (optional): Output filename without extension (default: "document").`,
         const isCsv = !isHtml && content.includes(',') && content.includes('\n');
         const sourceExt = isHtml ? 'html' : isCsv ? 'csv' : 'txt';
 
+        // Inject default CSS into HTML that doesn't have its own styles
+        let finalContent = content;
+        if (isHtml && !content.includes('<style')) {
+          const hasDoctype = content.trimStart().toLowerCase().startsWith('<!doctype');
+          const hasHead = content.includes('<head');
+          if (hasHead) {
+            // Inject style into existing head
+            finalContent = content.replace(/<head[^>]*>/i, `$&\n<style>${DEFAULT_DOC_CSS}</style>`);
+          } else if (!hasDoctype) {
+            // Wrap bare HTML in a full document with styles
+            finalContent = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${DEFAULT_DOC_CSS}</style></head><body>${content}</body></html>`;
+          }
+        }
+
         // Write temp source file
         const tempPath = join(OUTPUT_DIR, `${filename}_src.${sourceExt}`);
-        writeFileSync(tempPath, content);
+        writeFileSync(tempPath, finalContent);
 
         // If target format matches source, just return the file
         if (sourceExt === format) {
