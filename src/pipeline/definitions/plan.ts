@@ -44,11 +44,14 @@ function buildHandoffMessage(step: PlanStep, stepIndex: number, state: ForemanSt
   sections.push(`## Plan Context\nOverall goal: "${state.goal}"\nThis is step ${stepIndex + 1} of ${state.plan.length}. You are the ${step.specialist} specialist.`);
 
   // Completed steps — status + artifact locations (no raw content)
+  // Use workspace-relative paths so read_file can find them
+  const toRelative = (p: string) => p.replace(/^data\/workspaces\/main\//, '');
+
   if (state.completedSteps.length > 0) {
     const lines = state.completedSteps.map(s => {
       let line = `- Step ${s.index + 1} (${s.specialist}): ${s.purpose} → ${s.status}`;
-      line += `\n  Full result: ${s.resultFile} (use read_file to access)`;
-      if (s.filePaths.length > 0) line += `\n  Files: ${s.filePaths.join(', ')}`;
+      line += `\n  Full result: ${toRelative(s.resultFile)} (use read_file to access)`;
+      if (s.filePaths.length > 0) line += `\n  Files: ${s.filePaths.map(toRelative).join(', ')}`;
       if (s.urls.length > 0) line += `\n  URLs: ${s.urls.slice(0, 5).join(', ')}`;
       return line;
     });
@@ -56,7 +59,7 @@ function buildHandoffMessage(step: PlanStep, stepIndex: number, state: ForemanSt
   }
 
   // All artifacts — flat list for quick reference
-  const allFiles = state.completedSteps.flatMap(s => [s.resultFile, ...s.filePaths]);
+  const allFiles = state.completedSteps.flatMap(s => [toRelative(s.resultFile), ...s.filePaths.map(toRelative)]);
   const allUrls = state.completedSteps.flatMap(s => s.urls);
   if (allFiles.length > 0 || allUrls.length > 0) {
     const items = [...allFiles.map(f => `- ${f}`), ...allUrls.slice(0, 8).map(u => `- ${u}`)];
