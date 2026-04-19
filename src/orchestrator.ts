@@ -583,14 +583,14 @@ Think step by step:
 4. Anything that seems off or worth flagging?
 5. ${timeFrames[timeOfDay]}
 
-Write a SHORT, useful ${timeOfDay} update. Rules:
-- Only surface what MATTERS. Don't list everything.
+Write a useful ${timeOfDay} update. Format rules:
+- Start with calendar events formatted clearly: "• 4:00 PM — Standing Appointment w/ Merril"
+- After calendar, add 1-2 sentences about anything worth noting (deadlines, connections, flags)
 - Be specific: dates, times, names, locations.
-- If nothing notable, say so in one sentence.
+- If nothing notable beyond the calendar, say so briefly.
 - NEVER ask questions. This is a one-way notification.
-- Plain language, conversational tone. No headers or heavy formatting.
 - If cleanup or action is needed, state the command.
-- Your response should be at least 2-3 sentences. If there's genuinely nothing to report, explain why (e.g., "No events today, task board is clear, nothing flagged in memory.").
+- Do NOT repeat the "No events today" fallback line if you already listed events above.
 - After your reasoning, write your final update OUTSIDE of any think tags.`,
         }],
         options: { temperature: 0.6, num_predict: 1024 },
