@@ -85,7 +85,7 @@ const PLAN_PROMPT = `You are a task decomposer. Break the user's goal into sub-t
 
 Available specialists:
 - web_search: Search the internet and summarize findings. Give it a search query. Has tools: web_search, web_fetch, browser.
-- research: Deep research with charts, slide decks, or PDF reports. Give it a topic. For PDF output, say "create a PDF report on X".
+- research: Deep research with charts, slide decks, PDF reports, or newsletters. Give it a topic. For any task that needs in-depth content with full articles (not just headlines), use research. For PDF output, say "create a PDF report on X".
 - memory: Save, recall, or forget information. Give it what to remember, look up, or remove.
 - task: Create, list, update, or complete tasks. Give it the task details.
 - cron: Schedule recurring jobs. Give it the job name, schedule, and what to do. Valid categories for cron jobs: chat, web_search, memory, exec, task, research.
@@ -107,6 +107,7 @@ CHOOSING THE RIGHT SPECIALIST:
 - "Find X and schedule updates" → web_search THEN cron (chained)
 - "Search for events and add to tasks" → web_search THEN task (chained)
 - "Write about X and convert to PDF" → web_search THEN exec (2 steps ONLY — exec uses document tool to create content AND convert in one call, do NOT split write and convert into separate steps)
+- "Create a newsletter/report about X" → research (produces in-depth content with full articles, not just headlines)
 - "Read a file from a previous step" → exec (uses read_file tool, NOT exec[cat])
 
 RULES:
