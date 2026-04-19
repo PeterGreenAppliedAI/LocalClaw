@@ -457,7 +457,7 @@ export class Orchestrator {
           const response = await this.client.chat({
             model: 'qwen3-coder:30b',
             messages: [{ role: 'user', content: diffPrompt }],
-            options: { temperature: 0.3, num_predict: 512 },
+            options: { temperature: 0.3, num_predict: 1024 },
           });
 
           const raw = (response.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
@@ -553,7 +553,10 @@ export class Orchestrator {
           const reviewSection = reviewCandidates
             .map((f, i) => `${i + 1}. [${f.category}] "${f.text}"`)
             .join('\n');
-          reportText += `\n\n**Memory check** — still accurate?\n${reviewSection}\nReply **!heartbeat yes** to confirm all, or **!heartbeat no 2** to remove #2.`;
+          const reviewHint = reviewCandidates.length > 1
+            ? `Reply **!heartbeat yes** to confirm all, **!heartbeat no** to remove all, or **!heartbeat no 2** to remove a specific one.`
+            : `Reply **!heartbeat yes** to confirm, or **!heartbeat no** to remove.`;
+          reportText += `\n\n**Memory check** — still accurate?\n${reviewSection}\n${reviewHint}`;
         }
 
         await this.channelRegistry.send(
