@@ -356,13 +356,15 @@ export class Orchestrator {
       // --- Intelligent memory management ---
       const senderId = hb.delivery.target;
 
-      // Auto-cancel overdue tasks (past due date by 7+ days)
+      // Auto-cancel overdue tasks (past due date by 7+ days) + remove duplicate tasks
       if (this.taskStore) {
         try {
           const allTasks = this.taskStore.list();
           const now = new Date();
           now.setHours(0, 0, 0, 0);
           const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+          // Cancel overdue tasks
           const overdue = allTasks.filter(t =>
             t.status === 'todo' && t.dueDate &&
             (now.getTime() - new Date(t.dueDate).getTime()) > SEVEN_DAYS,
@@ -370,6 +372,19 @@ export class Orchestrator {
           for (const task of overdue) {
             this.taskStore.update(task.id, { status: 'cancelled' });
             console.log(`[Heartbeat] Auto-cancelled overdue task: "${task.title}" (due: ${task.dueDate})`);
+          }
+
+          // Remove duplicate tasks (same title, normalized)
+          const seen = new Map<string, string>(); // normalized title → first task ID
+          for (const task of allTasks) {
+            if (task.status !== 'todo' && task.status !== 'in_progress') continue;
+            const key = task.title.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (seen.has(key)) {
+              this.taskStore.update(task.id, { status: 'cancelled' });
+              console.log(`[Heartbeat] Removed duplicate task: "${task.title}" (duplicate of ${seen.get(key)})`);
+            } else {
+              seen.set(key, task.id);
+            }
           }
         } catch (err) {
           console.warn('[Heartbeat] Task cleanup failed:', err instanceof Error ? err.message : err);
@@ -429,6 +444,13 @@ export class Orchestrator {
           const expiry = f.expiresAt ? `expires in ${Math.max(0, Math.floor((new Date(f.expiresAt).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))}d` : 'no expiry';
           return `- [${f.category}] "${f.text}" (conf: ${f.confidence}, age: ${age}d, ${expiry})`;
         };
+
+        // If nothing changed since last snapshot, skip LLM reasoning — no point re-summarizing
+        if (diff.newFacts.length === 0 && diff.removedHashes.length === 0 && diff.snapshotAge !== null) {
+          memorySection = `Memory stable — ${diff.unchangedFacts.length} facts, no changes since last review.`;
+          this.factStore.saveSnapshot(senderId);
+          console.log('[Heartbeat] No fact changes — skipping LLM reasoning');
+        } else {
 
         const snapshotAgeHours = diff.snapshotAge ? Math.round(diff.snapshotAge / (1000 * 60 * 60)) : null;
         const diffPrompt = [
@@ -496,6 +518,7 @@ export class Orchestrator {
         } catch (err) {
           console.warn('[Heartbeat] Memory reasoning failed:', err instanceof Error ? err.message : err);
         }
+        } // end else (changes exist)
       }
 
       // --- Task board check (still via plan pipeline for date reasoning) ---
@@ -511,16 +534,24 @@ export class Orchestrator {
       const taskLines: string[] = [];
       if (this.taskStore) {
         const allTasks = this.taskStore.list();
+        const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
         const overdue = allTasks.filter(t => t.dueDate && new Date(t.dueDate) < now2 && t.status === 'todo');
-        const upcoming = allTasks.filter(t => t.priority === 'high' && t.status === 'todo');
+        // Only show high-priority tasks due within 30 days — don't flag tasks 9 months away as urgent
+        const upcoming = allTasks.filter(t =>
+          t.priority === 'high' && t.status === 'todo' && t.dueDate &&
+          new Date(t.dueDate).getTime() - now2.getTime() < THIRTY_DAYS,
+        );
 
         if (overdue.length > 0) {
           taskLines.push('**Overdue:**');
           overdue.forEach(t => taskLines.push(`- ${t.title} (due: ${t.dueDate})`));
         }
         if (upcoming.length > 0) {
-          taskLines.push('**High priority:**');
-          upcoming.forEach(t => taskLines.push(`- ${t.title}${t.dueDate ? ` (due: ${t.dueDate})` : ''}`));
+          taskLines.push('**Due soon:**');
+          upcoming.forEach(t => {
+            const daysLeft = Math.ceil((new Date(t.dueDate!).getTime() - now2.getTime()) / (1000 * 60 * 60 * 24));
+            taskLines.push(`- ${t.title} (${daysLeft} days)`);
+          });
         }
         if (overdue.length === 0 && upcoming.length === 0) {
           taskLines.push('No overdue or high-priority tasks.');
@@ -661,6 +692,7 @@ Write a useful ${timeOfDay} update. Format rules:
 - NEVER ask questions. This is a one-way notification.
 - If cleanup or action is needed, state the command.
 - Do NOT repeat the "No events today" fallback line if you already listed events above.
+- Do NOT repeat yourself or add a "Final update:" section. Say it once, clearly, and stop.
 - After your reasoning, write your final update OUTSIDE of any think tags.`,
         }],
         options: { temperature: 0.6, num_predict: 1024 },
