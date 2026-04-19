@@ -24,6 +24,8 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(add.*heartbeat|remove.*heartbeat|list.*heartbeat|periodic check|periodic task|autonomous check)\b/i, category: 'cron' },
   { pattern: /\b(execute|compile|deploy|install|sudo|npm|pip|git|mkdir|rm)\b/i, category: 'exec' },
   { pattern: /\b(run|build)\b.*\b(command|script|code|program|server|docker|container)\b/i, category: 'exec' },
+  { pattern: /\b(list|show|ls)\b.*\b(files|directory|folder|dir)\b/i, category: 'exec' },
+  { pattern: /\b(read|cat|open)\b.*\b(file|contents)\b/i, category: 'exec' },
   { pattern: /\b(task|todo|to-do|kanban|checklist|add task|my tasks|pending|mark done|complete task)\b/i, category: 'task' },
   { pattern: /\b(remind|schedule|every day|at \d+\s*(am|pm)|cron|cronjob|cronjobs|cron\s*job|recurring|scheduled task|morning report|daily report)\b/i, category: 'cron' },
   { pattern: /\b(remember|recall|we (discussed|talked)|last time|yesterday)\b/i, category: 'memory' },
