@@ -291,6 +291,16 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   if (sessionStore) {
     sessionState = sessionStore.loadState(agentId, sessionKey);
     if (sessionState) {
+      // Filter knownFacts against recently removed — prevents deleted facts from resurfacing via session state
+      if (sessionState.knownFacts.length > 0 && params.factStore && senderId) {
+        const removed = params.factStore.loadRecentlyRemoved(senderId);
+        if (removed.length > 0) {
+          const removedLower = removed.map(r => r.text.toLowerCase());
+          sessionState.knownFacts = sessionState.knownFacts.filter(f =>
+            !removedLower.some(r => f.toLowerCase().includes(r) || r.includes(f.toLowerCase())),
+          );
+        }
+      }
       statePreamble = serializeStatePreamble(sessionState);
       if (statePreamble) {
         console.log(`[Dispatch] State preamble: turn=${sessionState.turnCount}, topic="${sessionState.currentTopic.slice(0, 60)}"`);

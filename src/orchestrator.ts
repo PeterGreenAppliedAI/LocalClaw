@@ -1114,7 +1114,7 @@ Write a useful ${timeOfDay} update. Format rules:
         await this.channelRegistry.send(
           { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
           { text: 'Memory cleanup tool not available.' },
-        ).catch(() => {});
+        ).catch((err) => { console.warn('[Orchestrator] Send failed:', err instanceof Error ? err.message : err); });
         return;
       }
 
@@ -1136,7 +1136,7 @@ Write a useful ${timeOfDay} update. Format rules:
         await this.channelRegistry.send(
           { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
           { text: 'Memory cleanup failed. Try again later.' },
-        ).catch(() => {});
+        ).catch((err) => { console.warn('[Orchestrator] Send failed:', err instanceof Error ? err.message : err); });
       }
       return;
     }
@@ -1258,7 +1258,7 @@ Write a useful ${timeOfDay} update. Format rules:
       await this.channelRegistry.send(
         { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
         { text: `🔬 Researching: **${topic}** (${artifactType})\nThis may take a few minutes...` },
-      ).catch(() => {});
+      ).catch((err) => { console.warn('[Orchestrator] Send failed:', err instanceof Error ? err.message : err); });
 
       try {
         const today = new Date().toISOString().split('T')[0];
@@ -1307,7 +1307,7 @@ Write a useful ${timeOfDay} update. Format rules:
         await this.channelRegistry.send(
           { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId },
           { text: `Research failed: ${wrapped.message}` },
-        ).catch(() => {});
+        ).catch((err) => { console.warn('[Orchestrator] Send failed:', err instanceof Error ? err.message : err); });
       }
       return;
     }
