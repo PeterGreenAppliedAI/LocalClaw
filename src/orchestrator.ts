@@ -416,83 +416,150 @@ export class Orchestrator {
         }
       } catch { /* best-effort */ }
 
-      // Query heartbeat tasks and dispatch report
-      const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
-
-      let taskInstructions: string;
-      if (heartbeatTasks.length > 0) {
-        taskInstructions = heartbeatTasks
-          .map((t, i) => `${i + 1}. **${t.name}**: ${t.message}`)
-          .join('\n');
-      } else {
-        const heartbeatPath = join(workspacePath, 'HEARTBEAT.md');
-        try { taskInstructions = readFileSync(heartbeatPath, 'utf-8'); } catch { taskInstructions = ''; }
-      }
-
-      if (taskInstructions) {
+      // --- Fact diff + LLM reasoning (replaces random memory_search) ---
+      let memorySection = '';
+      if (this.factStore && senderId) {
+        const diff = this.factStore.diffFacts(senderId);
+        const recentlyRemoved = this.factStore.loadRecentlyRemoved(senderId);
         const now = new Date();
-        const tz = this.config.timezone;
-        const formatter = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' });
-        const dayOfWeek = formatter.format(now);
-        const dateStr = now.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
 
-        let currentTasks = '';
-        try { currentTasks = readFileSync(join(workspacePath, 'TASKS.md'), 'utf-8'); } catch { /* no tasks file */ }
+        // Build structured input for LLM
+        const formatFact = (f: import('./config/types.js').FactEntry) => {
+          const age = Math.floor((now.getTime() - new Date(f.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+          const expiry = f.expiresAt ? `expires in ${Math.max(0, Math.floor((new Date(f.expiresAt).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))}d` : 'no expiry';
+          return `- [${f.category}] "${f.text}" (conf: ${f.confidence}, age: ${age}d, ${expiry})`;
+        };
 
-        const prompt = [
-          `Current date/time: ${dateStr} (${dayOfWeek})`,
-          `The current YEAR is ${now.getFullYear()}. The current MONTH is ${now.getMonth() + 1}. Use these to determine if dates are past or future.`,
+        const snapshotAgeHours = diff.snapshotAge ? Math.round(diff.snapshotAge / (1000 * 60 * 60)) : null;
+        const diffPrompt = [
+          `You are reviewing the user's stored memory. Today is ${now.toLocaleDateString('en-US', { dateStyle: 'full' })}.`,
+          snapshotAgeHours !== null
+            ? `Last review was ${snapshotAgeHours} hours ago.`
+            : 'This is the first memory review.',
           '',
-          'Execute each heartbeat task below using the available tools. Rules:',
-          '- Keep each task result SEPARATE with a clear header.',
-          '- Report ONLY what the tool returns. Do NOT add commentary, opinions, or suggestions.',
-          '- Do NOT create, add, or duplicate tasks. You are READ-ONLY.',
-          '- NEVER ask questions. This is a one-way report.',
-          '- If cleanup or action is needed, state the command (e.g., "send !cleanup to consolidate").',
-          '- A task is overdue ONLY if its due date is BEFORE today.',
+          diff.newFacts.length > 0 ? `## New facts (${diff.newFacts.length})\n${diff.newFacts.map(formatFact).join('\n')}` : '',
+          diff.unchangedFacts.length > 0 ? `## Unchanged facts (${diff.unchangedFacts.length})\n${diff.unchangedFacts.map(formatFact).join('\n')}` : '',
+          diff.removedHashes.length > 0 ? `## Removed since last review: ${diff.removedHashes.length} fact(s)` : '',
+          recentlyRemoved.length > 0 ? `## User explicitly removed\n${recentlyRemoved.map(r => `- "${r.text}" (reason: ${r.reason})`).join('\n')}` : '',
           '',
-          '## Current Task Board',
-          currentTasks || '_Empty_',
+          'Reason about these facts:',
+          '1. Are any facts likely stale or outdated based on the current date?',
+          '2. Do any facts connect to each other in a meaningful way?',
+          '3. Are any new facts contradicting existing ones?',
+          '4. What is the most important thing to know about this user right now?',
           '',
-          '## Heartbeat Tasks',
-          taskInstructions,
-        ].join('\n');
+          'Respond with JSON:',
+          '{"observations": "1-3 sentence summary of what matters", "stale_facts": ["exact text of stale facts"], "connections": "any meaningful connections between facts"}',
+          'Return ONLY the JSON, no markdown fences.',
+        ].filter(Boolean).join('\n');
 
-        const result = await dispatchMessage({
-          client: this.client,
-          registry: this.toolRegistry,
-          config: this.config,
-          message: prompt,
-          overrideCategory: 'multi',
-          cronMode: true,
-          pipelineRegistry: this.pipelineRegistry,
-          executionMetrics: this.executionMetrics,
-          sourceContext: hb.delivery.target ? {
-            channel: hb.delivery.channel,
-            channelId: hb.delivery.target,
-            senderId: hb.delivery.target,
-          } : undefined,
-          factStore: this.factStore,
-        });
+        try {
+          const response = await this.client.chat({
+            model: 'qwen3-coder:30b',
+            messages: [{ role: 'user', content: diffPrompt }],
+            options: { temperature: 0.3, num_predict: 512 },
+          });
 
-        console.log(`[Heartbeat] Completed (${result.iterations} steps)`);
+          const raw = (response.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+          try {
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              memorySection = parsed.observations ?? '';
 
-        if (hb.delivery.target) {
-          let reportText = `**[Heartbeat Report]**\n${result.answer}`;
+              // Auto-expire stale facts the LLM identified
+              if (Array.isArray(parsed.stale_facts)) {
+                for (const staleText of parsed.stale_facts) {
+                  if (typeof staleText === 'string' && staleText.length > 5) {
+                    const removed = this.factStore.removeFact(staleText.slice(0, 40), senderId);
+                    if (removed > 0) {
+                      this.factStore.recordRemoval(staleText, 'llm_stale', senderId);
+                      console.log(`[Heartbeat] LLM identified stale fact: "${staleText.slice(0, 60)}"`);
+                    }
+                  }
+                }
+              }
 
-          // Append memory review section if there are candidates
-          if (reviewCandidates.length > 0) {
-            const reviewSection = reviewCandidates
-              .map((f, i) => `${i + 1}. [${f.category}] "${f.text}"`)
-              .join('\n');
-            reportText += `\n\n**Memory check** — still accurate?\n${reviewSection}\nReply **!heartbeat yes** to confirm all, or **!heartbeat no 2** to remove #2.`;
+              if (parsed.connections) {
+                memorySection += `\n${parsed.connections}`;
+              }
+            } else {
+              memorySection = raw.slice(0, 300);
+            }
+          } catch {
+            memorySection = raw.slice(0, 300);
           }
 
-          await this.channelRegistry.send(
-            { channel: hb.delivery.channel, channelId: hb.delivery.target },
-            { text: reportText },
-          );
+          // Save snapshot for next diff
+          this.factStore.saveSnapshot(senderId);
+          console.log(`[Heartbeat] Memory reasoning complete (${memorySection.length} chars)`);
+        } catch (err) {
+          console.warn('[Heartbeat] Memory reasoning failed:', err instanceof Error ? err.message : err);
         }
+      }
+
+      // --- Task board check (still via plan pipeline for date reasoning) ---
+      const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
+      const now2 = new Date();
+      const tz = this.config.timezone;
+      const dateStr = now2.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
+
+      let currentTasks = '';
+      try { currentTasks = readFileSync(join(workspacePath, 'TASKS.md'), 'utf-8'); } catch { /* no tasks file */ }
+
+      // Simple task board report — deterministic, no plan pipeline needed
+      const taskLines: string[] = [];
+      if (this.taskStore) {
+        const allTasks = this.taskStore.list();
+        const overdue = allTasks.filter(t => t.dueDate && new Date(t.dueDate) < now2 && t.status === 'todo');
+        const upcoming = allTasks.filter(t => t.priority === 'high' && t.status === 'todo');
+
+        if (overdue.length > 0) {
+          taskLines.push('**Overdue:**');
+          overdue.forEach(t => taskLines.push(`- ${t.title} (due: ${t.dueDate})`));
+        }
+        if (upcoming.length > 0) {
+          taskLines.push('**High priority:**');
+          upcoming.forEach(t => taskLines.push(`- ${t.title}${t.dueDate ? ` (due: ${t.dueDate})` : ''}`));
+        }
+        if (overdue.length === 0 && upcoming.length === 0) {
+          taskLines.push('No overdue or high-priority tasks.');
+        }
+      }
+
+      // Update lastRunAt
+      if (this.cronService) {
+        for (const task of heartbeatTasks) {
+          this.cronService.updateLastRun(task.id);
+        }
+      }
+
+      // --- Build and deliver report ---
+      if (hb.delivery.target) {
+        const reportParts = ['**[Heartbeat Report]**'];
+
+        if (taskLines.length > 0) {
+          reportParts.push(`**Tasks**\n${taskLines.join('\n')}`);
+        }
+
+        if (memorySection) {
+          reportParts.push(`**Memory**\n${memorySection}`);
+        }
+
+        let reportText = reportParts.join('\n\n');
+
+        // Append memory review section if there are candidates
+        if (reviewCandidates.length > 0) {
+          const reviewSection = reviewCandidates
+            .map((f, i) => `${i + 1}. [${f.category}] "${f.text}"`)
+            .join('\n');
+          reportText += `\n\n**Memory check** — still accurate?\n${reviewSection}\nReply **!heartbeat yes** to confirm all, or **!heartbeat no 2** to remove #2.`;
+        }
+
+        await this.channelRegistry.send(
+          { channel: hb.delivery.channel, channelId: hb.delivery.target },
+          { text: reportText },
+        );
       }
 
       // Update lastRunAt

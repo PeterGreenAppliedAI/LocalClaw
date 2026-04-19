@@ -742,4 +742,68 @@ export class FactStore {
       return [];
     }
   }
+
+  // --- Snapshot-based fact diff for deterministic heartbeat review ---
+
+  /** Save a snapshot of current fact hashes for diff comparison on next heartbeat. */
+  saveSnapshot(senderId?: string): void {
+    const entries = this.loadFactsJson(senderId);
+    const memDir = this.memDir(senderId);
+    mkdirSync(memDir, { recursive: true });
+    const snapshot = {
+      timestamp: new Date().toISOString(),
+      factHashes: entries.map(e => e.hash),
+      factCount: entries.length,
+    };
+    writeFileSync(join(memDir, 'heartbeat-snapshot.json'), JSON.stringify(snapshot, null, 2));
+  }
+
+  /** Load the last heartbeat snapshot. Returns null if no snapshot exists. */
+  loadSnapshot(senderId?: string): { timestamp: string; factHashes: Set<string>; factCount: number } | null {
+    const filePath = join(this.memDir(senderId), 'heartbeat-snapshot.json');
+    if (!existsSync(filePath)) return null;
+    try {
+      const raw = JSON.parse(readFileSync(filePath, 'utf-8'));
+      return {
+        timestamp: raw.timestamp,
+        factHashes: new Set(raw.factHashes as string[]),
+        factCount: raw.factCount,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Compare current facts against last snapshot. Returns categorized diff. */
+  diffFacts(senderId?: string): {
+    newFacts: FactEntry[];
+    unchangedFacts: FactEntry[];
+    removedHashes: string[];
+    snapshotAge: number | null; // ms since last snapshot, null if first run
+  } {
+    const current = this.loadFactsJson(senderId);
+    const snapshot = this.loadSnapshot(senderId);
+
+    if (!snapshot) {
+      // First run — everything is "new"
+      return { newFacts: current, unchangedFacts: [], removedHashes: [], snapshotAge: null };
+    }
+
+    const newFacts: FactEntry[] = [];
+    const unchangedFacts: FactEntry[] = [];
+    const currentHashes = new Set(current.map(f => f.hash));
+
+    for (const fact of current) {
+      if (snapshot.factHashes.has(fact.hash)) {
+        unchangedFacts.push(fact);
+      } else {
+        newFacts.push(fact);
+      }
+    }
+
+    const removedHashes = [...snapshot.factHashes].filter(h => !currentHashes.has(h));
+    const snapshotAge = Date.now() - new Date(snapshot.timestamp).getTime();
+
+    return { newFacts, unchangedFacts, removedHashes, snapshotAge };
+  }
 }
