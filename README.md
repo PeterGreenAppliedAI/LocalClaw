@@ -57,7 +57,8 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 |-----------|-------|-------------|
 | Web Search | `web_search`, `web_fetch`, `browser` | Brave/Perplexity/Grok/Tavily search, Readability extraction, headless Chromium |
 | Research | `web_search`, `web_fetch`, `code_session`, `reason` | Deep research with data analysis, chart generation (matplotlib/seaborn), and inline visualization |
-| Memory | `memory_save`, `memory_search`, `memory_get` | Per-user structured facts with categories, tags, entities, and confidence scores |
+| Memory | `memory_save`, `memory_search`, `memory_get`, `memory_forget` | Per-user structured facts with categories, tags, entities, confidence scores, and interactive review via `!heartbeat` |
+| Personal | `gmail_search`, `gmail_read`, `calendar_list`, `calendar_search` | Google Calendar + Gmail read-only access — owner-only security gate |
 | Execution | `exec`, `code_session`, `read_file`, `write_file` | Allowlisted shell commands, persistent Python/Node/Bash REPL sessions, safe file I/O |
 | Scheduling | `cron_add`, `cron_list`, `cron_remove`, `cron_edit` | Real cron expressions, timezone-aware, persistent |
 | Task Board | `task_add`, `task_list`, `task_update`, `task_done`, `task_remove` | Persistent kanban-style task system with TASKS.md rendering |
@@ -69,7 +70,8 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Voice | TTS/STT | Kokoro TTS + faster-whisper STT — voice in, voice out, with toggle hands-free mode |
 | Multi-task | `plan` pipeline | LLM decomposes goal into steps, self-reflects, code executes with browser/tools, learns from success |
 | Skills | *(automatic)* | Self-improving procedural memory — successful plan executions are saved and reused for similar future tasks |
-| Heartbeat | *(autonomous)* | Scheduled autonomous task checks, memory cleanup, and status reports |
+| Heartbeat | *(autonomous)* | Deterministic fact diff + LLM reasoning, auto-expire stale facts, interactive memory review via `!heartbeat` |
+| Briefing | *(scheduled)* | 3x daily (8am, 1:15pm, 5pm) CoT reasoning about calendar + tasks + memory — contextual insights, not status dumps |
 | Knowledge Import | `knowledge_import` | Import PDFs, CSVs, markdown into vector-searchable knowledge base |
 | Context Compaction | *(automatic)* | Structured compression (Goal/Progress/Next Steps), proactive at 50% budget, tool-pair sanitization |
 | Document Gen | `document` | Create and convert documents via LibreOffice headless — HTML/CSV → PDF/DOCX/XLSX/PPTX |
@@ -192,7 +194,7 @@ localclaw/
 3. **Keywords** — Pattern matching when model fails or times out
 4. **Default** — Falls back to `chat`
 
-Categories: `chat`, `web_search`, `memory`, `exec`, `cron`, `message`, `website`, `task`, `multi`, `config`, `research`
+Categories: `chat`, `web_search`, `memory`, `exec`, `cron`, `message`, `website`, `task`, `multi`, `config`, `research`, `personal`
 
 ### Templated Pipeline Engine
 
@@ -223,7 +225,7 @@ Most categories run through **deterministic pipelines** instead of letting the m
 | `message` | Linear | extract → tool → confirm |
 | `website` | Linear | extract → tool → format |
 
-**ReAct fallback** categories (`config`, `chat`) still use the model-decides-everything loop.
+**ReAct fallback** categories (`config`, `chat`, `personal`) still use the model-decides-everything loop. `personal` handles Gmail/Calendar queries with owner-only tools.
 
 ### Research Flow
 
@@ -442,22 +444,30 @@ vision: {
 
 ### Memory System
 
-Memory uses **structured facts** with per-user isolation — no embedding dependency for core memory.
+Memory uses **structured facts** with per-user isolation, snapshot-based diff for deterministic review, and LLM reasoning for staleness/connection detection.
 
 **Storage layout:**
 ```
 workspace/memory/
   <senderId>/
-    FACTS.md          # Consolidated searchable index
-    2026-03-05.md     # Dated audit trail (append-only)
-    pending.json      # Fact candidates awaiting user approval
+    raw/YYYY-MM-DD/mem_*.md       # Append-only raw facts (YAML frontmatter)
+    index/YYYY-MM-DD.jsonl        # One JSONL line per fact (fast scan)
+    facts/facts.json              # Machine-readable FactEntry[]
+    facts/facts.md                # Human-readable, sectioned by category
+    pending.json                  # Fact candidates awaiting user approval (!reset)
+    heartbeat-pending.json        # Review candidates from heartbeat (!heartbeat)
+    heartbeat-snapshot.json       # Snapshot for diff-based review
+    removed.jsonl                 # Recently removed facts (30-day, prevents re-extraction)
 ```
 
-**Two extraction paths:**
-1. **`!reset` (user-approved)** — On session clear, facts extracted and shown for approval (`!save` / `!discard`)
-2. **Heartbeat (autonomous)** — Every 2 hours, scans transcripts and writes facts directly
+**Fact lifecycle:**
+1. **Extraction** — `!reset` (user-approved) or heartbeat (autonomous) extracts facts from conversation transcripts via LLM
+2. **Storage** — FactStore handles dedup (hash + substring), auto-TTL by category (stable=never, context=14d, decision=30d, question=7d)
+3. **Review** — Heartbeat surfaces 2-3 candidates per cycle. User replies `!heartbeat yes/no` to confirm or remove
+4. **Removal** — `memory_forget` tool or `!heartbeat no`. Removed facts recorded in `removed.jsonl` so heartbeat won't re-extract them
+5. **Diff-based reasoning** — Each heartbeat compares current facts against last snapshot (new/unchanged/removed), sends structured diff to LLM for reasoning about staleness, connections, and importance
 
-Each fact has: category (`stable`/`context`/`decision`/`question`), confidence score, tags, entities, source, and optional expiration. The console Memory page lets you browse, search, and consolidate facts across all senders.
+Each fact has: category (`stable`/`context`/`decision`/`question`), confidence score, tags, entities, source, expiration, and `lastReviewedAt` for review fatigue prevention.
 
 ### Self-Improvement System
 
@@ -567,52 +577,56 @@ A persistent kanban-style task system that both users and the bot can use. Tasks
 
 Tasks support priority levels (low/medium/high), assignees, due dates, and tags. The Done section is capped at 20 items to prevent bloat. `TASKS.md` is a protected file — the bot can only modify it through the TaskStore, not by directly writing to it. Tasks are also viewable as a kanban board in the management console.
 
-### Heartbeat (Autonomous Scheduled Tasks)
+### Heartbeat (Autonomous Memory + Task Management)
 
-LocalClaw includes an autonomous heartbeat system that periodically checks the task board, reviews memory, and delivers a report to a configured Discord channel (or DM).
+The heartbeat runs every 2 hours and manages two systems: **memory** and **tasks**. It's fully deterministic — code decides what to review, the LLM reasons about it.
 
-**How it works:**
+**Heartbeat cycle (every 2 hours):**
 
-1. **Schedule** — A cron job (default: every 2 hours) triggers the heartbeat
-2. **Fetch tasks** — The `heartbeat` pipeline calls `task_list` to get all tasks
-3. **Analyze dates in code** — JavaScript compares due dates against today (no LLM date reasoning — this eliminates the "2027 is overdue in 2026" hallucination)
-4. **Fetch memory** — Searches recent context from the memory store
-5. **Format report** — Deterministic code builds the report with overdue, upcoming, and in-progress sections
-6. **Deliver** — Results are sent to the configured Discord channel or user DM
+1. **Transcript review** — Scans session files modified since last run, extracts facts via LLM, commits to FactStore
+2. **Learning promotion** — Scans error store for recurring patterns (3+ occurrences), promotes to `LEARNINGS.md`
+3. **Media cleanup** — Deletes generated files (PDFs, screenshots) older than 7 days
+4. **Task auto-cancel** — Tasks overdue by 7+ days automatically set to `cancelled`
+5. **Fact auto-expire** — Facts referencing dates in the past are auto-removed (non-stable only)
+6. **Memory cleanup** — Substring dedup + LLM semantic dedup
+7. **Fact diff + LLM reasoning** — Loads ALL facts, compares against last heartbeat's snapshot (new/unchanged/removed), sends structured diff to LLM for reasoning about staleness, connections, and importance
+8. **Task board check** — Deterministic: code reads tasks, filters overdue + high-priority, formats
+9. **Memory review candidates** — Surfaces 2-3 oldest/lowest-confidence facts for user confirmation (waking hours only: 8am-10pm)
+10. **Deliver report** — Tasks + LLM memory observations + review candidates
 
-The heartbeat runs in `cronMode` which strips mutation tools — it's strictly read-only (no creating duplicate tasks or modifying state). It also promotes recurring error patterns to `LEARNINGS.md` and cleans up generated media files older than 7 days.
+**Interactive memory review:**
+- `!heartbeat yes` — Confirm all reviewed facts (boost confidence)
+- `!heartbeat no` — Remove all reviewed facts (won't come back — recorded in `removed.jsonl`)
+- `!heartbeat no 2` — Remove only fact #2, keep others pending
 
-**Commands:**
-- `!cleanup` — Manually trigger memory consolidation (substring dedup + LLM semantic dedup)
-- `!promote` — Manually promote recurring error patterns from the learning store to `LEARNINGS.md`
+**Other commands:**
+- `!cleanup` — Manually trigger memory consolidation
+- `!promote` — Manually promote recurring error patterns to `LEARNINGS.md`
+
+### Briefing (Proactive Daily Check-ins)
+
+Separate from the heartbeat. Runs 3 times daily at **8:00am, 1:15pm, 5:00pm**.
+
+1. **Gather context** — Calls `calendar_list`, `task_list`, `memory_search` directly via tool executor
+2. **Check for stale facts** — Non-stable facts older than 10 days flagged
+3. **CoT reasoning** — LLM (qwen3-coder:30b) reasons about connections, conflicts, and what matters:
+   - Morning: "Here's your day — what to prepare for"
+   - Afternoon: "Here's what's left — anything urgent?"
+   - Evening: "Here's tomorrow — anything to prep tonight?"
+4. **Deliver** — Structured output: calendar items as bullet points, contextual notes after
 
 **Configuration** (in `localclaw.config.json5`):
 
 ```json5
 heartbeat: {
   enabled: true,
-  schedule: "0 */2 * * *",  // every 2 hours (cron expression)
+  schedule: "0 */2 * * *",  // every 2 hours
   delivery: {
     channel: "discord",
     target: "415030165005926401",  // Discord channel ID or user ID for DMs
   },
 },
 ```
-
-**`HEARTBEAT.md`** defines the tasks the model should execute each run. Edit it to customize what the heartbeat checks:
-
-```markdown
-## Every Run
-- Check the task board (task_list) — report overdue or high-priority items
-
-## Daily (morning runs only)
-- Review if there are stale memory entries that should be consolidated or removed
-
-## Weekly (Monday morning only)
-- Summarize key activities from the past week
-```
-
-The Discord adapter automatically detects whether the `target` is a server channel ID or a user ID. If the channel fetch fails, it falls back to opening a DM with the user.
 
 ### Reasoning Model
 
@@ -678,6 +692,7 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 - **Rate limiting** — 10 messages per minute per user
 - **Cron safety** — Automated tasks run in `cronMode` which strips mutation tools (`write_file`, `task_add`, `task_update`, `memory_save`, etc.) — cron jobs report, they don't modify. Jobs retry up to 2 times with exponential backoff on failure, and notify the delivery channel on final failure
 - **Confirmation mode** — Configurable `confirmTools` per channel — listed tools return a preview instead of executing, requiring user confirmation before proceeding
+- **Owner-only tier** — `ownerId` config + `ownerOnlyTools` per channel. Sensitive tools (gmail, calendar) are invisible to non-owners — stripped before the model sees the tool list. Code gate, not model-level
 - **Channel security** — Per-channel category restrictions, tool blocking, and per-user trust levels
 - **Web API auth** — Bearer token validation on HTTP endpoints
 - **TLS safety** — Verification enabled by default, opt-in override only
