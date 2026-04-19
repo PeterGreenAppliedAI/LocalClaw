@@ -161,7 +161,8 @@ Check for these common issues:
 5. UNNECESSARY TASK: "task" specialist used when user didn't explicitly ask to add to their task list. "Find X" should just present results. "Schedule X" = cron only, do NOT also create a task — the cron job IS the automation.
 6. TOO MANY STEPS: Most tasks need 1-3 specialists. If the plan has more than 5, simplify.
 7. MISSING CONTEXT THREADING: If step 2 depends on step 1's results, the message should reference it (e.g., "Based on the results above...").
-8. MISSING DOCUMENT OUTPUT: If the user asks for a specific file format (PDF, DOCX, spreadsheet, XLSX, Word doc, slide deck), the plan MUST include a step using the "exec" specialist with the "document" tool to create/convert the output. Do NOT render decks or custom HTML — use the document tool.
+8. MISSING DOCUMENT OUTPUT: If the user asks for a specific file format (PDF, DOCX, spreadsheet, XLSX, Word doc, slide deck), the plan MUST include a step using the "exec" specialist with the "document" tool to create/convert the output.
+9. MERGE STEPS: Do NOT create separate steps for "write file" and "convert file." The document tool handles both in one call — document[{action: "create", content: "<html>...", format: "pdf"}] writes AND converts. Similarly, do NOT create a step to "write HTML" then another to "convert to PDF" — that is ONE step with the exec specialist using the document tool. Keep plans to 2 steps when possible: one to gather data, one to create the output.
 
 Return a JSON object:
 {
