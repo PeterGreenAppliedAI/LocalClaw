@@ -103,13 +103,15 @@ CHOOSING THE RIGHT SPECIALIST:
 - "Take a screenshot of X.com" → multi (browser opens site and screenshots it)
 - "Find X and schedule updates" → web_search THEN cron (chained)
 - "Search for events and add to tasks" → web_search THEN task (chained)
+- "Write about X and convert to PDF" → web_search THEN exec (2 steps ONLY — exec uses document tool to create content AND convert in one call, do NOT split write and convert into separate steps)
 - "Read a file from a previous step" → exec (uses read_file tool, NOT exec[cat])
 
 RULES:
 - Each step: { "specialist": string, "message": string, "purpose": string }
 - "message" is what you tell the specialist — it should be a clear, self-contained instruction
 - Include context from previous steps when needed: "Based on the results: [prior findings], now do X"
-- Keep plans to 5 steps or fewer. Most tasks need 1-3 specialists.
+- Keep plans to 2-3 steps. If you have more than 3 steps, you are overcomplicating it.
+- NEVER split "create content" and "convert to format" into separate steps — the document tool does both in one call.
 - Only use "task" specialist when user EXPLICITLY asked to add to their task list.
 - Only use "multi" specialist when the task genuinely requires browser interaction (clicking, typing, forms).
 - DO NOT include message/notification steps. User receives your summary automatically.
