@@ -21,7 +21,7 @@ import type { FactInput } from './config/types.js';
 import { TTSService } from './services/tts.js';
 import { STTService } from './services/stt.js';
 import { VisionService } from './services/vision.js';
-import { saveAttachment, isImageMime } from './services/attachments.js';
+import { saveAttachment } from './services/attachments.js';
 import { ollamaUnreachable, toolExecutionError, LocalClawError } from './errors.js';
 import { PipelineRegistry } from './pipeline/registry.js';
 import { registerAllPipelines } from './pipeline/definitions/index.js';
@@ -471,7 +471,7 @@ export class Orchestrator {
           '4. What is the most important thing to know about this user right now?',
           '',
           'Respond with JSON:',
-          '{"observations": "1-3 sentence summary of what matters", "stale_facts": ["exact text of stale facts"], "connections": "any meaningful connections between facts"}',
+          '{"observations": "2-3 bullet points, each one line max. Focus on what changed or needs attention.", "stale_facts": ["exact text of stale facts"], "connections": "one sentence linking related facts, or empty string if none"}',
           'Return ONLY the JSON, no markdown fences.',
         ].filter(Boolean).join('\n');
 
@@ -524,20 +524,18 @@ export class Orchestrator {
       // --- Task board check (still via plan pipeline for date reasoning) ---
       const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
       const now2 = new Date();
-      const tz = this.config.timezone;
-      const dateStr = now2.toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });
-
-      let currentTasks = '';
-      try { currentTasks = readFileSync(join(workspacePath, 'TASKS.md'), 'utf-8'); } catch { /* no tasks file */ }
 
       // Simple task board report — deterministic, no plan pipeline needed
       const taskLines: string[] = [];
       if (this.taskStore) {
         const allTasks = this.taskStore.list();
         const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+        const overdueIds = new Set<string>();
         const overdue = allTasks.filter(t => t.dueDate && new Date(t.dueDate) < now2 && t.status === 'todo');
-        // Only show high-priority tasks due within 30 days — don't flag tasks 9 months away as urgent
+        overdue.forEach(t => overdueIds.add(t.id));
+        // Only show high-priority tasks due within 30 days, exclude already-overdue tasks
         const upcoming = allTasks.filter(t =>
+          !overdueIds.has(t.id) &&
           t.priority === 'high' && t.status === 'todo' && t.dueDate &&
           new Date(t.dueDate).getTime() - now2.getTime() < THIRTY_DAYS,
         );
@@ -567,14 +565,17 @@ export class Orchestrator {
 
       // --- Build and deliver report ---
       if (hb.delivery.target) {
-        const reportParts = ['**[Heartbeat Report]**'];
+        const reportParts = ['📋 **Heartbeat Report**'];
 
         if (taskLines.length > 0) {
-          reportParts.push(`**Tasks**\n${taskLines.join('\n')}`);
+          reportParts.push(`📌 **Tasks**\n${taskLines.join('\n')}`);
         }
 
         if (memorySection) {
-          reportParts.push(`**Memory**\n${memorySection}`);
+          // Split observations and connections into distinct lines for readability
+          const memLines = memorySection.split('\n').filter((l: string) => l.trim());
+          const formatted = memLines.map((l: string) => `> ${l}`).join('\n');
+          reportParts.push(`🧠 **Memory**\n${formatted}`);
         }
 
         let reportText = reportParts.join('\n\n');
@@ -582,12 +583,12 @@ export class Orchestrator {
         // Append memory review section if there are candidates
         if (reviewCandidates.length > 0) {
           const reviewSection = reviewCandidates
-            .map((f, i) => `${i + 1}. [${f.category}] "${f.text}"`)
+            .map((f, i) => `${i + 1}. \`${f.category}\` — ${f.text}`)
             .join('\n');
           const reviewHint = reviewCandidates.length > 1
-            ? `Reply **!heartbeat yes** to confirm all, **!heartbeat no** to remove all, or **!heartbeat no 2** to remove a specific one.`
-            : `Reply **!heartbeat yes** to confirm, or **!heartbeat no** to remove.`;
-          reportText += `\n\n**Memory check** — still accurate?\n${reviewSection}\n${reviewHint}`;
+            ? `↳ **!heartbeat yes** confirm all · **!heartbeat no** remove all · **!heartbeat no 2** remove one`
+            : `↳ **!heartbeat yes** confirm · **!heartbeat no** remove`;
+          reportText += `\n\n❓ **Memory check** — still accurate?\n${reviewSection}\n${reviewHint}`;
         }
 
         await this.channelRegistry.send(
@@ -632,6 +633,29 @@ export class Orchestrator {
 
       let calendar = '';
       try { calendar = await executor('calendar_list', { days: timeOfDay === 'evening' ? 2 : 1 }, toolCtx); } catch { calendar = '(calendar not available)'; }
+
+      // Code-level conflict detection — don't rely on model for time reasoning
+      const calEvents: Array<{ title: string; date: string; start: string; end: string }> = [];
+      const eventLines = calendar.split('\n- **');
+      for (const block of eventLines) {
+        const titleMatch = block.match(/^([^*]+)\**/);
+        const timeMatch = block.match(/(\w{3}, \w{3} \d+) (\d+:\d+ [AP]M) – (\d+:\d+ [AP]M)/);
+        if (titleMatch && timeMatch) {
+          calEvents.push({ title: titleMatch[1].trim(), date: timeMatch[1], start: timeMatch[2], end: timeMatch[3] });
+        }
+      }
+      // Detect overlapping events on the same day
+      const conflicts: string[] = [];
+      for (let i = 0; i < calEvents.length; i++) {
+        for (let j = i + 1; j < calEvents.length; j++) {
+          if (calEvents[i].date === calEvents[j].date && calEvents[i].start === calEvents[j].start) {
+            conflicts.push(`⚠️ CONFLICT: "${calEvents[i].title}" and "${calEvents[j].title}" overlap at ${calEvents[i].start} on ${calEvents[i].date}`);
+          }
+        }
+      }
+      if (conflicts.length > 0) {
+        calendar += `\n\n**Schedule Conflicts Detected:**\n${conflicts.join('\n')}`;
+      }
 
       let memory = '';
       try { memory = await executor('memory_search', { query: 'recent activity decisions context' }, toolCtx); } catch { memory = '(memory not available)'; }
@@ -685,7 +709,8 @@ Think step by step:
 5. ${timeFrames[timeOfDay]}
 
 Write a useful ${timeOfDay} update. Format rules:
-- Start with calendar events formatted clearly: "• 4:00 PM — Standing Appointment w/ Merril"
+- Start with calendar events in CHRONOLOGICAL order: "• 11:00 AM — Meeting" before "• 6:00 PM — TKD"
+- If conflicts are flagged below the calendar, ALWAYS mention them prominently.
 - After calendar, add 1-2 sentences about anything worth noting (deadlines, connections, flags)
 - Be specific: dates, times, names, locations.
 - If nothing notable beyond the calendar, say so briefly.

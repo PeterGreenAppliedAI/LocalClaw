@@ -15,3 +15,6 @@ localclaw.config.json5
 code_rubric
 prd
 AI_principles
+
+localclaw-backup.tar.gz
+nohup.out
