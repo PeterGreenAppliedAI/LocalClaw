@@ -28,6 +28,7 @@ import { registerAllPipelines } from './pipeline/definitions/index.js';
 import { ExecutionMetricsStore } from './metrics/execution-store.js';
 import { appendFileSync } from 'node:fs';
 import type { ConsoleApiDeps } from './console/types.js';
+import { enrichTasks, getAutoActions, filterForModel, formatTaskBoard, enrichCalendarOutput } from './temporal/urgency.js';
 import type { WebApiAdapter } from './channels/web/adapter.js';
 // Pipeline utilities kept in src/services/tts-stream.ts for future use with slower TTS models
 
@@ -525,34 +526,79 @@ export class Orchestrator {
       const heartbeatTasks = this.cronService?.listByType('heartbeat') ?? [];
       const now2 = new Date();
 
-      // Simple task board report — deterministic, no plan pipeline needed
-      const taskLines: string[] = [];
+      // Task board: code computes urgency, auto-actions, and filtering. Model only summarizes.
+      let taskSection = '';
       if (this.taskStore) {
         const allTasks = this.taskStore.list();
-        const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-        const overdueIds = new Set<string>();
-        const overdue = allTasks.filter(t => t.dueDate && new Date(t.dueDate) < now2 && t.status === 'todo');
-        overdue.forEach(t => overdueIds.add(t.id));
-        // Only show high-priority tasks due within 30 days, exclude already-overdue tasks
-        const upcoming = allTasks.filter(t =>
-          !overdueIds.has(t.id) &&
-          t.priority === 'high' && t.status === 'todo' && t.dueDate &&
-          new Date(t.dueDate).getTime() - now2.getTime() < THIRTY_DAYS,
-        );
+        const activeTasks = allTasks.filter(t => t.status === 'todo' || t.status === 'in_progress');
 
-        if (overdue.length > 0) {
-          taskLines.push('**Overdue:**');
-          overdue.forEach(t => taskLines.push(`- ${t.title} (due: ${t.dueDate})`));
-        }
-        if (upcoming.length > 0) {
-          taskLines.push('**Due soon:**');
-          upcoming.forEach(t => {
-            const daysLeft = Math.ceil((new Date(t.dueDate!).getTime() - now2.getTime()) / (1000 * 60 * 60 * 24));
-            taskLines.push(`- ${t.title} (${daysLeft} days)`);
-          });
-        }
-        if (overdue.length === 0 && upcoming.length === 0) {
-          taskLines.push('No overdue or high-priority tasks.');
+        if (activeTasks.length === 0) {
+          taskSection = 'No active tasks.';
+        } else {
+          const enriched = enrichTasks(activeTasks, now2);
+          const actions = getAutoActions(enriched);
+
+          // Execute auto-actions deterministically (no model involvement)
+          for (const t of actions.complete) {
+            this.taskStore.update(t.id, { status: 'done' });
+            console.log(`[Heartbeat] Auto-completed past event: "${t.title}"`);
+          }
+          for (const t of actions.cancel) {
+            this.taskStore.update(t.id, { status: 'cancelled' });
+            console.log(`[Heartbeat] Auto-cancelled stale task: "${t.title}"`);
+          }
+
+          // Filter: dormant and auto-actioned tasks never reach the model
+          const forModel = filterForModel(enriched);
+
+          if (forModel.length === 0) {
+            taskSection = 'No tasks need attention right now.';
+            if (actions.complete.length > 0 || actions.cancel.length > 0) {
+              const parts: string[] = [];
+              if (actions.complete.length > 0) parts.push(`Auto-completed: ${actions.complete.map(t => `"${t.title}"`).join(', ')}`);
+              if (actions.cancel.length > 0) parts.push(`Auto-cancelled: ${actions.cancel.map(t => `"${t.title}"`).join(', ')}`);
+              taskSection += `\n${parts.join('\n')}`;
+            }
+          } else {
+            const taskBoard = formatTaskBoard(forModel);
+
+            // Model's ONLY job: summarize the pre-labeled data in 2-3 bullets
+            try {
+              const taskResponse = await this.client.chat({
+                model: 'qwen3-coder:30b',
+                messages: [{ role: 'user', content: [
+                  'Summarize these pre-analyzed tasks in 2-3 concise bullet points.',
+                  'Urgency labels are AUTHORITATIVE — do not override or reinterpret them.',
+                  'Do NOT add your own urgency assessments. Just describe what needs attention.',
+                  '',
+                  taskBoard,
+                  '',
+                  'Respond with ONLY JSON: {"summary": "bullet points"}',
+                ].join('\n') }],
+                options: { temperature: 0.3, num_predict: 256 },
+              });
+
+              const taskRaw = (taskResponse.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+              const taskJsonMatch = taskRaw.match(/\{[\s\S]*\}/);
+              if (taskJsonMatch) {
+                const parsed = JSON.parse(taskJsonMatch[0]);
+                taskSection = parsed.summary || taskBoard;
+              } else {
+                taskSection = taskBoard;
+              }
+            } catch (err) {
+              console.warn('[Heartbeat] Task summary failed, using deterministic output:', err instanceof Error ? err.message : err);
+              taskSection = taskBoard;
+            }
+
+            // Append auto-action notes
+            if (actions.complete.length > 0 || actions.cancel.length > 0) {
+              const parts: string[] = [];
+              if (actions.complete.length > 0) parts.push(`Auto-completed: ${actions.complete.map(t => `"${t.title}"`).join(', ')}`);
+              if (actions.cancel.length > 0) parts.push(`Auto-cancelled: ${actions.cancel.map(t => `"${t.title}"`).join(', ')}`);
+              taskSection += `\n${parts.join('\n')}`;
+            }
+          }
         }
       }
 
@@ -567,8 +613,9 @@ export class Orchestrator {
       if (hb.delivery.target) {
         const reportParts = ['📋 **Heartbeat Report**'];
 
-        if (taskLines.length > 0) {
-          reportParts.push(`📌 **Tasks**\n${taskLines.join('\n')}`);
+        if (taskSection) {
+          const formatted = taskSection.split('\n').filter((l: string) => l.trim()).map((l: string) => l.startsWith('-') || l.startsWith('•') ? l : `- ${l}`).join('\n');
+          reportParts.push(`📌 **Tasks**\n${formatted}`);
         }
 
         if (memorySection) {
@@ -628,33 +675,42 @@ export class Orchestrator {
       const toolCtx = { agentId: this.config.agents.default, sessionKey: 'briefing', workspacePath, senderId: hb.delivery.target };
 
       // Gather context
-      let taskBoard = '';
-      try { taskBoard = await executor('task_list', {}, toolCtx); } catch { taskBoard = '(could not load tasks)'; }
-
       let calendar = '';
       try { calendar = await executor('calendar_list', { days: timeOfDay === 'evening' ? 2 : 1 }, toolCtx); } catch { calendar = '(calendar not available)'; }
 
-      // Code-level conflict detection — don't rely on model for time reasoning
+      // Enrich calendar with relative day labels — model sees [TODAY], [TOMORROW], etc.
+      calendar = enrichCalendarOutput(calendar, now);
+
+      // Code-level conflict detection
       const calEvents: Array<{ title: string; date: string; start: string; end: string }> = [];
       const eventLines = calendar.split('\n- **');
       for (const block of eventLines) {
-        const titleMatch = block.match(/^([^*]+)\**/);
+        const titleMatch = block.match(/^([^*]+?)(?:\s*\[.*?\])?\**/);
         const timeMatch = block.match(/(\w{3}, \w{3} \d+) (\d+:\d+ [AP]M) – (\d+:\d+ [AP]M)/);
         if (titleMatch && timeMatch) {
           calEvents.push({ title: titleMatch[1].trim(), date: timeMatch[1], start: timeMatch[2], end: timeMatch[3] });
         }
       }
-      // Detect overlapping events on the same day
       const conflicts: string[] = [];
       for (let i = 0; i < calEvents.length; i++) {
         for (let j = i + 1; j < calEvents.length; j++) {
           if (calEvents[i].date === calEvents[j].date && calEvents[i].start === calEvents[j].start) {
-            conflicts.push(`⚠️ CONFLICT: "${calEvents[i].title}" and "${calEvents[j].title}" overlap at ${calEvents[i].start} on ${calEvents[i].date}`);
+            conflicts.push(`CONFLICT: "${calEvents[i].title}" and "${calEvents[j].title}" overlap at ${calEvents[i].start} on ${calEvents[i].date}`);
           }
         }
       }
       if (conflicts.length > 0) {
         calendar += `\n\n**Schedule Conflicts Detected:**\n${conflicts.join('\n')}`;
+      }
+
+      // Enrich tasks with urgency tiers — model sees pre-labeled board, not raw dates
+      let taskBoardEnriched = '';
+      if (this.taskStore) {
+        const allTasks = this.taskStore.list();
+        const activeTasks = allTasks.filter(t => t.status === 'todo' || t.status === 'in_progress');
+        const enriched = enrichTasks(activeTasks, now);
+        const forModel = filterForModel(enriched);
+        taskBoardEnriched = forModel.length > 0 ? formatTaskBoard(forModel) : 'No tasks need attention.';
       }
 
       let memory = '';
@@ -674,7 +730,7 @@ export class Orchestrator {
         } catch { /* best-effort */ }
       }
 
-      console.log(`[Briefing] Context: calendar=${calendar.length} chars, tasks=${taskBoard.length} chars, memory=${memory.length} chars`);
+      console.log(`[Briefing] Context: calendar=${calendar.length} chars, tasks=${taskBoardEnriched.length} chars, memory=${memory.length} chars`);
 
       // CoT reasoning pass — use specialist model (not reasoning/thinking model which wraps output in <think> tags)
       const briefingModel = 'qwen3-coder:30b';
@@ -691,33 +747,31 @@ export class Orchestrator {
           role: 'user',
           content: `You are a proactive personal assistant. It is ${dateStr}. This is the ${timeOfDay} check-in.
 
-## Calendar
+## Calendar (day labels are pre-computed and correct)
 ${calendar}
 
-## Task Board
-${taskBoard}
+## Tasks (urgency tiers are pre-computed and correct)
+${taskBoardEnriched}
 
 ## Recent Memory
 ${memory}
 ${staleFacts ? `\n## Stale Context (may be outdated — mention if relevant)\n${staleFacts}` : ''}
 
-Think step by step:
-1. Look for facts that are CONNECTED. If two things in the context relate to each other, reason about what that combination means. Don't just list items — think about how they interact and what the implication is for the user.
-2. Schedule conflicts or tight transitions?
-3. Tasks approaching due dates without progress?
-4. Anything that seems off or worth flagging?
-5. ${timeFrames[timeOfDay]}
+RULES:
+- Day labels like [TODAY], [TOMORROW], [in 3 days] are AUTHORITATIVE. Never contradict them.
+- Urgency tiers (critical/high/medium/low) are AUTHORITATIVE. Never say something is urgent if labeled low or dormant.
+- Your job is SYNTHESIS, not analysis. The temporal analysis is already done.
+- Look for facts that are CONNECTED — if two things relate, reason about what that combination means.
+- ${timeFrames[timeOfDay]}
 
-Write a useful ${timeOfDay} update. Format rules:
-- Start with calendar events in CHRONOLOGICAL order: "• 11:00 AM — Meeting" before "• 6:00 PM — TKD"
-- If conflicts are flagged below the calendar, ALWAYS mention them prominently.
-- After calendar, add 1-2 sentences about anything worth noting (deadlines, connections, flags)
+Write a useful ${timeOfDay} update:
+- Start with calendar events in CHRONOLOGICAL order using their pre-computed day labels: "• 11:00 AM — Meeting [TODAY]"
+- If conflicts are detected above, mention them prominently.
+- After calendar, add 1-2 sentences about anything worth noting (task deadlines, connections between facts).
 - Be specific: dates, times, names, locations.
 - If nothing notable beyond the calendar, say so briefly.
 - NEVER ask questions. This is a one-way notification.
-- If cleanup or action is needed, state the command.
-- Do NOT repeat the "No events today" fallback line if you already listed events above.
-- Do NOT repeat yourself or add a "Final update:" section. Say it once, clearly, and stop.
+- Do NOT repeat yourself or add a "Final update:" section.
 - After your reasoning, write your final update OUTSIDE of any think tags.`,
         }],
         options: { temperature: 0.6, num_predict: 1024 },
