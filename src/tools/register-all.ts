@@ -41,6 +41,7 @@ import { createMemoryCleanupTool } from './memory-cleanup.js';
 import { createDocumentTool } from './document.js';
 import { createGmailSearchTool, createGmailReadTool } from './gmail-read.js';
 import { createCalendarListTool, createCalendarSearchTool } from './calendar-read.js';
+import { createImageGenerateTool } from './image-generate.js';
 
 export interface RegisterToolsOptions {
   cronService?: CronService;
@@ -165,6 +166,12 @@ export async function registerAllTools(
     registry.register(createCalendarListTool());
     registry.register(createCalendarSearchTool());
     console.log('[Tools] Google tools registered (gmail_search, gmail_read, calendar_list, calendar_search)');
+  }
+
+  // Image generation (requires separate Ollama instance with Flux model)
+  if (config.imageGen?.enabled) {
+    registry.register(createImageGenerateTool(config.imageGen));
+    console.log(`[Tools] Image generation registered (${config.imageGen.model})`);
   }
 
   // Workspace tools (always available)

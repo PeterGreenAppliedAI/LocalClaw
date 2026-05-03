@@ -215,6 +215,12 @@ export const STTConfigSchema = z.object({
   language: z.string().default('en'),
 });
 
+export const ImageGenConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  url: z.string().default('http://127.0.0.1:11434'),
+  model: z.string().default('x/flux2-klein:4b-fp8'),
+});
+
 export const VisionConfigSchema = z.object({
   enabled: z.boolean().default(false),
   model: z.string().default('qwen3-vl:8b'),
@@ -306,6 +312,7 @@ export const LocalClawConfigSchema = z.object({
   tts: TTSConfigSchema.default({}),
   stt: STTConfigSchema.default({}),
   vision: VisionConfigSchema.default({}),
+  imageGen: ImageGenConfigSchema.default({}),
   voice: VoiceConfigSchema.default({}),
   heartbeat: HeartbeatConfigSchema.optional(),
 });
