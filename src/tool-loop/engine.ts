@@ -241,8 +241,34 @@ const ACTION_CLAIM_PATTERNS = [
   /\baccording to (?:the |my )?(?:latest|current|recent)\b/i,
 ];
 
-function claimsActionWithoutToolCall(text: string): boolean {
-  return ACTION_CLAIM_PATTERNS.some(p => p.test(text));
+/** Map tool names to action verbs they legitimately produce */
+const TOOL_ACTION_VERBS: Record<string, string[]> = {
+  image_generate: ['created', 'generated'],
+  write_file: ['created', 'written', 'saved'],
+  document: ['created', 'generated', 'saved'],
+  exec: ['executed', 'ran'],
+  task_add: ['created', 'added'],
+  task_done: ['completed', 'marked'],
+  task_update: ['updated', 'modified', 'changed'],
+  cron_add: ['scheduled', 'added', 'created'],
+  memory_save: ['saved', 'added'],
+  memory_forget: ['removed', 'deleted'],
+};
+
+function claimsActionWithoutToolCall(text: string, recentToolNames: string[]): boolean {
+  if (!ACTION_CLAIM_PATTERNS.some(p => p.test(text))) return false;
+
+  // If tools were used, check if the claimed action matches what was actually done
+  if (recentToolNames.length > 0) {
+    const legitimateVerbs = recentToolNames.flatMap(t => TOOL_ACTION_VERBS[t] ?? []);
+    if (legitimateVerbs.length > 0) {
+      const lower = text.toLowerCase();
+      // If any claimed verb matches a tool that was actually called, it's a legitimate summary
+      if (legitimateVerbs.some(v => lower.includes(v))) return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -556,8 +582,10 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
     let answer = msg.content || '';
 
     // Action validator (ChatGPT feedback §3-4): if model claims it performed an action
-    // but never called a tool, send a repair prompt and retry once
-    if (ollamaTools.length > 0 && !repairAttempted && claimsActionWithoutToolCall(answer)) {
+    // but never called a tool, send a repair prompt and retry once.
+    // If tools WERE called, only flag if the claimed action doesn't match what was done.
+    const recentTools = steps.filter(s => s.action).map(s => s.action!.tool);
+    if (ollamaTools.length > 0 && !repairAttempted && claimsActionWithoutToolCall(answer, recentTools)) {
       console.log(`[ReAct] Step ${i + 1}: action hallucination detected — "${answer.slice(0, 80)}..."`);
       messages.push(msg);
       messages.push({
