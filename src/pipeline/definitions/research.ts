@@ -554,7 +554,9 @@ export const researchPipeline: PipelineDefinition = {
                   `Chart images use absolute paths: /console/api/files/research/${slug}/chart_name.png`,
                   'Max 4 bullets per slide, max 15 words per bullet.',
                   'Include source URLs on relevant slides using <p class="source">.',
-                  'Place charts inline with relevant content, not grouped at end.',
+                  'Each chart MUST be its own standalone <section> — NEVER nest a <section> inside another <section>.',
+                  'Place chart slides AFTER the related content slide, not inside it.',
+                  'Never duplicate a heading — each <section> has exactly one <h2>.',
                 ].join('\n'),
                 user: [
                   `Artifact type: ${type}`,
