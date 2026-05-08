@@ -758,6 +758,7 @@ ${memory}
 ${staleFacts ? `\n## Stale Context (may be outdated — mention if relevant)\n${staleFacts}` : ''}
 
 RULES:
+- The Calendar section above is the ONLY source of truth for events. NEVER invent, fabricate, or recall events from memory. If the calendar says "No events found", there are NO events — do not list any.
 - Day labels like [TODAY], [TOMORROW], [in 3 days] are AUTHORITATIVE. Never contradict them.
 - Urgency tiers (critical/high/medium/low) are AUTHORITATIVE. Never say something is urgent if labeled low or dormant.
 - Your job is SYNTHESIS, not analysis. The temporal analysis is already done.
@@ -765,7 +766,8 @@ RULES:
 - ${timeFrames[timeOfDay]}
 
 Write a useful ${timeOfDay} update:
-- Start with calendar events in CHRONOLOGICAL order using their pre-computed day labels: "• 11:00 AM — Meeting [TODAY]"
+- If the calendar has events, list them in CHRONOLOGICAL order with their day labels.
+- If the calendar says "No events found", state that the schedule is clear. Do NOT list any events.
 - If conflicts are detected above, mention them prominently.
 - After calendar, add 1-2 sentences about anything worth noting (task deadlines, connections between facts).
 - Be specific: dates, times, names, locations.
