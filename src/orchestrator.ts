@@ -733,7 +733,7 @@ export class Orchestrator {
       console.log(`[Briefing] Context: calendar=${calendar.length} chars, tasks=${taskBoardEnriched.length} chars, memory=${memory.length} chars`);
 
       // CoT reasoning pass — use specialist model (not reasoning/thinking model which wraps output in <think> tags)
-      const briefingModel = 'qwen3-coder:30b';
+      const briefingModel = 'qwen3.6:35b';
 
       const timeFrames: Record<string, string> = {
         morning: "Focus on today's schedule. What should the user prepare for? Flag early meetings, deadlines, or things that need attention before the day gets busy.",
@@ -774,9 +774,9 @@ Write a useful ${timeOfDay} update:
 - If nothing notable beyond the calendar, say so briefly.
 - NEVER ask questions. This is a one-way notification.
 - Do NOT repeat yourself or add a "Final update:" section.
-- After your reasoning, write your final update OUTSIDE of any think tags.`,
+- After your reasoning, write your final update OUTSIDE of any think tags. /no_think`,
         }],
-        options: { temperature: 0.6, num_predict: 1024 },
+        options: { temperature: 0.6, num_predict: 8192 },
       });
 
       const raw = response.message?.content ?? '';
