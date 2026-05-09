@@ -236,6 +236,7 @@ export const researchPipeline: PipelineDefinition = {
             const queries = JSON.parse(match[0]);
             if (Array.isArray(queries)) {
               ctx.params._searchQueries = queries.slice(0, 5);
+              console.log(`[Research] Search queries: ${queries.slice(0, 5).join(' | ')}`);
               return queries;
             }
           }
