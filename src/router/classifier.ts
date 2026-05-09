@@ -83,6 +83,9 @@ const NEW_TOPIC_PATTERNS = [
   /\b(send|tell|notify)\b.*\b(message|channel)\b/i,   // explicit messaging intent
   /\b(remember this|save this|store this)\b/i,         // explicit memory intent
   /\b(research|analyze)\b.*\b(stock|data|trend|market)\b/i,  // explicit research intent
+  /\b(find|get|check|show)\b.*\b(me|my|a|some|the)\b/i,      // "find me a recipe", "get my tasks"
+  /\b(what'?s|what is) (the|my)\b/i,                           // "what's the weather", "what's my schedule"
+  /\b(can you|could you|please) (search|find|look|check)\b/i,  // "can you search for..."
 ];
 
 /** Messages that open with a greeting are starting a new conversation, not following up */
@@ -140,6 +143,14 @@ export async function classifyMessage(
 ): Promise<ClassifyResult> {
   const validCategories = getValidCategories(config);
 
+  // Pre-model overrides FIRST — high-confidence patterns always win, even over sticky routing
+  for (const override of PRE_MODEL_OVERRIDES) {
+    if (override.pattern.test(message) && validCategories.has(override.category)) {
+      console.log(`[Router] Pre-model override: "${message.slice(0, 60)}..." → ${override.category}`);
+      return { category: override.category, confidence: 'keyword' };
+    }
+  }
+
   // Sticky category: follow-ups stay on the previous specialist
   // Break out if: strong new-topic signal, long message, OR keywords point to a different category
   if (previousCategory && validCategories.has(previousCategory)) {
@@ -152,14 +163,6 @@ export async function classifyMessage(
         console.log(`[Router] Sticky: "${message.slice(0, 60)}..." → ${previousCategory} (follow-up)`);
         return { category: previousCategory, confidence: 'sticky' };
       }
-    }
-  }
-
-  // Pre-model overrides for categories the model doesn't know well
-  for (const override of PRE_MODEL_OVERRIDES) {
-    if (override.pattern.test(message) && validCategories.has(override.category)) {
-      console.log(`[Router] Pre-model override: "${message.slice(0, 60)}..." → ${override.category}`);
-      return { category: override.category, confidence: 'keyword' };
     }
   }
 

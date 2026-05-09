@@ -111,6 +111,8 @@ export interface DispatchParams {
   skipPipeline?: boolean;
   /** Bypass confirmation gate — set when user confirmed a pending action */
   confirmed?: boolean;
+  /** Internal: prevent infinite re-route loops */
+  _reRouted?: boolean;
 }
 
 export interface DispatchResult {
@@ -364,6 +366,29 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   }
 
   result.category = effectiveCategory;
+
+  // Silent re-route: if chat couldn't fulfill the request, re-classify and re-dispatch
+  if (effectiveCategory === 'chat' && !params.overrideCategory && !params._reRouted) {
+    const CAPABILITY_GAP_PATTERNS = [
+      /\bI (?:don't|do not|can't|cannot|am unable to) (?:have access|access|search|browse|check|look up|execute|run|send|schedule)/i,
+      /\bI (?:would need|need) (?:to |access |tools)/i,
+      /\bif I (?:had|could) (?:access|tools|the ability)/i,
+      /\byou (?:would need to|should|could try|might want to) (?:use|open|go to|check|visit)/i,
+      /\bI don't have (?:the ability|access|tools|a way|direct)/i,
+    ];
+    if (CAPABILITY_GAP_PATTERNS.some(p => p.test(result.answer))) {
+      const reClassification = await classifyMessage(client, config.router, message);
+      if (reClassification.category !== 'chat') {
+        console.log(`[Dispatch] Silent re-route: chat gap detected → ${reClassification.category}`);
+        const reResult = await dispatchMessage({
+          ...params,
+          overrideCategory: reClassification.category,
+          _reRouted: true,
+        });
+        return reResult;
+      }
+    }
+  }
 
   // Strip thinking tags from models that emit <think>...</think> blocks
   // Also strip orphaned </think> tags and content before them (unclosed think blocks)
