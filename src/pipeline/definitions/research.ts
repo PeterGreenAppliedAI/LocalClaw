@@ -403,26 +403,11 @@ export const researchPipeline: PipelineDefinition = {
             '      "dataPoints": "key data values from research"',
             '    }',
             '  ]',
-            ...(ctx.params._imageGenEnabled && type !== 'report' ? [
-            '  "imageData": [',
-            '    {',
-            '      "name": "image_name",',
-            '      "description": "Professional photo description for AI image generation",',
-            '      "slideTitle": "Which slide this image accompanies"',
-            '    }',
-            '  ]',
-            ] : []),
             '}',
             '',
             `Section guide for ${type}: ${guide}`,
             '',
             'Rules:',
-            ...(ctx.params._imageGenEnabled && type !== 'report' ? [
-              '- Include 2-3 entries in imageData for slides that would benefit from a hero image or visual',
-              '- Image descriptions should read like professional stock-photo requests: clean, modern, photographic style',
-              '- Avoid requesting text or words in images — Flux cannot render text reliably',
-              '- Focus on concepts, scenes, and abstract visuals that reinforce the slide content',
-            ] : []),
             ...(type === 'report' ? [
               '- Each section "bullets" should contain 2-4 FULL PARAGRAPHS (3-5 sentences each), not short bullets',
               '- Include specific data points, statistics, and direct quotes from the source material',
@@ -471,7 +456,6 @@ export const researchPipeline: PipelineDefinition = {
         const synthesis = ctx.params._synthesis as any;
         const slug = ctx.params.slug as string;
         const chartData: any[] = synthesis?.chartData ?? [];
-        const imageData: any[] = synthesis?.imageData ?? [];
         const imageGenEnabled = !!ctx.params._imageGenEnabled;
 
         // --- Chart workstream (sequential internally) ---
@@ -521,18 +505,24 @@ export const researchPipeline: PipelineDefinition = {
           }
         };
 
-        // --- Image workstream (all parallel) ---
+        // --- Background image workstream (parallel, abstract slide backgrounds) ---
+        const BACKGROUND_PROMPTS = [
+          { name: 'bg_title', prompt: 'Dark professional abstract background, deep blue and black gradient with subtle geometric grid lines, clean modern corporate presentation style, no text, 16:9 aspect ratio' },
+          { name: 'bg_highlight', prompt: 'Dark abstract background with soft glowing cyan and purple light streaks on black, modern tech aesthetic, subtle particle effects, no text, 16:9 aspect ratio' },
+          { name: 'bg_closing', prompt: 'Dark professional background with deep navy blue gradient fading to black, subtle constellation dot pattern, clean minimalist corporate style, no text, 16:9 aspect ratio' },
+        ];
+
         const imageWorkstream = async (): Promise<string[]> => {
-          if (!imageGenEnabled || imageData.length === 0) return [];
+          if (!imageGenEnabled) return [];
 
           const results = await Promise.allSettled(
-            imageData.slice(0, 3).map(async (img: any) => {
+            BACKGROUND_PROMPTS.map(async (bg) => {
               await ctx.executor('image_generate', {
-                prompt: img.description,
-                filename: img.name,
+                prompt: bg.prompt,
+                filename: bg.name,
                 outputDir: `research/${slug}`,
               }, ctx.toolContext);
-              return img.name;
+              return bg.name;
             }),
           );
 
@@ -540,9 +530,9 @@ export const researchPipeline: PipelineDefinition = {
           for (let i = 0; i < results.length; i++) {
             const r = results[i];
             if (r.status === 'fulfilled') {
-              paths.push(`/console/api/files/research/${slug}/${imageData[i].name}.png`);
+              paths.push(`/console/api/files/research/${slug}/${BACKGROUND_PROMPTS[i].name}.png`);
             } else {
-              console.warn(`[Research] Image "${imageData[i].name}" failed:`, r.reason);
+              console.warn(`[Research] Background "${BACKGROUND_PROMPTS[i].name}" failed:`, r.reason);
             }
           }
           return paths;
@@ -575,50 +565,26 @@ export const researchPipeline: PipelineDefinition = {
               const slug = ctx.params.slug as string;
               const type = ctx.params.artifactType as string;
               const chartPaths = ctx.params._chartPaths as string[];
-              const imagePaths = (ctx.params._imagePaths as string[]) ?? [];
+              const bgPaths = (ctx.params._imagePaths as string[]) ?? [];
+
+              // Map background images to slide roles: title, highlight (mid-deck), closing
+              const bgTitle = bgPaths.find(p => p.includes('bg_title')) ?? '';
+              const bgHighlight = bgPaths.find(p => p.includes('bg_highlight')) ?? '';
+              const bgClosing = bgPaths.find(p => p.includes('bg_closing')) ?? '';
+
+              // Interleave charts after their matching content slides
               const slides = synthesis?.slides ?? [];
-
-              // Interleave visuals into the slide outline so the model sees them in position
-              const visualSlides: Array<{ afterIndex: number; type: string; path: string; title: string }> = [];
-
-              // Map charts to slides by matching chartData descriptions to slide titles
               const chartDataArr = synthesis?.chartData ?? [];
-              for (let ci = 0; ci < chartDataArr.length && ci < chartPaths.length; ci++) {
-                const chart = chartDataArr[ci];
-                const matchIdx = slides.findIndex((s: any) =>
-                  s.title?.toLowerCase().includes(chart.name?.replace(/_/g, ' ').toLowerCase()) ||
-                  chart.description?.toLowerCase().includes(s.title?.toLowerCase())
-                );
-                visualSlides.push({
-                  afterIndex: matchIdx >= 0 ? matchIdx : Math.min(ci + 2, slides.length - 1),
-                  type: 'chart',
-                  path: chartPaths[ci],
-                  title: chart.description ?? `Chart ${ci + 1}`,
-                });
-              }
-
-              // Map images to slides by matching imageData slideTitle
-              const imageDataArr = synthesis?.imageData ?? [];
-              for (let ii = 0; ii < imageDataArr.length && ii < imagePaths.length; ii++) {
-                const img = imageDataArr[ii];
-                const matchIdx = slides.findIndex((s: any) =>
-                  s.title?.toLowerCase() === img.slideTitle?.toLowerCase()
-                );
-                visualSlides.push({
-                  afterIndex: matchIdx >= 0 ? matchIdx : Math.min(ii * 3 + 1, slides.length - 1),
-                  type: 'image',
-                  path: imagePaths[ii],
-                  title: img.slideTitle ?? `Image ${ii + 1}`,
-                });
-              }
-
-              // Build interleaved slide list for the prompt
               const interleavedSlides: string[] = [];
               for (let si = 0; si < slides.length; si++) {
                 interleavedSlides.push(`[CONTENT SLIDE ${si + 1}] ${JSON.stringify(slides[si])}`);
-                const visualsHere = visualSlides.filter((v: { afterIndex: number }) => v.afterIndex === si);
-                for (const v of visualsHere) {
-                  interleavedSlides.push(`[${v.type.toUpperCase()} SLIDE — place HERE] src="${v.path}" title="${v.title}"`);
+                for (let ci = 0; ci < chartDataArr.length && ci < chartPaths.length; ci++) {
+                  const chart = chartDataArr[ci];
+                  const matches = slides[si].title?.toLowerCase().includes(chart.name?.replace(/_/g, ' ').toLowerCase()) ||
+                    chart.description?.toLowerCase().includes(slides[si].title?.toLowerCase());
+                  if (matches) {
+                    interleavedSlides.push(`[CHART SLIDE — place HERE after slide ${si + 1}] src="${chartPaths[ci]}" title="${chart.description}"`);
+                  }
                 }
               }
 
@@ -630,17 +596,24 @@ export const researchPipeline: PipelineDefinition = {
                   SLIDE_COMPONENTS.replace(/SLUG/g, slug), '',
                   'Replace <!-- SLIDES --> with the actual <section> elements.',
                   'Replace TITLE in <title> with the actual title.',
-                  `Chart and image paths use absolute paths: /console/api/files/research/${slug}/name.png`,
+                  `Chart paths use absolute paths: /console/api/files/research/${slug}/name.png`,
                   'Max 4 bullets per slide, max 15 words per bullet.',
                   'Include source URLs on relevant slides using <p class="source">.',
-                  'Each chart or image MUST be its own standalone <section> — NEVER nest a <section> inside another <section>.',
+                  'Each chart MUST be its own standalone <section> — NEVER nest a <section> inside another <section>.',
                   'Never duplicate a heading — each <section> has exactly one <h2>.',
-                  'CRITICAL: The slide list below has [CHART SLIDE] and [IMAGE SLIDE] markers at their correct positions. Generate slides in EXACTLY this order. Do NOT move or group visuals at the end.',
+                  'CRITICAL: Follow the slide order EXACTLY. Charts are marked at their correct positions.',
+                  ...(bgTitle ? [
+                    `BACKGROUND IMAGES: Use these as CSS background-image on key slides for a polished look.`,
+                    `- Title slide: style="background-image:url(${bgTitle});background-size:cover;background-position:center"`,
+                    ...(bgHighlight ? [`- A key insight or KPI slide (mid-deck): style="background-image:url(${bgHighlight});background-size:cover;background-position:center"`] : []),
+                    ...(bgClosing ? [`- Final/recommendations slide: style="background-image:url(${bgClosing});background-size:cover;background-position:center"`] : []),
+                    'Apply the background style directly on the <section> tag. Text remains readable on dark backgrounds.',
+                  ] : []),
                 ].join('\n'),
                 user: [
                   `Artifact type: ${type}`,
                   `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
-                  `Slides (with visuals interleaved — follow this order EXACTLY):`,
+                  `Slides (with charts interleaved — follow this order EXACTLY):`,
                   ...interleavedSlides,
                 ].join('\n'),
               };
