@@ -214,7 +214,8 @@ export const researchPipeline: PipelineDefinition = {
         system: [
           'You are a senior research analyst planning a briefing.',
           'Given a research topic, output ONLY a JSON array of 3-5 specific search queries.',
-          'Target PRIMARY sources: earnings calls, industry reports, regulatory filings, not just news.',
+          'CRITICAL: If the topic mentions multiple items to compare (e.g., "A vs B vs C"), generate at least one dedicated query for EACH item. Do not rely on a single comparison query to cover all items.',
+          'Target PRIMARY sources: official specs, benchmarks, industry reports, not just news.',
           'Include the current year in at least 2 queries for freshness.',
           'Output format: ["query 1", "query 2", "query 3"]',
           'Return ONLY the JSON array, nothing else.',
@@ -430,7 +431,7 @@ export const researchPipeline: PipelineDefinition = {
               '- Every major claim needs a source URL from the research, not a homepage',
               '- At least 2 charts. Identify data-heavy slides that benefit from visualization',
             ]),
-            '- NEVER fabricate data — only use what is in the search results and fetched pages',
+            '- NEVER fabricate data — only use what is in the search results and fetched pages. If you lack data on a topic, say "data not found in sources" rather than guessing. Empty slides are better than fabricated slides.',
             '- DATES: Use ONLY dates that appear in the source material. Each source has a [Published: date] tag — use those dates. Do NOT guess or infer release dates. If a source does not include a date, say "date not confirmed" rather than inventing one.',
             '- Return ONLY the JSON object, no markdown or explanation',
           ].join('\n'),
