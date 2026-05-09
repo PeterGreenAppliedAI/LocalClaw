@@ -575,16 +575,28 @@ export const researchPipeline: PipelineDefinition = {
               // Interleave charts after their matching content slides
               const slides = synthesis?.slides ?? [];
               const chartDataArr = synthesis?.chartData ?? [];
+              // Track which charts have been placed
+              const placedCharts = new Set<number>();
               const interleavedSlides: string[] = [];
               for (let si = 0; si < slides.length; si++) {
                 interleavedSlides.push(`[CONTENT SLIDE ${si + 1}] ${JSON.stringify(slides[si])}`);
                 for (let ci = 0; ci < chartDataArr.length && ci < chartPaths.length; ci++) {
+                  if (placedCharts.has(ci)) continue;
                   const chart = chartDataArr[ci];
-                  const matches = slides[si].title?.toLowerCase().includes(chart.name?.replace(/_/g, ' ').toLowerCase()) ||
-                    chart.description?.toLowerCase().includes(slides[si].title?.toLowerCase());
-                  if (matches) {
+                  const slideTitle = (slides[si].title ?? '').toLowerCase();
+                  const chartName = (chart.name ?? '').replace(/_/g, ' ').toLowerCase();
+                  const chartDesc = (chart.description ?? '').toLowerCase();
+                  if (slideTitle.includes(chartName) || chartDesc.includes(slideTitle) ||
+                      chartName.includes(slideTitle) || slideTitle.includes(chartDesc.split(' ').slice(0, 3).join(' '))) {
                     interleavedSlides.push(`[CHART SLIDE — place HERE after slide ${si + 1}] src="${chartPaths[ci]}" title="${chart.description}"`);
+                    placedCharts.add(ci);
                   }
+                }
+              }
+              // Place any unmatched charts after the last content slide
+              for (let ci = 0; ci < chartDataArr.length && ci < chartPaths.length; ci++) {
+                if (!placedCharts.has(ci)) {
+                  interleavedSlides.push(`[CHART SLIDE — place after last content slide] src="${chartPaths[ci]}" title="${chartDataArr[ci].description}"`);
                 }
               }
 
@@ -603,11 +615,11 @@ export const researchPipeline: PipelineDefinition = {
                   'Never duplicate a heading — each <section> has exactly one <h2>.',
                   'CRITICAL: Follow the slide order EXACTLY. Charts are marked at their correct positions.',
                   ...(bgTitle ? [
-                    `BACKGROUND IMAGES: Use these as CSS background-image on key slides for a polished look.`,
-                    `- Title slide: style="background-image:url(${bgTitle});background-size:cover;background-position:center"`,
-                    ...(bgHighlight ? [`- A key insight or KPI slide (mid-deck): style="background-image:url(${bgHighlight});background-size:cover;background-position:center"`] : []),
-                    ...(bgClosing ? [`- Final/recommendations slide: style="background-image:url(${bgClosing});background-size:cover;background-position:center"`] : []),
-                    'Apply the background style directly on the <section> tag. Text remains readable on dark backgrounds.',
+                    `BACKGROUND IMAGES: Use reveal.js data-background-image attribute on key slides.`,
+                    `- Title slide: <section data-background-image="${bgTitle}" data-background-size="cover">`,
+                    ...(bgHighlight ? [`- A key insight or KPI slide (mid-deck): <section data-background-image="${bgHighlight}" data-background-size="cover">`] : []),
+                    ...(bgClosing ? [`- Final/recommendations slide: <section data-background-image="${bgClosing}" data-background-size="cover">`] : []),
+                    'Use data-background-image, NOT CSS style. This is how reveal.js handles full-bleed slide backgrounds.',
                   ] : []),
                 ].join('\n'),
                 user: [
