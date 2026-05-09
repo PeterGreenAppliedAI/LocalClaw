@@ -478,7 +478,9 @@ export const researchPipeline: PipelineDefinition = {
 
           try {
             // Start code session
-            await ctx.executor('code_session', { action: 'start', session: 'research', runtime: 'python' }, ctx.toolContext);
+            console.log('[Research] Charts: starting code session...');
+            const sessionResult = await ctx.executor('code_session', { action: 'start', session: 'research', runtime: 'python' }, ctx.toolContext);
+            console.log(`[Research] Charts: session started — ${sessionResult.slice(0, 100)}`);
 
             // Generate chart code via LLM
             const response = await ctx.client.chat({
@@ -500,9 +502,11 @@ export const researchPipeline: PipelineDefinition = {
             });
 
             let code = (response.message?.content ?? '').replace(/^```(?:python)?\n?/m, '').replace(/\n?```$/m, '').trim();
+            console.log(`[Research] Charts: generated ${code.length} chars of Python`);
 
             // Execute chart code
-            await ctx.executor('code_session', { action: 'run', session: 'research', code }, ctx.toolContext);
+            const runResult = await ctx.executor('code_session', { action: 'run', session: 'research', code }, ctx.toolContext);
+            console.log(`[Research] Charts: execution result — ${runResult.slice(0, 200)}`);
 
             // Collect chart paths — only include files that actually exist
             const { existsSync } = await import('node:fs');
@@ -510,7 +514,7 @@ export const researchPipeline: PipelineDefinition = {
               .map((c: any) => `/console/api/files/research/${slug}/${c.name}.png`)
               .filter(p => existsSync(join('data', 'workspaces', 'main', p.replace('/console/api/files/', ''))));
           } catch (err) {
-            console.warn('[Research] Chart generation failed:', err instanceof Error ? err.message : err);
+            console.warn('[Research] Chart generation failed:', err instanceof Error ? `${err.message}\n${err.stack}` : err);
             return [];
           }
         };
