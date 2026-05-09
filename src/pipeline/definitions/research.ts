@@ -574,7 +574,53 @@ export const researchPipeline: PipelineDefinition = {
               const slug = ctx.params.slug as string;
               const type = ctx.params.artifactType as string;
               const chartPaths = ctx.params._chartPaths as string[];
-              const imagePaths = ctx.params._imagePaths as string[] ?? [];
+              const imagePaths = (ctx.params._imagePaths as string[]) ?? [];
+              const slides = synthesis?.slides ?? [];
+
+              // Interleave visuals into the slide outline so the model sees them in position
+              const visualSlides: Array<{ afterIndex: number; type: string; path: string; title: string }> = [];
+
+              // Map charts to slides by matching chartData descriptions to slide titles
+              const chartDataArr = synthesis?.chartData ?? [];
+              for (let ci = 0; ci < chartDataArr.length && ci < chartPaths.length; ci++) {
+                const chart = chartDataArr[ci];
+                const matchIdx = slides.findIndex((s: any) =>
+                  s.title?.toLowerCase().includes(chart.name?.replace(/_/g, ' ').toLowerCase()) ||
+                  chart.description?.toLowerCase().includes(s.title?.toLowerCase())
+                );
+                visualSlides.push({
+                  afterIndex: matchIdx >= 0 ? matchIdx : Math.min(ci + 2, slides.length - 1),
+                  type: 'chart',
+                  path: chartPaths[ci],
+                  title: chart.description ?? `Chart ${ci + 1}`,
+                });
+              }
+
+              // Map images to slides by matching imageData slideTitle
+              const imageDataArr = synthesis?.imageData ?? [];
+              for (let ii = 0; ii < imageDataArr.length && ii < imagePaths.length; ii++) {
+                const img = imageDataArr[ii];
+                const matchIdx = slides.findIndex((s: any) =>
+                  s.title?.toLowerCase() === img.slideTitle?.toLowerCase()
+                );
+                visualSlides.push({
+                  afterIndex: matchIdx >= 0 ? matchIdx : Math.min(ii * 3 + 1, slides.length - 1),
+                  type: 'image',
+                  path: imagePaths[ii],
+                  title: img.slideTitle ?? `Image ${ii + 1}`,
+                });
+              }
+
+              // Build interleaved slide list for the prompt
+              const interleavedSlides: string[] = [];
+              for (let si = 0; si < slides.length; si++) {
+                interleavedSlides.push(`[CONTENT SLIDE ${si + 1}] ${JSON.stringify(slides[si])}`);
+                const visualsHere = visualSlides.filter((v: { afterIndex: number }) => v.afterIndex === si);
+                for (const v of visualsHere) {
+                  interleavedSlides.push(`[${v.type.toUpperCase()} SLIDE — place HERE] src="${v.path}" title="${v.title}"`);
+                }
+              }
+
               return {
                 system: [
                   'You are a presentation designer. Generate a complete reveal.js HTML deck from the slide outline.',
@@ -587,20 +633,14 @@ export const researchPipeline: PipelineDefinition = {
                   'Max 4 bullets per slide, max 15 words per bullet.',
                   'Include source URLs on relevant slides using <p class="source">.',
                   'Each chart or image MUST be its own standalone <section> — NEVER nest a <section> inside another <section>.',
-                  'Place chart/image slides AFTER the related content slide, not inside it.',
                   'Never duplicate a heading — each <section> has exactly one <h2>.',
-                  ...(imagePaths.length > 0 ? [
-                    'IMPORTANT: You MUST include ALL available images in the deck. Each image gets its own <section> slide.',
-                    'Place image slides near the content slide they relate to.',
-                    'Use: <section><h2>Title</h2><img src="IMAGE_PATH" alt="desc" style="max-height:450px"></section>',
-                  ] : []),
+                  'CRITICAL: The slide list below has [CHART SLIDE] and [IMAGE SLIDE] markers at their correct positions. Generate slides in EXACTLY this order. Do NOT move or group visuals at the end.',
                 ].join('\n'),
                 user: [
                   `Artifact type: ${type}`,
                   `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
-                  `Slides: ${JSON.stringify(synthesis?.slides ?? [], null, 2)}`,
-                  ...(chartPaths.length > 0 ? [`Available charts (MUST include in deck): ${JSON.stringify(chartPaths)}`] : []),
-                  ...(imagePaths.length > 0 ? [`Available images (MUST include in deck): ${JSON.stringify(imagePaths)}`] : []),
+                  `Slides (with visuals interleaved — follow this order EXACTLY):`,
+                  ...interleavedSlides,
                 ].join('\n'),
               };
             },
