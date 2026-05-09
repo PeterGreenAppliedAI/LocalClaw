@@ -676,7 +676,7 @@ The router currently uses phi4:14b with few-shot prompting for intent classifica
 
 **How training data is collected:**
 
-Every `!reset` (session clear) triggers `extractTrainingPairs()` which scans the transcript for user messages paired with their classified category. These are appended to `data/training/router-pairs.jsonl` as labeled examples:
+Training pairs are captured at two points: `!reset` (session clear) and **context compaction** (when conversation history exceeds the token budget). Both paths scan the transcript for user messages paired with their classified category and append to `data/training/router-pairs.jsonl`:
 
 ```jsonl
 {"message": "what's on my calendar tomorrow", "category": "personal"}

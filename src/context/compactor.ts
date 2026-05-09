@@ -4,6 +4,7 @@ import type { SessionStore } from '../sessions/store.js';
 import type { CompactionSummary } from '../sessions/types.js';
 import type { FactStore } from '../memory/fact-store.js';
 import { estimateMessagesTokens } from './tokens.js';
+import { appendFileSync, mkdirSync } from 'node:fs';
 
 export interface CompactedHistory {
   messages: OllamaMessage[];  // [summary_msg?, ...recent_turns]
@@ -97,6 +98,12 @@ export async function buildCompactedHistory(params: BuildCompactedHistoryParams)
   const archiveText = archiveMessages
     .map(m => `${m.role}: ${m.content}`)
     .join('\n\n');
+
+  // Extract router training pairs from archive zone before it's summarized away
+  try {
+    const archiveTranscript = transcript.slice(archiveStart, archiveEnd);
+    extractCompactionTrainingPairs(archiveTranscript);
+  } catch { /* best-effort */ }
 
   // Phase 3: Flush key facts to FactStore
   try {
@@ -342,4 +349,30 @@ Keep each section concise. Omit empty sections. This summary replaces older conv
   });
 
   return response.message?.content ?? 'Unable to generate summary.';
+}
+
+/**
+ * Extract (message, category) training pairs from archive turns before they're compacted away.
+ * Same logic as orchestrator's extractTrainingPairs but called during compaction.
+ */
+function extractCompactionTrainingPairs(transcript: Array<{ role: string; content: string; category?: string }>): void {
+  const TRAINING_FILE = 'data/training/router-pairs.jsonl';
+  const pairs: string[] = [];
+
+  for (const entry of transcript) {
+    if (entry.role !== 'user' || !entry.category || !entry.content?.trim()) continue;
+    const content = entry.content.trim();
+    if (content.startsWith('[RESEARCH PIPELINE]')) continue;
+    if (content.startsWith('[DEVMESH')) continue;
+    if (content.startsWith('!')) continue;
+    if (content.length < 5) continue;
+
+    pairs.push(JSON.stringify({ message: content, category: entry.category }));
+  }
+
+  if (pairs.length > 0) {
+    mkdirSync('data/training', { recursive: true });
+    appendFileSync(TRAINING_FILE, pairs.join('\n') + '\n');
+    console.log(`[Compactor] Extracted ${pairs.length} router training pairs before compaction`);
+  }
 }
