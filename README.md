@@ -75,6 +75,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Knowledge Import | `knowledge_import` | Import PDFs, CSVs, markdown into vector-searchable knowledge base |
 | Context Compaction | *(automatic)* | Structured compression (Goal/Progress/Next Steps), proactive at 50% budget, tool-pair sanitization |
 | Document Gen | `document` | Create and convert documents via LibreOffice headless — HTML/CSV → PDF/DOCX/XLSX/PPTX |
+| Image Gen | `image_generate` | Text-to-image and img2img via Flux model on dedicated hardware (Ollama) |
 | Self-Improvement | *(automatic)* | Error learning store, pattern matching, drift detection, learning promotion via heartbeat |
 | CLI | `npm run cli` | Terminal interface with streaming, slash commands, markdown rendering, session persistence |
 
@@ -170,7 +171,7 @@ localclaw/
 │   ├── services/             # TTS (Kokoro), STT (Whisper), Vision
 │   ├── tasks/                # Task board (types + JSON/Markdown store)
 │   ├── learnings/            # Self-improvement (error store, pattern matcher)
-│   ├── tools/                # 29 tool implementations
+│   ├── tools/                # 35 tool implementations
 │   ├── agents/               # Workspace files + routing (frozen snapshots per session)
 │   ├── context/              # Token estimation, budget calculator, structured compaction
 │   ├── sessions/             # Transcript persistence + compaction summaries
@@ -181,7 +182,7 @@ localclaw/
 │   ├── src/pages/            # Dashboard, Chat, Sessions, Tasks, Cron, Memory, Channels, Tools, Config
 │   ├── src/api/              # API client + React Query hooks
 │   └── dist/                 # Built static files (served by web adapter)
-├── test/                     # 226 tests across 20 suites
+├── test/                     # 258 tests across 21 suites
 ├── CLAUDE.md                 # AI code generation guidelines (for Claude Code)
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens
@@ -194,7 +195,7 @@ localclaw/
 3. **Keywords** — Pattern matching when model fails or times out
 4. **Default** — Falls back to `chat`
 
-Categories: `chat`, `web_search`, `memory`, `exec`, `cron`, `message`, `website`, `task`, `multi`, `config`, `research`, `personal`
+Categories: `chat`, `web_search`, `memory`, `exec`, `cron`, `message`, `website`, `task`, `multi`, `config`, `research`, `personal`, `image`
 
 ### Templated Pipeline Engine
 
@@ -586,11 +587,10 @@ The heartbeat runs every 2 hours and manages two systems: **memory** and **tasks
 1. **Transcript review** — Scans session files modified since last run, extracts facts via LLM, commits to FactStore
 2. **Learning promotion** — Scans error store for recurring patterns (3+ occurrences), promotes to `LEARNINGS.md`
 3. **Media cleanup** — Deletes generated files (PDFs, screenshots) older than 7 days
-4. **Task auto-cancel** — Tasks overdue by 7+ days automatically set to `cancelled`
-5. **Fact auto-expire** — Facts referencing dates in the past are auto-removed (non-stable only)
-6. **Memory cleanup** — Substring dedup + LLM semantic dedup
-7. **Fact diff + LLM reasoning** — Loads ALL facts, compares against last heartbeat's snapshot (new/unchanged/removed), sends structured diff to LLM for reasoning about staleness, connections, and importance
-8. **Task board check** — Deterministic: code reads tasks, filters overdue + high-priority, formats
+4. **Fact auto-expire** — Facts referencing dates in the past are auto-removed (non-stable only)
+5. **Memory cleanup** — Substring dedup + LLM semantic dedup
+6. **Fact diff + LLM reasoning** — Loads ALL facts, compares against last heartbeat's snapshot (new/unchanged/removed), sends structured diff to LLM for reasoning about staleness, connections, and importance
+7. **Task board (temporal intelligence)** — Code-driven urgency tiers (Taskwarrior-inspired), event detection heuristic, auto-complete past events, auto-cancel stale tasks. Model only summarizes pre-labeled data
 9. **Memory review candidates** — Surfaces 2-3 oldest/lowest-confidence facts for user confirmation (waking hours only: 8am-10pm)
 10. **Deliver report** — Tasks + LLM memory observations + review candidates
 
@@ -609,7 +609,7 @@ Separate from the heartbeat. Runs 3 times daily at **8:00am, 1:15pm, 5:00pm**.
 
 1. **Gather context** — Calls `calendar_list`, `task_list`, `memory_search` directly via tool executor
 2. **Check for stale facts** — Non-stable facts older than 10 days flagged
-3. **CoT reasoning** — LLM (qwen3-coder:30b) reasons about connections, conflicts, and what matters:
+3. **CoT reasoning** — LLM (qwen3.6:35b) reasons about connections, conflicts, and what matters:
    - Morning: "Here's your day — what to prepare for"
    - Afternoon: "Here's what's left — anything urgent?"
    - Evening: "Here's tomorrow — anything to prep tonight?"
@@ -650,6 +650,26 @@ reasoning: {
 ```
 
 Add `"reason"` to any specialist's `tools` array to enable the reasoning pass for that category. Specialists without `reason` in their tools are unaffected — zero overhead.
+
+## Multi-Model Strategy
+
+LocalClaw assigns different models to different roles based on their strengths. No single model handles everything.
+
+| Role | Model | Why |
+|------|-------|-----|
+| Router | phi4:14b | Fast classification (~50ms), few-shot prompted, 200 tokens per decision |
+| Specialists (tool calling) | qwen3-coder:30b | Reliable tool sequencing, native Ollama tool call format |
+| Briefing (synthesis) | qwen3.6:35b | Better reasoning quality, respects pre-labeled data, cleaner output |
+| Chat | qwen3.5:9b | Natural conversational tone, fast for interactive use |
+| Reasoning | nemotron-3-nano:30b | Deep analysis and content synthesis (optional) |
+| Embedding | qwen3-embedding:8b | Vector search for knowledge import |
+| Vision | qwen3-vl:8b | Image analysis via multimodal model |
+| Image Generation | flux2-klein:4b-fp8 | Text-to-image on dedicated hardware |
+| Voice Chat | qwen2.5:7b | Low-latency responses for voice interactions |
+
+**Design principle:** Code handles deterministic work (time reasoning, urgency scoring, conflict detection, auto-actions). Models handle what requires judgment (synthesis, connection-finding, natural language). Each model is tested pipeline-by-pipeline before being promoted. Models under evaluation (gemma4:26b for tool calling, qwen3.6 for broader specialist use) are phased in one role at a time to isolate regressions.
+
+**Temporal intelligence:** Task urgency and calendar event labeling are computed in code (`src/temporal/urgency.ts`), not by the model. Tasks get urgency tiers (critical/high/medium/low/dormant) and calendar events get relative day labels ([TODAY], [TOMORROW], [in N days]). Models receive pre-labeled data with instructions that labels are authoritative. This prevents models from hallucinating urgency or placing events on wrong days.
 
 ## AI-Assisted Development
 
@@ -706,9 +726,11 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Language | TypeScript 5.7 (strict) |
 | AI Backend | Ollama |
 | Router Model | phi4:14b |
-| Specialist Model | qwen3-coder:30b |
+| Specialist Model | qwen3-coder:30b (gemma4:26b under evaluation) |
+| Briefing Model | qwen3.6:35b |
 | Embedding Model | qwen3-embedding:8b |
 | Reasoning Model | nemotron-3-nano:30b (optional) |
+| Image Generation | flux2-klein:4b-fp8 (dedicated Mac Mini) |
 | Voice Chat Model | qwen2.5:7b (for low-latency voice responses) |
 | Console Frontend | React 19 + Vite + TailwindCSS 4 |
 | Console Markdown | react-markdown + remark-gfm |
