@@ -68,6 +68,8 @@ export interface ToolStage extends BaseStage {
 export interface LlmStage extends BaseStage {
   type: 'llm';
   buildPrompt: (ctx: PipelineContext) => { system: string; user: string };
+  /** Override model for this stage (default: specialist model from ctx.model) */
+  model?: string;
   maxTokens?: number;
   temperature?: number;
   /** Stream output progressively via ctx.onStream. Use on the final user-facing stage. */

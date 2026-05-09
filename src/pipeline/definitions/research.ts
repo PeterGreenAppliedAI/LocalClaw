@@ -371,8 +371,9 @@ export const researchPipeline: PipelineDefinition = {
     {
       name: 'synthesize',
       type: 'llm',
+      model: 'qwen3.6:35b',
       temperature: 0.3,
-      maxTokens: 4096,
+      maxTokens: 8192,
       buildPrompt: (ctx) => {
         const type = ctx.params.artifactType as string;
         const guide = SECTION_GUIDES[type] ?? SECTION_GUIDES.memo;

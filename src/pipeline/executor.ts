@@ -51,7 +51,7 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
         { role: 'user', content: user },
       ];
       const chatParams = {
-        model: ctx.model,
+        model: stage.model ?? ctx.model,
         messages,
         options: {
           temperature: stage.temperature ?? 0.5,
