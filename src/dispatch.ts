@@ -651,6 +651,7 @@ async function runPipelineDispatch(
     sessionKey,
     workspacePath,
     senderId: params.sourceContext?.senderId,
+    config: { imageGen: config.imageGen },
   };
 
   // Context isolation: pipeline dispatches get fresh context (no parent history)

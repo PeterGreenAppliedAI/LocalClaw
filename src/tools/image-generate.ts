@@ -19,6 +19,7 @@ Returns a [FILE:path] token for the generated image.`,
       properties: {
         prompt: { type: 'string', description: 'Text description of the image to generate' },
         filename: { type: 'string', description: 'Output filename without extension' },
+        outputDir: { type: 'string', description: 'Subdirectory within workspace for output (default: images)' },
         reference_image_path: { type: 'string', description: 'Path to reference image for img2img (optional)' },
       },
       required: ['prompt'],
@@ -33,7 +34,7 @@ Returns a [FILE:path] token for the generated image.`,
       const refPath = params.reference_image_path as string | undefined;
       const workspace = ctx.workspacePath ?? 'data/workspaces/main';
 
-      const outDir = join(workspace, 'images');
+      const outDir = join(workspace, (params.outputDir as string) || 'images');
       mkdirSync(outDir, { recursive: true });
       const outPath = join(outDir, `${filename}.png`);
 

@@ -90,6 +90,7 @@ const SLIDE_COMPONENTS = `Slide components:
 - Metric: <section><h2>Label</h2><div class="metric">$4.2B</div><div class="metric-label">Description</div></section>
 - Two-column: <section><h2>Title</h2><div class="two-col"><div><h3>Left</h3><p>...</p></div><div><h3>Right</h3><p>...</p></div></div></section>
 - Chart: <section><h2>Title</h2><img src="/console/api/files/research/SLUG/chart.png" alt="desc"></section>
+- Image: <section><h2>Title</h2><img src="/console/api/files/research/SLUG/image.png" alt="desc" style="max-height:450px"></section>
 - Callout: <div class="callout">Key insight</div>
 - Source: <p class="source">Source: URL</p>`;
 
@@ -182,6 +183,8 @@ export const researchPipeline: PipelineDefinition = {
         ctx.params._allSearchResults = '';
         ctx.params._fetchedPages = [];
         ctx.params._chartPaths = [];
+        ctx.params._imagePaths = [];
+        ctx.params._imageGenEnabled = !!(ctx.toolContext.config as any)?.imageGen?.enabled;
       },
     },
 
@@ -397,11 +400,26 @@ export const researchPipeline: PipelineDefinition = {
             '      "dataPoints": "key data values from research"',
             '    }',
             '  ]',
+            ...(ctx.params._imageGenEnabled && type !== 'report' ? [
+            '  "imageData": [',
+            '    {',
+            '      "name": "image_name",',
+            '      "description": "Professional photo description for AI image generation",',
+            '      "slideTitle": "Which slide this image accompanies"',
+            '    }',
+            '  ]',
+            ] : []),
             '}',
             '',
             `Section guide for ${type}: ${guide}`,
             '',
             'Rules:',
+            ...(ctx.params._imageGenEnabled && type !== 'report' ? [
+              '- Include 2-3 entries in imageData for slides that would benefit from a hero image or visual',
+              '- Image descriptions should read like professional stock-photo requests: clean, modern, photographic style',
+              '- Avoid requesting text or words in images — Flux cannot render text reliably',
+              '- Focus on concepts, scenes, and abstract visuals that reinforce the slide content',
+            ] : []),
             ...(type === 'report' ? [
               '- Each section "bullets" should contain 2-4 FULL PARAGRAPHS (3-5 sentences each), not short bullets',
               '- Include specific data points, statistics, and direct quotes from the source material',
@@ -436,92 +454,96 @@ export const researchPipeline: PipelineDefinition = {
           }
         } catch { /* fall through */ }
         // Fallback: store raw text
-        ctx.params._synthesis = { thesis: '', slides: [], chartData: [] };
+        ctx.params._synthesis = { thesis: '', slides: [], chartData: [], imageData: [] };
         ctx.params._synthesisRaw = raw;
         return raw;
       },
     },
 
-    // --- STAGE 4: VISUALIZE — start code session ---
+    // --- STAGE 4: VISUALIZE — charts + images in parallel ---
     {
-      name: 'start_session',
-      type: 'tool',
-      tool: 'code_session',
-      when: (ctx) => {
-        const synthesis = ctx.params._synthesis as any;
-        return Array.isArray(synthesis?.chartData) && synthesis.chartData.length > 0;
-      },
-      resolveParams: () => ({
-        action: 'start',
-        session: 'research',
-        runtime: 'python',
-      }),
-    },
-
-    // --- Generate and run chart code ---
-    {
-      name: 'generate_charts',
-      type: 'llm',
-      temperature: 0.2,
-      maxTokens: 4096,
-      when: (ctx) => {
-        const synthesis = ctx.params._synthesis as any;
-        return Array.isArray(synthesis?.chartData) && synthesis.chartData.length > 0;
-      },
-      buildPrompt: (ctx) => {
-        const synthesis = ctx.params._synthesis as any;
-        const slug = ctx.params.slug as string;
-        const chartData = synthesis.chartData ?? [];
-
-        return {
-          system: [
-            'You are a data visualization expert. Write Python code to generate ALL the requested charts.',
-            'Output ONLY the Python code, no markdown fences, no explanation.',
-            '',
-            CHART_RULES.replace(/<SLUG>/g, slug),
-            '',
-            'Write ONE complete Python script that generates all charts.',
-            'Import all libraries at the top. Handle each chart in sequence.',
-          ].join('\n'),
-          user: `Charts to generate:\n${JSON.stringify(chartData, null, 2)}\n\nSlug: ${slug}`,
-        };
-      },
-    },
-
-    // --- Execute chart code ---
-    {
-      name: 'run_charts',
-      type: 'tool',
-      tool: 'code_session',
-      when: (ctx) => {
-        const synthesis = ctx.params._synthesis as any;
-        return Array.isArray(synthesis?.chartData) && synthesis.chartData.length > 0 && !!ctx.stageResults.generate_charts;
-      },
-      resolveParams: (ctx) => {
-        let code = ctx.stageResults.generate_charts as string;
-        // Strip markdown fences if present
-        code = code.replace(/^```(?:python)?\n?/m, '').replace(/\n?```$/m, '').trim();
-        return {
-          action: 'run',
-          session: 'research',
-          code,
-        };
-      },
-    },
-
-    // --- Collect chart paths ---
-    {
-      name: 'collect_charts',
+      name: 'generate_visuals',
       type: 'code',
-      execute: (ctx) => {
-        const slug = ctx.params.slug as string;
+      execute: async (ctx) => {
         const synthesis = ctx.params._synthesis as any;
-        const chartData = synthesis?.chartData ?? [];
-        const paths = chartData.map((c: any) =>
-          `/console/api/files/research/${slug}/${c.name}.png`
-        );
-        ctx.params._chartPaths = paths;
-        return paths;
+        const slug = ctx.params.slug as string;
+        const chartData: any[] = synthesis?.chartData ?? [];
+        const imageData: any[] = synthesis?.imageData ?? [];
+        const imageGenEnabled = !!ctx.params._imageGenEnabled;
+
+        // --- Chart workstream (sequential internally) ---
+        const chartWorkstream = async (): Promise<string[]> => {
+          if (chartData.length === 0) return [];
+
+          try {
+            // Start code session
+            await ctx.executor('code_session', { action: 'start', session: 'research', runtime: 'python' }, ctx.toolContext);
+
+            // Generate chart code via LLM
+            const response = await ctx.client.chat({
+              model: ctx.model,
+              messages: [
+                {
+                  role: 'system',
+                  content: [
+                    'You are a data visualization expert. Write Python code to generate ALL the requested charts.',
+                    'Output ONLY the Python code, no markdown fences, no explanation.',
+                    '', CHART_RULES.replace(/<SLUG>/g, slug), '',
+                    'Write ONE complete Python script that generates all charts.',
+                    'Import all libraries at the top. Handle each chart in sequence.',
+                  ].join('\n'),
+                },
+                { role: 'user', content: `Charts to generate:\n${JSON.stringify(chartData, null, 2)}\n\nSlug: ${slug}` },
+              ],
+              options: { temperature: 0.2, num_predict: 4096 },
+            });
+
+            let code = (response.message?.content ?? '').replace(/^```(?:python)?\n?/m, '').replace(/\n?```$/m, '').trim();
+
+            // Execute chart code
+            await ctx.executor('code_session', { action: 'run', session: 'research', code }, ctx.toolContext);
+
+            // Collect chart paths
+            return chartData.map((c: any) => `/console/api/files/research/${slug}/${c.name}.png`);
+          } catch (err) {
+            console.warn('[Research] Chart generation failed:', err instanceof Error ? err.message : err);
+            return [];
+          }
+        };
+
+        // --- Image workstream (all parallel) ---
+        const imageWorkstream = async (): Promise<string[]> => {
+          if (!imageGenEnabled || imageData.length === 0) return [];
+
+          const results = await Promise.allSettled(
+            imageData.slice(0, 3).map(async (img: any) => {
+              await ctx.executor('image_generate', {
+                prompt: img.description,
+                filename: img.name,
+                outputDir: `research/${slug}`,
+              }, ctx.toolContext);
+              return img.name;
+            }),
+          );
+
+          const paths: string[] = [];
+          for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            if (r.status === 'fulfilled') {
+              paths.push(`/console/api/files/research/${slug}/${imageData[i].name}.png`);
+            } else {
+              console.warn(`[Research] Image "${imageData[i].name}" failed:`, r.reason);
+            }
+          }
+          return paths;
+        };
+
+        // Run both workstreams in parallel
+        const [chartPaths, imagePaths] = await Promise.all([chartWorkstream(), imageWorkstream()]);
+
+        ctx.params._chartPaths = chartPaths;
+        ctx.params._imagePaths = imagePaths;
+        console.log(`[Research] Visuals complete: ${chartPaths.length} charts, ${imagePaths.length} images`);
       },
     },
 
@@ -543,6 +565,7 @@ export const researchPipeline: PipelineDefinition = {
               const slug = ctx.params.slug as string;
               const type = ctx.params.artifactType as string;
               const chartPaths = ctx.params._chartPaths as string[];
+              const imagePaths = ctx.params._imagePaths as string[] ?? [];
               return {
                 system: [
                   'You are a presentation designer. Generate a complete reveal.js HTML deck from the slide outline.',
@@ -551,18 +574,23 @@ export const researchPipeline: PipelineDefinition = {
                   SLIDE_COMPONENTS.replace(/SLUG/g, slug), '',
                   'Replace <!-- SLIDES --> with the actual <section> elements.',
                   'Replace TITLE in <title> with the actual title.',
-                  `Chart images use absolute paths: /console/api/files/research/${slug}/chart_name.png`,
+                  `Chart and image paths use absolute paths: /console/api/files/research/${slug}/name.png`,
                   'Max 4 bullets per slide, max 15 words per bullet.',
                   'Include source URLs on relevant slides using <p class="source">.',
-                  'Each chart MUST be its own standalone <section> — NEVER nest a <section> inside another <section>.',
-                  'Place chart slides AFTER the related content slide, not inside it.',
+                  'Each chart or image MUST be its own standalone <section> — NEVER nest a <section> inside another <section>.',
+                  'Place chart/image slides AFTER the related content slide, not inside it.',
                   'Never duplicate a heading — each <section> has exactly one <h2>.',
+                  ...(imagePaths.length > 0 ? [
+                    'Place generated images as full-width visuals on their own slides near related content.',
+                    'Use style="max-height:450px" on image tags.',
+                  ] : []),
                 ].join('\n'),
                 user: [
                   `Artifact type: ${type}`,
                   `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
                   `Slides: ${JSON.stringify(synthesis?.slides ?? [], null, 2)}`,
                   `Available charts: ${JSON.stringify(chartPaths)}`,
+                  ...(imagePaths.length > 0 ? [`Available images: ${JSON.stringify(imagePaths)}`] : []),
                 ].join('\n'),
               };
             },
