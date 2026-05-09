@@ -151,7 +151,7 @@ async function reviewImage(filepath: string): Promise<number> {
           content: 'Rate this image as a presentation slide background on a scale of 1-5. Criteria: clean professional appearance, no text or artifacts, suitable as a background behind white text, visually appealing. Respond with ONLY a JSON: {"score": N, "reason": "brief reason"} /no_think',
           images: [base64],
         }],
-        options: { temperature: 0.2, num_predict: 128 },
+        options: { temperature: 0.2, num_predict: 4096 },
         stream: false,
       }),
       signal: AbortSignal.timeout(120_000),
@@ -163,7 +163,11 @@ async function reviewImage(filepath: string): Promise<number> {
     }
 
     const data = await res.json() as any;
-    const content = data.message?.content ?? '';
+    let content = data.message?.content ?? '';
+    // Strip think tags if present
+    content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    // If still empty, try the thinking field from gateway
+    if (!content && data.message?.thinking) content = data.message.thinking;
     const match = content.match(/\{[\s\S]*\}/);
     if (!match) {
       console.error(`  [REVIEW FAIL] No JSON in response: ${content.slice(0, 100)}`);

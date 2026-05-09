@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PipelineDefinition } from '../types.js';
 
@@ -456,7 +456,6 @@ export const researchPipeline: PipelineDefinition = {
         const synthesis = ctx.params._synthesis as any;
         const slug = ctx.params.slug as string;
         const chartData: any[] = synthesis?.chartData ?? [];
-        const imageGenEnabled = !!ctx.params._imageGenEnabled;
 
         // --- Chart workstream (sequential internally) ---
         const chartWorkstream = async (): Promise<string[]> => {
@@ -495,7 +494,6 @@ export const researchPipeline: PipelineDefinition = {
             console.log(`[Research] Charts: execution result — ${runResult.slice(0, 200)}`);
 
             // Collect chart paths — only include files that actually exist
-            const { existsSync } = await import('node:fs');
             return chartData
               .map((c: any) => `/console/api/files/research/${slug}/${c.name}.png`)
               .filter(p => existsSync(join('data', 'workspaces', 'main', p.replace('/console/api/files/', ''))));
@@ -506,40 +504,58 @@ export const researchPipeline: PipelineDefinition = {
         };
 
         // --- Background image workstream (parallel, abstract slide backgrounds) ---
-        const BACKGROUND_PROMPTS = [
-          { name: 'bg_title', prompt: 'Dark professional abstract background, deep blue and black gradient with subtle geometric grid lines, clean modern corporate presentation style, no text, 16:9 aspect ratio' },
-          { name: 'bg_highlight', prompt: 'Dark abstract background with soft glowing cyan and purple light streaks on black, modern tech aesthetic, subtle particle effects, no text, 16:9 aspect ratio' },
-          { name: 'bg_closing', prompt: 'Dark professional background with deep navy blue gradient fading to black, subtle constellation dot pattern, clean minimalist corporate style, no text, 16:9 aspect ratio' },
-        ];
-
-        const imageWorkstream = async (): Promise<string[]> => {
-          if (!imageGenEnabled) return [];
-
-          const results = await Promise.allSettled(
-            BACKGROUND_PROMPTS.map(async (bg) => {
-              await ctx.executor('image_generate', {
-                prompt: bg.prompt,
-                filename: bg.name,
-                outputDir: `research/${slug}`,
-              }, ctx.toolContext);
-              return bg.name;
-            }),
-          );
-
-          const paths: string[] = [];
-          for (let i = 0; i < results.length; i++) {
-            const r = results[i];
-            if (r.status === 'fulfilled') {
-              paths.push(`/console/api/files/research/${slug}/${BACKGROUND_PROMPTS[i].name}.png`);
-            } else {
-              console.warn(`[Research] Background "${BACKGROUND_PROMPTS[i].name}" failed:`, r.reason);
+        // --- Background selection from pre-generated library ---
+        const selectBackgrounds = (): string[] => {
+          const CATALOG_PATH = join('data', 'assets', 'backgrounds', 'catalog.json');
+          const ASSETS_DIR = join('data', 'assets', 'backgrounds');
+          const slugDir = join('data', 'workspaces', 'main', 'research', slug);
+          try {
+            if (!existsSync(CATALOG_PATH)) {
+              console.log('[Research] No background catalog found, skipping backgrounds');
+              return [];
             }
+            const catalog = JSON.parse(readFileSync(CATALOG_PATH, 'utf-8')) as Array<{
+              filename: string; category: string; score: number;
+            }>;
+            // Prefer high-scoring backgrounds, pick 3 from different categories
+            const sorted = catalog.filter(e => e.score >= 4).sort(() => Math.random() - 0.5);
+            const picked: Array<{ filename: string; category: string }> = [];
+            const usedCategories = new Set<string>();
+            for (const bg of sorted) {
+              if (picked.length >= 3) break;
+              if (!usedCategories.has(bg.category)) {
+                picked.push(bg);
+                usedCategories.add(bg.category);
+              }
+            }
+            if (picked.length < 3) {
+              for (const bg of sorted) {
+                if (picked.length >= 3) break;
+                if (!picked.some(p => p.filename === bg.filename)) picked.push(bg);
+              }
+            }
+
+            // Copy selected backgrounds into the research slug directory for serving
+            mkdirSync(slugDir, { recursive: true });
+            const bgNames = ['bg_title', 'bg_highlight', 'bg_closing'];
+            const paths: string[] = [];
+            for (let i = 0; i < picked.length; i++) {
+              const src = join(ASSETS_DIR, picked[i].filename);
+              const dest = join(slugDir, `${bgNames[i]}.png`);
+              copyFileSync(src, dest);
+              paths.push(`/console/api/files/research/${slug}/${bgNames[i]}.png`);
+            }
+            console.log(`[Research] Selected ${paths.length} backgrounds from library (${catalog.length} available)`);
+            return paths;
+          } catch (err) {
+            console.warn('[Research] Background selection failed:', err instanceof Error ? err.message : err);
+            return [];
           }
-          return paths;
         };
 
-        // Run both workstreams in parallel
-        const [chartPaths, imagePaths] = await Promise.all([chartWorkstream(), imageWorkstream()]);
+        // Run chart generation + select backgrounds (instant from library)
+        const chartPaths = await chartWorkstream();
+        const imagePaths = selectBackgrounds();
 
         ctx.params._chartPaths = chartPaths;
         ctx.params._imagePaths = imagePaths;
