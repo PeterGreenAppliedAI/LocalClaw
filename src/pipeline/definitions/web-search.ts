@@ -84,9 +84,111 @@ export const webSearchPipeline: PipelineDefinition = {
             'You are a research assistant. Synthesize information from search results and fetched pages into a clear, comprehensive answer.',
             'Always cite sources with URLs. Be factual and concise.',
             'If the fetched pages add useful detail beyond the search snippets, incorporate it.',
+            'Provide ANALYSIS and INSIGHT, not just a summary of what each source said.',
+            'Structure your response with clear sections. Each point should add value beyond restating a headline.',
           ].join('\n'),
           user: `User asked: "${ctx.userMessage}"\n\n## Search Results\n${searchResults}\n\n## Fetched Pages\n${pageContent}`,
         };
+      },
+    },
+
+    // Quality review — check synthesis quality before delivery
+    {
+      name: 'quality_review',
+      type: 'code',
+      execute: async (ctx) => {
+        const synthesis = ctx.answer ?? '';
+        if (!synthesis || synthesis.length < 100) {
+          console.log('[WebSearch] Quality review: output too short, skipping');
+          return;
+        }
+
+        try {
+          const response = await ctx.client.chat({
+            model: ctx.routerModel ?? ctx.model,
+            messages: [{
+              role: 'user',
+              content: `Review this search synthesis for quality. Be brief.
+
+${synthesis.slice(0, 4000)}
+
+Check:
+1. Does it provide analysis or insight beyond restating search snippets/headlines?
+2. Are sources cited with URLs?
+3. Is it well-structured with clear sections (not a raw dump of results)?
+4. Does it comprehensively answer the original question: "${ctx.userMessage}"?
+
+Respond with JSON: {"pass": true} if adequate, or {"pass": false, "fix": "brief instruction to improve"}`,
+            }],
+            options: { temperature: 0.2, num_predict: 256 },
+          });
+
+          const raw = response.message?.content ?? '';
+          const match = raw.match(/\{[\s\S]*\}/);
+          if (!match) { console.log('[WebSearch] Quality review: no JSON, proceeding'); return; }
+
+          const result = JSON.parse(match[0]);
+          if (result.pass) {
+            console.log('[WebSearch] Quality review: PASS');
+          } else {
+            console.log(`[WebSearch] Quality review: FAIL — ${result.fix}`);
+            ctx.params._revisionNeeded = true;
+            ctx.params._revisionInstructions = result.fix;
+          }
+        } catch (err) {
+          console.warn('[WebSearch] Quality review failed:', err instanceof Error ? err.message : err);
+        }
+      },
+    },
+
+    // Revision pass (conditional — only if quality review failed)
+    {
+      name: 'revision_pass',
+      type: 'code',
+      when: (ctx) => !!(ctx.params._revisionNeeded),
+      execute: async (ctx) => {
+        const synthesis = ctx.answer ?? '';
+        const instructions = ctx.params._revisionInstructions as string;
+        const searchResults = ctx.stageResults.search as string;
+        const pages = (ctx.params._pages as string[] | undefined) ?? [];
+        const pageContent = pages.length > 0
+          ? pages.join('\n\n---\n\n')
+          : '';
+
+        try {
+          console.log('[WebSearch] Running revision pass...');
+          const response = await ctx.client.chat({
+            model: ctx.model,
+            messages: [{
+              role: 'user',
+              content: [
+                `Revise this search synthesis. ${instructions}`,
+                '',
+                'Provide ANALYSIS and INSIGHT, not just summaries. Cite sources with URLs. Structure with clear sections.',
+                '',
+                `Original question: "${ctx.userMessage}"`,
+                '',
+                '## Current Synthesis',
+                synthesis,
+                '',
+                '## Source Material',
+                searchResults.slice(0, 2000),
+                pageContent ? `\n## Fetched Pages\n${pageContent.slice(0, 4000)}` : '',
+              ].join('\n'),
+            }],
+            options: { temperature: 0.4, num_predict: 2048 },
+          });
+
+          const revised = (response.message?.content ?? '').trim();
+          if (revised.length > synthesis.length * 0.5) {
+            ctx.answer = revised;
+            console.log('[WebSearch] Revision applied');
+          } else {
+            console.log('[WebSearch] Revision too short, keeping original');
+          }
+        } catch (err) {
+          console.warn('[WebSearch] Revision failed:', err instanceof Error ? err.message : err);
+        }
       },
     },
   ],

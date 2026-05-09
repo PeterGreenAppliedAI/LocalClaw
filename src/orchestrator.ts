@@ -200,12 +200,16 @@ export class Orchestrator {
         onTrigger: async (job) => {
           // No sessionStore — cron runs are stateless so each trigger
           // starts fresh without accumulating history from previous runs
+          // If category is "cron" (generic default), let the router classify the message
+          // to find the right pipeline. Explicit categories (web_search, research, etc.) are respected.
+          const effectiveCategory = job.category === 'cron' ? undefined : job.category;
+
           const result = await dispatchMessage({
             client: this.client,
             registry: this.toolRegistry,
             config: this.config,
             message: job.message,
-            overrideCategory: job.category,
+            overrideCategory: effectiveCategory,
             cronMode: true,
             pipelineRegistry: this.pipelineRegistry,
             executionMetrics: this.executionMetrics,
