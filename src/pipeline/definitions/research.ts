@@ -503,8 +503,11 @@ export const researchPipeline: PipelineDefinition = {
             // Execute chart code
             await ctx.executor('code_session', { action: 'run', session: 'research', code }, ctx.toolContext);
 
-            // Collect chart paths
-            return chartData.map((c: any) => `/console/api/files/research/${slug}/${c.name}.png`);
+            // Collect chart paths — only include files that actually exist
+            const { existsSync } = await import('node:fs');
+            return chartData
+              .map((c: any) => `/console/api/files/research/${slug}/${c.name}.png`)
+              .filter(p => existsSync(join('data', 'workspaces', 'main', p.replace('/console/api/files/', ''))));
           } catch (err) {
             console.warn('[Research] Chart generation failed:', err instanceof Error ? err.message : err);
             return [];
@@ -581,16 +584,17 @@ export const researchPipeline: PipelineDefinition = {
                   'Place chart/image slides AFTER the related content slide, not inside it.',
                   'Never duplicate a heading — each <section> has exactly one <h2>.',
                   ...(imagePaths.length > 0 ? [
-                    'Place generated images as full-width visuals on their own slides near related content.',
-                    'Use style="max-height:450px" on image tags.',
+                    'IMPORTANT: You MUST include ALL available images in the deck. Each image gets its own <section> slide.',
+                    'Place image slides near the content slide they relate to.',
+                    'Use: <section><h2>Title</h2><img src="IMAGE_PATH" alt="desc" style="max-height:450px"></section>',
                   ] : []),
                 ].join('\n'),
                 user: [
                   `Artifact type: ${type}`,
                   `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
                   `Slides: ${JSON.stringify(synthesis?.slides ?? [], null, 2)}`,
-                  `Available charts: ${JSON.stringify(chartPaths)}`,
-                  ...(imagePaths.length > 0 ? [`Available images: ${JSON.stringify(imagePaths)}`] : []),
+                  ...(chartPaths.length > 0 ? [`Available charts (MUST include in deck): ${JSON.stringify(chartPaths)}`] : []),
+                  ...(imagePaths.length > 0 ? [`Available images (MUST include in deck): ${JSON.stringify(imagePaths)}`] : []),
                 ].join('\n'),
               };
             },
