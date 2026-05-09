@@ -1,4 +1,14 @@
+import { appendFileSync, mkdirSync } from 'node:fs';
 import type { PipelineDefinition } from '../types.js';
+
+const QUALITY_LOG = 'data/quality/web-search.jsonl';
+
+function logQualityReview(entry: Record<string, unknown>): void {
+  try {
+    mkdirSync('data/quality', { recursive: true });
+    appendFileSync(QUALITY_LOG, JSON.stringify({ timestamp: new Date().toISOString(), ...entry }) + '\n');
+  } catch { /* non-critical */ }
+}
 
 /**
  * Web search pipeline: extract(query, count) → tool(web_search) → code(pick top URLs)
@@ -130,10 +140,24 @@ Respond with JSON: {"pass": true} if adequate, or {"pass": false, "fix": "brief 
           const result = JSON.parse(match[0]);
           if (result.pass) {
             console.log('[WebSearch] Quality review: PASS');
+            logQualityReview({
+              query: ctx.userMessage,
+              pass: true,
+              synthesisLength: synthesis.length,
+              model: ctx.model,
+            });
           } else {
             console.log(`[WebSearch] Quality review: FAIL — ${result.fix}`);
             ctx.params._revisionNeeded = true;
             ctx.params._revisionInstructions = result.fix;
+            ctx.params._originalSynthesis = synthesis;
+            logQualityReview({
+              query: ctx.userMessage,
+              pass: false,
+              fix: result.fix,
+              synthesisLength: synthesis.length,
+              model: ctx.model,
+            });
           }
         } catch (err) {
           console.warn('[WebSearch] Quality review failed:', err instanceof Error ? err.message : err);
@@ -183,8 +207,22 @@ Respond with JSON: {"pass": true} if adequate, or {"pass": false, "fix": "brief 
           if (revised.length > synthesis.length * 0.5) {
             ctx.answer = revised;
             console.log('[WebSearch] Revision applied');
+            logQualityReview({
+              query: ctx.userMessage,
+              event: 'revision_applied',
+              originalLength: (ctx.params._originalSynthesis as string)?.length ?? synthesis.length,
+              revisedLength: revised.length,
+              instructions,
+            });
           } else {
             console.log('[WebSearch] Revision too short, keeping original');
+            logQualityReview({
+              query: ctx.userMessage,
+              event: 'revision_rejected',
+              reason: 'too_short',
+              originalLength: synthesis.length,
+              revisedLength: revised.length,
+            });
           }
         } catch (err) {
           console.warn('[WebSearch] Revision failed:', err instanceof Error ? err.message : err);
