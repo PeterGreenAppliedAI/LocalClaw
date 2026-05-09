@@ -695,8 +695,20 @@ async function runPipelineDispatch(
     ? buildWorkspaceContext(workspacePath, { category: wsCategory, channel: params.sourceContext?.channel })
     : getCachedWorkspaceContext(params.sessionKey ?? 'default', workspacePath, wsCategory, params.sourceContext?.channel);
 
+  // Resolve anaphoric references: if the message is short and the session has a topic,
+  // prepend the topic so the pipeline knows what "it", "one", "that" refers to.
+  // This prevents isolated pipelines from losing context on follow-up requests.
+  let pipelineMessage = message;
+  if (isolateContext && message.length < 150) {
+    const sessionState = params.sessionStore?.loadState(agentId, sessionKey ?? 'default');
+    if (sessionState?.currentTopic) {
+      pipelineMessage = `[Context: ${sessionState.currentTopic}]\n${message}`;
+      console.log(`[Dispatch] Pipeline context injection: topic="${sessionState.currentTopic.slice(0, 60)}"`);
+    }
+  }
+
   const ctx: PipelineContext = {
-    userMessage: message,
+    userMessage: pipelineMessage,
     params: {},
     stageResults: {},
     steps: [],
