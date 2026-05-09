@@ -23,7 +23,7 @@ Instead of giving one model all the tools, LocalClaw splits the work:
 4. **Respond** — Results flow back through the channel adapter
 
 ```
-User → Router (phi4-mini) → Category
+User → Router (phi4:14b) → Category
   → Pipeline (deterministic stages)    # task, memory, cron, web_search, exec, message, website, research
   → ReAct loop (model decides)         # multi, config, chat
 ```
@@ -87,10 +87,11 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 - [Ollama](https://ollama.ai/) running locally (or on your network)
 - Required models pulled:
   ```bash
-  ollama pull phi4-mini
-  ollama pull qwen3-coder:30b
-  ollama pull qwen3-embedding:8b
-  ollama pull nemotron-3-nano:30b   # optional — for reasoning model
+  ollama pull phi4:14b              # router (classification)
+  ollama pull qwen3-coder:30b       # specialist (tool calling)
+  ollama pull qwen3.6:35b           # briefing (synthesis/reasoning)
+  ollama pull qwen3-embedding:8b    # vector embeddings
+  ollama pull nemotron-3-nano:30b   # optional — reasoning model
   ```
 - Python 3 with data science packages (for research/charting):
   ```bash
@@ -191,7 +192,7 @@ localclaw/
 ### Router Classification (3-tier fallback)
 
 1. **Pre-model overrides** — High-confidence keyword patterns for new categories (e.g., research)
-2. **Model** — phi4-mini classifies into categories (~50ms)
+2. **Model** — phi4:14b classifies into categories (~50ms)
 3. **Keywords** — Pattern matching when model fails or times out
 4. **Default** — Falls back to `chat`
 
@@ -668,6 +669,22 @@ LocalClaw assigns different models to different roles based on their strengths. 
 | Voice Chat | qwen2.5:7b | Low-latency responses for voice interactions |
 
 **Design principle:** Code handles deterministic work (time reasoning, urgency scoring, conflict detection, auto-actions). Models handle what requires judgment (synthesis, connection-finding, natural language). Each model is tested pipeline-by-pipeline before being promoted. Models under evaluation (gemma4:26b for tool calling, qwen3.6 for broader specialist use) are phased in one role at a time to isolate regressions.
+
+### Router Training Data
+
+The router currently uses phi4:14b with few-shot prompting for intent classification. The goal is to eventually fine-tune a smaller model (phi4-mini or equivalent) specifically for routing, reducing the router's size and latency while improving accuracy for the user's specific request patterns.
+
+**How training data is collected:**
+
+Every `!reset` (session clear) triggers `extractTrainingPairs()` which scans the transcript for user messages paired with their classified category. These are appended to `data/training/router-pairs.jsonl` as labeled examples:
+
+```jsonl
+{"message": "what's on my calendar tomorrow", "category": "personal"}
+{"message": "search for AI news this week", "category": "research"}
+{"message": "generate an image of a sunset", "category": "image"}
+```
+
+Synthetic and system messages are filtered out. Over time this builds a dataset that reflects the actual owner's phrasing and intent patterns, not generic benchmarks. When the dataset is large enough, it can be used to fine-tune a smaller, faster model that routes more accurately than few-shot prompting on a general-purpose model.
 
 **Temporal intelligence:** Task urgency and calendar event labeling are computed in code (`src/temporal/urgency.ts`), not by the model. Tasks get urgency tiers (critical/high/medium/low/dormant) and calendar events get relative day labels ([TODAY], [TOMORROW], [in N days]). Models receive pre-labeled data with instructions that labels are authoritative. This prevents models from hallucinating urgency or placing events on wrong days.
 
