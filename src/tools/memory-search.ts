@@ -4,6 +4,7 @@ import { searchMarkdownFiles } from '../memory/search.js';
 import type { EmbeddingStore } from '../memory/embeddings.js';
 import { generateEmbedding } from '../memory/embeddings.js';
 import type { FactStore } from '../memory/fact-store.js';
+import type { GraphMemoryStore } from '../memory/graph-store.js';
 
 const CATEGORY_LABELS: Record<string, string> = {
   stable: 'STABLE',
@@ -17,6 +18,7 @@ export function createMemorySearchTool(
   ollamaClient?: OllamaClient,
   embeddingStore?: EmbeddingStore,
   factStore?: FactStore,
+  graphMemory?: GraphMemoryStore,
 ): LocalClawTool {
 
   return {
@@ -60,21 +62,34 @@ export function createMemorySearchTool(
         }
       }
 
-      // Tier 1: Search structured facts via FactStore
+      // Graph memory (primary): semantic search with multi-signal scoring
+      if (graphMemory && ctx.senderId) {
+        try {
+          const results = await graphMemory.search(query, ctx.senderId, maxResults);
+          if (results.length > 0) {
+            const lines = results.map((r, i) =>
+              `${i + 1}. [${CATEGORY_LABELS[r.category] ?? r.category}] ${r.text} (imp: ${r.importance}, score: ${r.score.toFixed(2)})`
+            );
+            return `Found ${results.length} memories:\n${lines.join('\n')}`;
+          }
+          return 'No memories found.';
+        } catch (err) {
+          console.warn('[Memory] Graph search failed, falling back:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      // Flat FactStore fallback
       if (factStore) {
         const allResults = [];
 
-        // Per-user facts first
         if (ctx.senderId) {
           const userFacts = factStore.searchFacts(query, ctx.senderId, maxResults);
           allResults.push(...userFacts);
         }
 
-        // Shared facts
         const sharedFacts = factStore.searchFacts(query, undefined, maxResults);
         allResults.push(...sharedFacts);
 
-        // Deduplicate by hash
         const seen = new Set<string>();
         const unique = allResults.filter(f => {
           if (seen.has(f.hash)) return false;
@@ -88,17 +103,12 @@ export function createMemorySearchTool(
           return `Found ${unique.length} memories:\n${lines.join('\n')}`;
         }
 
-        // FactStore exists but has zero facts for this user — report empty
-        // Do NOT fall through to workspace markdown search (that produces garbage)
         return 'No memories found.';
       }
 
-      // Tier 2: Only when FactStore is not available — legacy keyword search across workspace markdown files
+      // Legacy: workspace markdown search
       const results = searchMarkdownFiles(workspacePath, query, maxResults);
-
-      if (results.length === 0) {
-        return 'No memories found.';
-      }
+      if (results.length === 0) return 'No memories found.';
 
       return results
         .map((r, i) => `${i + 1}. [${r.file}] ${r.section} (score: ${r.score})\n   ${r.content}`)

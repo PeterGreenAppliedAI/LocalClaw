@@ -1,9 +1,11 @@
 import type { LocalClawTool } from './types.js';
 import type { FactStore } from '../memory/fact-store.js';
+import type { GraphMemoryStore } from '../memory/graph-store.js';
 
 export function createMemoryForgetTool(
   workspacePath: string,
   factStore?: FactStore,
+  graphMemory?: GraphMemoryStore,
 ): LocalClawTool {
   return {
     name: 'memory_forget',
@@ -20,28 +22,37 @@ export function createMemoryForgetTool(
     category: 'memory',
 
     async execute(params: Record<string, unknown>, ctx: import('./types.js').ToolContext): Promise<string> {
-      if (!factStore) return 'Memory system unavailable.';
-
       const query = params.query as string;
       if (!query || query.length < 3) return 'Query too short — provide at least 3 characters to match.';
 
-      // Remove from user-specific facts
       let removed = 0;
-      if (ctx.senderId) {
-        removed += factStore.removeFact(query, ctx.senderId);
+
+      // Graph memory (primary)
+      if (graphMemory && ctx.senderId) {
+        try {
+          removed += await graphMemory.removeFact(query, ctx.senderId);
+        } catch (err) {
+          console.warn('[memory_forget] Graph remove failed:', err instanceof Error ? err.message : err);
+        }
       }
-      // Also check shared facts
-      removed += factStore.removeFact(query);
+
+      // Flat store (fallback + keep in sync)
+      if (factStore) {
+        if (ctx.senderId) {
+          removed += factStore.removeFact(query, ctx.senderId);
+        }
+        removed += factStore.removeFact(query);
+
+        // Record removal to prevent heartbeat re-extraction
+        if (ctx.senderId) {
+          factStore.recordRemoval(query, 'user_denied', ctx.senderId);
+        }
+        factStore.recordRemoval(query, 'user_denied');
+      }
 
       if (removed === 0) {
         return `No facts found matching "${query}". Try a different search term.`;
       }
-
-      // Record removal to prevent heartbeat re-extraction
-      if (ctx.senderId) {
-        factStore.recordRemoval(query, 'user_denied', ctx.senderId);
-      }
-      factStore.recordRemoval(query, 'user_denied');
 
       return `Removed ${removed} fact(s) matching "${query}" from memory.`;
     },

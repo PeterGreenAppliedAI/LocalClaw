@@ -264,6 +264,7 @@ export class Orchestrator {
       taskStore,
       heartbeatConfig: this.config.heartbeat,
       factStore: this.factStore,
+      graphMemory: this.graphMemory,
     });
     this.embeddingStore = embeddingStore;
 

@@ -50,6 +50,7 @@ export interface RegisterToolsOptions {
   taskStore?: TaskStore;
   heartbeatConfig?: import('../config/types.js').HeartbeatConfig;
   factStore?: import('../memory/fact-store.js').FactStore;
+  graphMemory?: import('../memory/graph-store.js').GraphMemoryStore;
 }
 
 export interface RegisterToolsResult {
@@ -76,10 +77,10 @@ export async function registerAllTools(
   // Create a single shared EmbeddingStore so all memory tools share one DB connection
   const embeddingStore = new EmbeddingStore();
 
-  registry.register(createMemorySearchTool(workspace, options?.ollamaClient, embeddingStore, options?.factStore));
+  registry.register(createMemorySearchTool(workspace, options?.ollamaClient, embeddingStore, options?.factStore, options?.graphMemory));
   registry.register(createMemoryGetTool(workspace));
-  registry.register(createMemorySaveTool(workspace, options?.factStore));
-  registry.register(createMemoryForgetTool(workspace, options?.factStore));
+  registry.register(createMemorySaveTool(workspace, options?.factStore, options?.graphMemory));
+  registry.register(createMemoryForgetTool(workspace, options?.factStore, options?.graphMemory));
   registry.register(createMemoryCleanupTool(
     options?.factStore,
     options?.ollamaClient,
