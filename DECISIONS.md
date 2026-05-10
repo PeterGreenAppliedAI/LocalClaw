@@ -133,7 +133,13 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 
 **Infrastructure:** FalkorDB runs in Docker on the Mac Mini alongside LocalClaw. ~20MB for the graph at current scale.
 
-**Status:** GraphMemoryStore built and tested. Integration into LocalClaw dispatch/orchestrator pending.
+**Status:** Fully integrated. Auto-injection, memory tools, and migration complete.
+
+**Early results (May 10, 2026):**
+- Cookie preference test: bot knew "soft chocolate chip cookies with precise measurements" without being asked
+- FalkorDB discussion: bot held multi-turn technical conversation, correctly pulled user's ML engineer role and DGX Spark setup from graph memory for context
+- Migration dedup: caught 2 paraphrased duplicates during 23-fact migration that flat store had missed
+- Narrated tool call detection: added to capability gap detector after chat faked a `[brave_search()]` call
 
 ---
 
