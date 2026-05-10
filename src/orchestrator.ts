@@ -365,6 +365,28 @@ export class Orchestrator {
         console.log(`[Heartbeat] Promoted ${promoted} learnings from error patterns`);
       }
 
+      // Curate skills — archive stale, flag duplicates
+      try {
+        const { SkillStore } = await import('./skills/store.js');
+        const skillStore = new SkillStore(workspacePath);
+        const allSkills = skillStore.listAll();
+        const now = Date.now();
+        const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+        let archived = 0;
+
+        for (const skill of allSkills) {
+          const lastUsedMs = new Date(skill.lastUsed || skill.created).getTime();
+          // Archive skills unused for 30+ days with low success
+          if (now - lastUsedMs > THIRTY_DAYS && skill.successCount < 2) {
+            skillStore.archive(skill.slug);
+            archived++;
+          }
+        }
+        if (archived > 0) console.log(`[Heartbeat] Archived ${archived} stale skill(s)`);
+      } catch (err) {
+        console.warn('[Heartbeat] Skill curation failed:', err instanceof Error ? err.message : err);
+      }
+
       // Clean up old generated media files (PDFs, screenshots, research decks)
       const cleaned = this.cleanupOldMedia();
       if (cleaned > 0) {
@@ -616,6 +638,45 @@ export class Orchestrator {
               taskSection += `\n${parts.join('\n')}`;
             }
           }
+        }
+      }
+
+      // Update user behavioral model from recent interactions
+      if (this.graphMemory && senderId) {
+        try {
+          const recentTurns = await this.graphMemory.searchTurns('', senderId, 20);
+          if (recentTurns.length >= 5) {
+            const turnSummary = recentTurns
+              .slice(0, 10)
+              .map(t => `${t.role}: ${t.text.slice(0, 100)}`)
+              .join('\n');
+
+            const modelResponse = await this.client.chat({
+              model: 'qwen3.6:35b',
+              messages: [{
+                role: 'user',
+                content: `Analyze these recent interactions and describe the user's behavioral patterns. Return JSON:
+{"communicationStyle":"brief/detailed/technical/casual","decisionPattern":"data-driven/intuitive/collaborative","topicInterests":"comma-separated","frustrationTriggers":"what annoys them"}
+Recent interactions:\n${turnSummary}\nReturn ONLY JSON. /no_think`,
+              }],
+              options: { temperature: 0.3, num_predict: 512 },
+            });
+
+            const modelRaw = (modelResponse.message?.content ?? '').trim();
+            const modelMatch = modelRaw.match(/\{[\s\S]*\}/);
+            if (modelMatch) {
+              const parsed = JSON.parse(modelMatch[0]);
+              const updates: Record<string, string> = {};
+              for (const [k, v] of Object.entries(parsed)) {
+                if (typeof v === 'string' && v.length > 0) updates[k] = v;
+              }
+              if (Object.keys(updates).length > 0) {
+                await this.graphMemory.updateUserModel(senderId, updates);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[Heartbeat] User model update failed:', err instanceof Error ? err.message : err);
         }
       }
 

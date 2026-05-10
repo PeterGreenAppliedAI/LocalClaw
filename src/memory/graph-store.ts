@@ -330,6 +330,64 @@ export class GraphMemoryStore {
     return ((result.data ?? [])[0] as any)?.cnt ?? 0;
   }
 
+  // ========== CONVERSATION TURNS — Cross-session search ==========
+
+  /**
+   * Store a conversation turn in the graph for cross-session search.
+   */
+  async addTurn(text: string, role: 'user' | 'assistant', senderId: string, sessionKey: string): Promise<void> {
+    if (!this.graph) await this.connect();
+    if (!text || text.length < 10) return;
+
+    // Truncate long turns for storage efficiency
+    const stored = text.length > 500 ? text.slice(0, 500) : text;
+
+    try {
+      await this.graph!.query(
+        `CREATE (:Turn {
+          text: $text, role: $role, senderId: $senderId,
+          sessionKey: $sessionKey, createdAt: $now
+        })`,
+        { params: { text: stored, role, senderId, sessionKey, now: new Date().toISOString() } }
+      );
+    } catch (err) {
+      console.warn('[GraphMemory] Failed to store turn:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  /**
+   * Search across all conversation turns via keyword matching.
+   */
+  async searchTurns(query: string, senderId: string, maxResults = 10): Promise<Array<{
+    text: string; role: string; sessionKey: string; createdAt: string;
+  }>> {
+    if (!this.graph) await this.connect();
+
+    const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    if (words.length === 0) return [];
+
+    // Match turns containing all significant query words
+    const conditions = words.map((_, i) => `toLower(t.text) CONTAINS $w${i}`).join(' AND ');
+    const wordParams: Record<string, string> = { senderId };
+    words.forEach((w, i) => { wordParams[`w${i}`] = w; });
+
+    const result = await this.graph!.query(
+      `MATCH (t:Turn {senderId: $senderId})
+       WHERE ${conditions}
+       RETURN t.text, t.role, t.sessionKey, t.createdAt
+       ORDER BY t.createdAt DESC
+       LIMIT ${maxResults}`,
+      { params: wordParams }
+    );
+
+    return (result.data ?? []).map((row: any) => ({
+      text: row['t.text'],
+      role: row['t.role'],
+      sessionKey: row['t.sessionKey'],
+      createdAt: row['t.createdAt'] ?? '',
+    }));
+  }
+
   // ========== SUPERSEDES — Temporal fact evolution ==========
 
   /**
@@ -626,6 +684,69 @@ export class GraphMemoryStore {
     }
 
     return clusters;
+  }
+
+  // ========== USER BEHAVIORAL MODEL ==========
+
+  /**
+   * Get or create the user's behavioral model.
+   */
+  async getUserModel(senderId: string): Promise<Record<string, string> | null> {
+    if (!this.graph) await this.connect();
+
+    const result = await this.graph!.query(
+      `MATCH (m:UserModel {senderId: $senderId}) RETURN m`,
+      { params: { senderId } }
+    );
+
+    if ((result.data ?? []).length === 0) return null;
+    const row = (result.data![0] as any).m;
+    return row?.properties ?? row ?? null;
+  }
+
+  /**
+   * Update the user's behavioral model with new observations.
+   */
+  async updateUserModel(senderId: string, updates: Record<string, string>): Promise<void> {
+    if (!this.graph) await this.connect();
+
+    // Check if model exists
+    const existing = await this.getUserModel(senderId);
+
+    if (!existing) {
+      // Create new model
+      const props = Object.entries(updates).map(([k, v]) => `${k}: $${k}`).join(', ');
+      const params: Record<string, string> = { senderId, now: new Date().toISOString(), ...updates };
+      await this.graph!.query(
+        `CREATE (:UserModel {senderId: $senderId, updatedAt: $now, ${props}})`,
+        { params }
+      );
+      console.log(`[GraphMemory] Created user model for ${senderId}`);
+    } else {
+      // Update existing model
+      const setClause = Object.keys(updates).map(k => `m.${k} = $${k}`).join(', ');
+      const params: Record<string, string> = { senderId, now: new Date().toISOString(), ...updates };
+      await this.graph!.query(
+        `MATCH (m:UserModel {senderId: $senderId}) SET ${setClause}, m.updatedAt = $now`,
+        { params }
+      );
+      console.log(`[GraphMemory] Updated user model for ${senderId}`);
+    }
+  }
+
+  /**
+   * Get a formatted user model string for injection into specialist context.
+   */
+  async getUserModelSummary(senderId: string): Promise<string | null> {
+    const model = await this.getUserModel(senderId);
+    if (!model) return null;
+
+    const skip = new Set(['senderId', 'updatedAt']);
+    const lines = Object.entries(model)
+      .filter(([k]) => !skip.has(k) && model[k])
+      .map(([k, v]) => `- ${k.replace(/([A-Z])/g, ' $1').toLowerCase().trim()}: ${v}`);
+
+    return lines.length > 0 ? lines.join('\n') : null;
   }
 
   async close(): Promise<void> {

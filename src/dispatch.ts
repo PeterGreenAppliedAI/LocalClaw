@@ -340,11 +340,26 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
           .map(f => `- ${f.text}`);
       }
 
+      // Layer 3: Behavioral model (how the user communicates and decides)
+      let modelSummary: string | null = null;
+      if (params.graphMemory) {
+        try {
+          modelSummary = await params.graphMemory.getUserModelSummary(senderId);
+        } catch { /* best-effort */ }
+      }
+
       const allPriming = [...new Set([...stableFacts, ...contextFacts])];
+      const primingParts: string[] = [];
       if (allPriming.length > 0) {
-        userPriming = `## Background context about this user (do NOT reference unless directly relevant)\n${allPriming.join('\n')}`;
-        if (contextFacts.length > 0) {
-          console.log(`[Dispatch] Memory injection: ${stableFacts.length} stable + ${contextFacts.length} contextual facts (graph)`);
+        primingParts.push(`## Background context about this user (do NOT reference unless directly relevant)\n${allPriming.join('\n')}`);
+      }
+      if (modelSummary) {
+        primingParts.push(`## User preferences (adapt your style accordingly)\n${modelSummary}`);
+      }
+      if (primingParts.length > 0) {
+        userPriming = primingParts.join('\n\n');
+        if (contextFacts.length > 0 || modelSummary) {
+          console.log(`[Dispatch] Memory injection: ${stableFacts.length} stable + ${contextFacts.length} contextual${modelSummary ? ' + model' : ''} (graph)`);
         }
       }
     } catch {
@@ -479,6 +494,13 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     durationMs: Date.now() - dispatchStart,
     toolCalls: result.steps?.map(s => s.tool).filter(Boolean) as string[] | undefined,
   });
+
+  // Store conversation turns in graph for cross-session search
+  if (params.graphMemory && senderId && !params.cronMode && !params._reRouted) {
+    const sk = params.sessionKey ?? 'default';
+    params.graphMemory.addTurn(message, 'user', senderId, sk).catch(() => {});
+    params.graphMemory.addTurn(result.answer.slice(0, 500), 'assistant', senderId, sk).catch(() => {});
+  }
 
   // 5. Update session state
   if (sessionStore) {

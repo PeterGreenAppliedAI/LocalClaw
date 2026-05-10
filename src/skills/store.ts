@@ -5,7 +5,7 @@
  * Adapted from Hermes Agent's skill system with progressive disclosure.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 export interface Skill {
@@ -202,5 +202,53 @@ export class SkillStore {
       this.save(skill);
       console.log(`[Skills] Added note to "${skill.name}": ${note}`);
     }
+  }
+
+  /** Load all skills fully (for curation). */
+  listAll(): Skill[] {
+    if (!existsSync(this.skillsDir)) return [];
+    const files = readdirSync(this.skillsDir).filter(f => f.endsWith('.md'));
+    const skills: Skill[] = [];
+    for (const file of files) {
+      try {
+        const content = readFileSync(join(this.skillsDir, file), 'utf-8');
+        const slug = file.replace(/\.md$/, '');
+        const skill = parseSkill(content, slug);
+        if (skill) skills.push(skill);
+      } catch { /* skip */ }
+    }
+    return skills;
+  }
+
+  /** Archive (delete) a skill. */
+  archive(slug: string): boolean {
+    const path = join(this.skillsDir, `${slug}.md`);
+    if (!existsSync(path)) return false;
+    unlinkSync(path);
+    console.log(`[Skills] Archived: ${slug}`);
+    return true;
+  }
+
+  /** Merge two skills into one, keeping the better metadata. */
+  merge(slug1: string, slug2: string, mergedName?: string): Skill | null {
+    const s1 = this.get(slug1);
+    const s2 = this.get(slug2);
+    if (!s1 || !s2) return null;
+
+    const merged: Skill = {
+      name: mergedName ?? s1.name,
+      slug: s1.slug,
+      description: s1.description.length > s2.description.length ? s1.description : s2.description,
+      created: s1.created < s2.created ? s1.created : s2.created,
+      lastUsed: s1.lastUsed > s2.lastUsed ? s1.lastUsed : s2.lastUsed,
+      successCount: s1.successCount + s2.successCount,
+      steps: s1.steps.length >= s2.steps.length ? s1.steps : s2.steps,
+      notes: [...new Set([...s1.notes, ...s2.notes])],
+    };
+
+    this.save(merged);
+    if (slug2 !== slug1) this.archive(slug2);
+    console.log(`[Skills] Merged "${s1.name}" + "${s2.name}" → "${merged.name}"`);
+    return merged;
   }
 }

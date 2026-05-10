@@ -179,5 +179,16 @@ export async function registerAllTools(
   registry.register(createWorkspaceReadTool());
   registry.register(createWorkspaceWriteTool());
 
+  // Load plugins from plugins/ and ~/.localclaw/plugins/
+  try {
+    const { loadPlugins } = await import('../plugins/loader.js');
+    const pluginCount = await loadPlugins(registry);
+    if (pluginCount > 0) {
+      console.log(`[Tools] Loaded ${pluginCount} plugin tool(s)`);
+    }
+  } catch (err) {
+    console.warn('[Tools] Plugin loading failed:', err instanceof Error ? err.message : err);
+  }
+
   return { embeddingStore };
 }

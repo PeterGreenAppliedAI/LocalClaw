@@ -31,7 +31,7 @@ export function createMemorySearchTool(
       properties: {
         query: { type: 'string', description: 'What to search for in memories' },
         maxResults: { type: 'number', description: 'Maximum number of results to return (default 5)' },
-        source: { type: 'string', description: 'Filter: "memory" (structured facts + markdown) or "knowledge" (imported documents)', enum: ['memory', 'knowledge'] },
+        source: { type: 'string', description: 'Filter: "memory" (facts), "knowledge" (imported docs), or "conversations" (past chat history)', enum: ['memory', 'knowledge', 'conversations'] },
       },
       required: ['query'],
     },
@@ -59,6 +59,23 @@ export function createMemorySearchTool(
         } catch (err) {
           console.warn('[Memory] Knowledge search failed:', err instanceof Error ? err.message : err);
           return `Knowledge search error: ${err instanceof Error ? err.message : err}`;
+        }
+      }
+
+      // Cross-session conversation search
+      if (source === 'conversations' && graphMemory && ctx.senderId) {
+        try {
+          const turns = await graphMemory.searchTurns(query, ctx.senderId, maxResults);
+          if (turns.length > 0) {
+            const lines = turns.map((t, i) =>
+              `${i + 1}. [${t.role}] ${t.text} (session: ${t.sessionKey}, ${t.createdAt.slice(0, 10)})`
+            );
+            return `Found ${turns.length} conversation matches:\n${lines.join('\n')}`;
+          }
+          return 'No matching conversations found.';
+        } catch (err) {
+          console.warn('[Memory] Conversation search failed:', err instanceof Error ? err.message : err);
+          return 'Conversation search unavailable.';
         }
       }
 
