@@ -392,11 +392,37 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
 
   result.category = effectiveCategory;
 
+  // --- Re-route helper: summarize conversation intent before handing off to another specialist ---
+  const summarizeForHandoff = async (): Promise<string> => {
+    if (!history || history.length === 0) return message;
+    try {
+      const recentHistory = history.slice(-6).map(h => `${h.role}: ${h.content.slice(0, 300)}`).join('\n');
+      const response = await client.chat({
+        model: config.router.model,
+        messages: [{
+          role: 'user',
+          content: `Summarize what the user is asking for in ONE clear sentence. This will be passed to a search specialist.\n\nConversation:\n${recentHistory}\nUser: ${message}\n\nWrite ONLY the search query, nothing else.`,
+        }],
+        options: { temperature: 0.1, num_predict: 100 },
+      });
+      const summary = response.message?.content?.trim();
+      if (summary && summary.length > 5) {
+        console.log(`[Dispatch] Handoff summary: "${summary.slice(0, 80)}"`);
+        return summary;
+      }
+    } catch {
+      // Fall back to raw message
+    }
+    return message;
+  };
+
   // Pipeline downgrade: research pipeline aborted because request is conversational, not a report
   if (result.answer === '__DOWNGRADE_TO_WEB_SEARCH__' && !params._reRouted) {
+    const handoffMessage = await summarizeForHandoff();
     console.log('[Dispatch] Research pipeline downgraded to web_search (conversational context)');
     return dispatchMessage({
       ...params,
+      message: handoffMessage,
       overrideCategory: 'web_search',
       _reRouted: true,
     });
@@ -414,20 +440,16 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       /\[\w+\s*\(.*\)\]/i,
     ];
     if (CAPABILITY_GAP_PATTERNS.some(p => p.test(result.answer))) {
-      // Use conversation context for re-classification — "Sure go ahead" alone won't classify correctly
-      const lastAssistant = history?.slice().reverse().find(h => h.role === 'assistant');
-      const contextMessage = lastAssistant
-        ? `${lastAssistant.content.slice(-300)}\nUser: ${message}`
-        : message;
-      const reClassification = await classifyMessage(client, config.router, contextMessage);
+      const handoffMessage = await summarizeForHandoff();
+      const reClassification = await classifyMessage(client, config.router, handoffMessage);
       if (reClassification.category !== 'chat') {
         console.log(`[Dispatch] Silent re-route: chat gap detected → ${reClassification.category}`);
-        const reResult = await dispatchMessage({
+        return dispatchMessage({
           ...params,
+          message: handoffMessage,
           overrideCategory: reClassification.category,
           _reRouted: true,
         });
-        return reResult;
       }
     }
   }
