@@ -761,13 +761,33 @@ async function runPipelineDispatch(
 
   // Resolve anaphoric references: if the message is short and the session has a topic,
   // prepend the topic so the pipeline knows what "it", "one", "that" refers to.
-  // This prevents isolated pipelines from losing context on follow-up requests.
+  // If topic is empty but there's chat history, summarize the conversation for context.
   let pipelineMessage = message;
   if (isolateContext && message.length < 150) {
     const sessionState = params.sessionStore?.loadState(agentId, sessionKey ?? 'default');
     if (sessionState?.currentTopic) {
       pipelineMessage = `[Context: ${sessionState.currentTopic}]\n${message}`;
       console.log(`[Dispatch] Pipeline context injection: topic="${sessionState.currentTopic.slice(0, 60)}"`);
+    } else if (history && history.length > 0) {
+      // Topic not yet computed — summarize conversation for the pipeline
+      try {
+        const recentHistory = history.slice(-6).map(h => `${h.role}: ${h.content.slice(0, 300)}`).join('\n');
+        const response = await client.chat({
+          model: config.router.model,
+          messages: [{
+            role: 'user',
+            content: `The user said: "${message}"\n\nThis is a follow-up to this conversation:\n${recentHistory}\n\nRewrite the user's message as a clear, self-contained request in one sentence. Include the specific topic. Write ONLY the rewritten request.`,
+          }],
+          options: { temperature: 0.1, num_predict: 100 },
+        });
+        const rewritten = response.message?.content?.trim();
+        if (rewritten && rewritten.length > 10) {
+          pipelineMessage = rewritten;
+          console.log(`[Dispatch] Pipeline context rewrite: "${rewritten.slice(0, 80)}"`);
+        }
+      } catch {
+        // Fall back to raw message
+      }
     }
   }
 
