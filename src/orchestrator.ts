@@ -495,9 +495,9 @@ export class Orchestrator {
 
         try {
           const response = await this.client.chat({
-            model: 'qwen3-coder:30b',
+            model: 'qwen3.6:35b',
             messages: [{ role: 'user', content: diffPrompt }],
-            options: { temperature: 0.3, num_predict: 1024 },
+            options: { temperature: 0.3, num_predict: 8192 },
           });
 
           const raw = (response.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
@@ -582,7 +582,7 @@ export class Orchestrator {
             // Model's ONLY job: summarize the pre-labeled data in 2-3 bullets
             try {
               const taskResponse = await this.client.chat({
-                model: 'qwen3-coder:30b',
+                model: 'qwen3.6:35b',
                 messages: [{ role: 'user', content: [
                   'Summarize these pre-analyzed tasks in 2-3 concise bullet points.',
                   'Urgency labels are AUTHORITATIVE — do not override or reinterpret them.',
@@ -592,7 +592,7 @@ export class Orchestrator {
                   '',
                   'Respond with ONLY JSON: {"summary": "bullet points"}',
                 ].join('\n') }],
-                options: { temperature: 0.3, num_predict: 256 },
+                options: { temperature: 0.3, num_predict: 8192 },
               });
 
               const taskRaw = (taskResponse.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
