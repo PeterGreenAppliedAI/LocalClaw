@@ -13,9 +13,9 @@ beforeEach(() => {
 });
 
 describe('FactStore.writeFact', () => {
-  it('creates raw file with YAML frontmatter', () => {
+  it('creates raw file with YAML frontmatter', async () => {
     const store = new FactStore(workspacePath);
-    const entry = store.writeFact(
+    const entry = await store.writeFact(
       { text: 'Peter uses Linux', category: 'stable', confidence: 0.9 },
       'user123',
       'test/source',
@@ -41,10 +41,10 @@ describe('FactStore.writeFact', () => {
     expect(rawContent).toContain('Peter uses Linux');
   });
 
-  it('appends to JSONL index', () => {
+  it('appends to JSONL index', async () => {
     const store = new FactStore(workspacePath);
-    store.writeFact({ text: 'Fact 1', category: 'stable', confidence: 0.8 }, 'user1');
-    store.writeFact({ text: 'Fact 2', category: 'decision', confidence: 0.9 }, 'user1');
+    await store.writeFact({ text: 'Fact 1', category: 'stable', confidence: 0.8 }, 'user1');
+    await store.writeFact({ text: 'Fact 2', category: 'decision', confidence: 0.9 }, 'user1');
 
     const indexDir = join(workspacePath, 'memory', 'user1', 'index');
     expect(existsSync(indexDir)).toBe(true);
@@ -63,26 +63,26 @@ describe('FactStore.writeFact', () => {
     expect(parsed2.text).toBe('Fact 2');
   });
 
-  it('deduplicates by hash', () => {
+  it('deduplicates by hash', async () => {
     const store = new FactStore(workspacePath);
-    const first = store.writeFact({ text: 'Peter uses Linux', category: 'stable', confidence: 0.9 }, 'u1');
-    const dupe = store.writeFact({ text: 'Peter uses Linux', category: 'stable', confidence: 0.9 }, 'u1');
+    const first = await store.writeFact({ text: 'Peter uses Linux', category: 'stable', confidence: 0.9 }, 'u1');
+    const dupe = await store.writeFact({ text: 'Peter uses Linux', category: 'stable', confidence: 0.9 }, 'u1');
 
     expect(first).not.toBeNull();
     expect(dupe).toBeNull();
   });
 
-  it('deduplicates normalized text (case + punctuation insensitive)', () => {
+  it('deduplicates normalized text (case + punctuation insensitive)', async () => {
     const store = new FactStore(workspacePath);
-    store.writeFact({ text: 'Peter uses Linux.', category: 'stable', confidence: 0.9 }, 'u1');
-    const dupe = store.writeFact({ text: 'peter uses linux', category: 'stable', confidence: 0.9 }, 'u1');
+    await store.writeFact({ text: 'Peter uses Linux.', category: 'stable', confidence: 0.9 }, 'u1');
+    const dupe = await store.writeFact({ text: 'peter uses linux', category: 'stable', confidence: 0.9 }, 'u1');
 
     expect(dupe).toBeNull();
   });
 });
 
 describe('FactStore.writeFactsBatch', () => {
-  it('writes multiple facts and deduplicates', () => {
+  it('writes multiple facts and deduplicates', async () => {
     const store = new FactStore(workspacePath);
     const inputs: FactInput[] = [
       { text: 'Fact A', category: 'stable', confidence: 0.8 },
@@ -90,17 +90,17 @@ describe('FactStore.writeFactsBatch', () => {
       { text: 'Fact A', category: 'stable', confidence: 0.8 }, // duplicate
     ];
 
-    const entries = store.writeFactsBatch(inputs, 'user1');
+    const entries = await store.writeFactsBatch(inputs, 'user1');
     expect(entries.length).toBe(2); // 3rd is deduplicated
   });
 });
 
 describe('FactStore.rebuildFacts', () => {
-  it('generates facts.json and facts.md', () => {
+  it('generates facts.json and facts.md', async () => {
     const store = new FactStore(workspacePath);
-    store.writeFact({ text: 'Stable fact', category: 'stable', confidence: 0.9 }, 'u1');
-    store.writeFact({ text: 'Open question?', category: 'question', confidence: 0.6 }, 'u1');
-    store.writeFact({ text: 'A decision was made', category: 'decision', confidence: 0.85 }, 'u1');
+    await store.writeFact({ text: 'Stable fact', category: 'stable', confidence: 0.9 }, 'u1');
+    await store.writeFact({ text: 'Open question?', category: 'question', confidence: 0.6 }, 'u1');
+    await store.writeFact({ text: 'A decision was made', category: 'decision', confidence: 0.85 }, 'u1');
 
     store.rebuildFacts('u1');
 
@@ -120,14 +120,14 @@ describe('FactStore.rebuildFacts', () => {
     expect(factsMd).toContain('A decision was made');
   });
 
-  it('drops expired context entries', () => {
+  it('drops expired context entries', async () => {
     const store = new FactStore(workspacePath);
     const past = new Date(Date.now() - 86400000).toISOString(); // yesterday
     const future = new Date(Date.now() + 86400000).toISOString(); // tomorrow
 
-    store.writeFact({ text: 'Expired context', category: 'context', confidence: 0.7, expiresAt: past }, 'u1');
-    store.writeFact({ text: 'Active context', category: 'context', confidence: 0.7, expiresAt: future }, 'u1');
-    store.writeFact({ text: 'Permanent fact', category: 'stable', confidence: 0.9 }, 'u1');
+    await store.writeFact({ text: 'Expired context', category: 'context', confidence: 0.7, expiresAt: past }, 'u1');
+    await store.writeFact({ text: 'Active context', category: 'context', confidence: 0.7, expiresAt: future }, 'u1');
+    await store.writeFact({ text: 'Permanent fact', category: 'stable', confidence: 0.9 }, 'u1');
 
     store.rebuildFacts('u1');
 
@@ -140,9 +140,9 @@ describe('FactStore.rebuildFacts', () => {
     expect(factsJson.map(f => f.text)).toContain('Permanent fact');
   });
 
-  it('deduplicates by hash across index files', () => {
+  it('deduplicates by hash across index files', async () => {
     const store = new FactStore(workspacePath);
-    store.writeFact({ text: 'Same fact', category: 'stable', confidence: 0.8 }, 'u1');
+    await store.writeFact({ text: 'Same fact', category: 'stable', confidence: 0.8 }, 'u1');
 
     // Manually write a duplicate entry to a different index date file
     const indexDir = join(workspacePath, 'memory', 'u1', 'index');
@@ -164,11 +164,11 @@ describe('FactStore.rebuildFacts', () => {
 });
 
 describe('FactStore.searchFacts', () => {
-  it('returns matching facts ranked by keyword score', () => {
+  it('returns matching facts ranked by keyword score', async () => {
     const store = new FactStore(workspacePath);
-    store.writeFact({ text: 'Peter uses Playwright for browser automation', category: 'stable', confidence: 0.9 }, 'u1');
-    store.writeFact({ text: 'System runs on Linux Ubuntu', category: 'stable', confidence: 0.8 }, 'u1');
-    store.writeFact({ text: 'Playwright is preferred over Selenium', category: 'decision', confidence: 0.85 }, 'u1');
+    await store.writeFact({ text: 'Peter uses Playwright for browser automation', category: 'stable', confidence: 0.9 }, 'u1');
+    await store.writeFact({ text: 'System runs on Linux Ubuntu', category: 'stable', confidence: 0.8 }, 'u1');
+    await store.writeFact({ text: 'Playwright is preferred over Selenium', category: 'decision', confidence: 0.85 }, 'u1');
     store.rebuildFacts('u1');
 
     const results = store.searchFacts('Playwright', 'u1');
@@ -176,9 +176,9 @@ describe('FactStore.searchFacts', () => {
     expect(results[0].text).toContain('Playwright');
   });
 
-  it('returns empty array for no matches', () => {
+  it('returns empty array for no matches', async () => {
     const store = new FactStore(workspacePath);
-    store.writeFact({ text: 'Some fact', category: 'stable', confidence: 0.8 }, 'u1');
+    await store.writeFact({ text: 'Some fact', category: 'stable', confidence: 0.8 }, 'u1');
     store.rebuildFacts('u1');
 
     // When keyword matching fails but facts exist, returns recent facts as fallback
@@ -187,10 +187,10 @@ describe('FactStore.searchFacts', () => {
     expect(results[0].text).toBe('Some fact');
   });
 
-  it('boosts results by confidence', () => {
+  it('boosts results by confidence', async () => {
     const store = new FactStore(workspacePath);
-    store.writeFact({ text: 'Low confidence Linux fact', category: 'stable', confidence: 0.3 }, 'u1');
-    store.writeFact({ text: 'High confidence Linux setup', category: 'stable', confidence: 0.95 }, 'u1');
+    await store.writeFact({ text: 'Low confidence Linux fact', category: 'stable', confidence: 0.3 }, 'u1');
+    await store.writeFact({ text: 'High confidence Linux setup', category: 'stable', confidence: 0.95 }, 'u1');
     store.rebuildFacts('u1');
 
     const results = store.searchFacts('Linux', 'u1');
@@ -198,12 +198,12 @@ describe('FactStore.searchFacts', () => {
     expect(results[0].confidence).toBeGreaterThan(results[1].confidence);
   });
 
-  it('boosts results with matching tags/entities', () => {
+  it('boosts results with matching tags/entities', async () => {
     const store = new FactStore(workspacePath);
     // Fact with no tags — only body match
-    store.writeFact({ text: 'Uses some tool for testing', category: 'stable', confidence: 0.8 }, 'u1');
+    await store.writeFact({ text: 'Uses some tool for testing', category: 'stable', confidence: 0.8 }, 'u1');
     // Fact with matching entity — should rank higher
-    store.writeFact({
+    await store.writeFact({
       text: 'Prefers a browser framework',
       category: 'stable',
       confidence: 0.8,
@@ -217,10 +217,10 @@ describe('FactStore.searchFacts', () => {
     expect(results[0].entities).toContain('Playwright');
   });
 
-  it('exact phrase match gets bonus', () => {
+  it('exact phrase match gets bonus', async () => {
     const store = new FactStore(workspacePath);
-    store.writeFact({ text: 'Peter prefers dark mode on all devices', category: 'stable', confidence: 0.8 }, 'u1');
-    store.writeFact({ text: 'Dark theme is nice', category: 'stable', confidence: 0.8 }, 'u1');
+    await store.writeFact({ text: 'Peter prefers dark mode on all devices', category: 'stable', confidence: 0.8 }, 'u1');
+    await store.writeFact({ text: 'Dark theme is nice', category: 'stable', confidence: 0.8 }, 'u1');
     store.rebuildFacts('u1');
 
     const results = store.searchFacts('dark mode', 'u1');
@@ -230,7 +230,7 @@ describe('FactStore.searchFacts', () => {
 });
 
 describe('FactStore.migrateFromLegacy', () => {
-  it('imports dated .md files into FactStore', () => {
+  it('imports dated .md files into FactStore', async () => {
     // Create legacy memory files
     const userDir = join(workspacePath, 'memory', 'legacy-user');
     mkdirSync(userDir, { recursive: true });
@@ -238,7 +238,7 @@ describe('FactStore.migrateFromLegacy', () => {
     writeFileSync(join(userDir, '2026-02-27.md'), '## 2026-02-27\n\n- DGX Spark on node 3\n');
 
     const store = new FactStore(workspacePath);
-    const count = store.migrateFromLegacy('legacy-user');
+    const count = await store.migrateFromLegacy('legacy-user');
 
     expect(count).toBe(3);
 
@@ -251,24 +251,24 @@ describe('FactStore.migrateFromLegacy', () => {
     expect(facts.every(f => f.confidence === 0.7)).toBe(true);
   });
 
-  it('does not re-migrate when .migrated marker exists', () => {
+  it('does not re-migrate when .migrated marker exists', async () => {
     const userDir = join(workspacePath, 'memory', 'migrated-user');
     mkdirSync(userDir, { recursive: true });
     writeFileSync(join(userDir, '.migrated'), new Date().toISOString());
     writeFileSync(join(userDir, '2026-02-28.md'), '## 2026-02-28\n\n- Some fact\n');
 
     const store = new FactStore(workspacePath);
-    const count = store.migrateFromLegacy('migrated-user');
+    const count = await store.migrateFromLegacy('migrated-user');
     expect(count).toBe(0);
   });
 
-  it('old files are left in place (no data loss)', () => {
+  it('old files are left in place (no data loss)', async () => {
     const userDir = join(workspacePath, 'memory', 'keep-user');
     mkdirSync(userDir, { recursive: true });
     writeFileSync(join(userDir, '2026-02-28.md'), '## 2026-02-28\n\n- Important fact\n');
 
     const store = new FactStore(workspacePath);
-    store.migrateFromLegacy('keep-user');
+    await store.migrateFromLegacy('keep-user');
 
     // Old file should still exist
     expect(existsSync(join(userDir, '2026-02-28.md'))).toBe(true);
@@ -276,12 +276,14 @@ describe('FactStore.migrateFromLegacy', () => {
 });
 
 describe('FactStore.loadFactsJson', () => {
-  it('auto-migrates on first access for sender with legacy files', () => {
+  it('auto-migrates on first access for sender with legacy files', async () => {
     const userDir = join(workspacePath, 'memory', 'auto-user');
     mkdirSync(userDir, { recursive: true });
     writeFileSync(join(userDir, '2026-03-01.md'), '## 2026-03-01\n\n- Auto migrated fact\n');
 
     const store = new FactStore(workspacePath);
+    // Trigger migration explicitly since loadFactsJson fires it as fire-and-forget
+    await store.migrateFromLegacy('auto-user');
     const facts = store.loadFactsJson('auto-user');
 
     expect(facts.length).toBe(1);

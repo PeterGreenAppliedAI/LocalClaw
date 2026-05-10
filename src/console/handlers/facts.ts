@@ -54,7 +54,7 @@ export async function handleWriteFact(req: IncomingMessage, res: ServerResponse,
       return;
     }
 
-    const entry = deps.factStore.writeFact(
+    const entry = await deps.factStore.writeFact(
       {
         text: body.text,
         category: (body.category as any) ?? 'stable',

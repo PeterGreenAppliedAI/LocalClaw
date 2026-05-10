@@ -234,7 +234,7 @@ export async function consolidateFactsWithLLM(
 
   // Write merged facts as new entries (appends to index files)
   for (const merged of mergedFacts) {
-    factStore.writeFact(
+    await factStore.writeFact(
       { text: merged.text, category: merged.category as any, confidence: 0.9, source: merged.source },
       senderId,
       merged.source,

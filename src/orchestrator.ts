@@ -189,7 +189,7 @@ export class Orchestrator {
 
     // Initialize FactStore
     const defaultWorkspacePath = resolveWorkspacePath(this.config.agents.default, this.config);
-    this.factStore = new FactStore(defaultWorkspacePath);
+    this.factStore = new FactStore(defaultWorkspacePath, this.client);
 
     // Set up cron service
     if (this.config.cron.enabled) {
@@ -1059,7 +1059,7 @@ Write a useful ${timeOfDay} update:
 
           // Write through FactStore
           if (this.factStore) {
-            this.factStore.writeFactsBatch(facts, senderId, `session/${file}`);
+            await this.factStore.writeFactsBatch(facts, senderId, `session/${file}`);
             this.factStore.rebuildFacts(senderId);
           }
         }
@@ -1164,7 +1164,7 @@ Write a useful ${timeOfDay} update:
 
         // Write through FactStore
         if (this.factStore) {
-          this.factStore.writeFactsBatch(pending.facts, senderId, 'user/approved');
+          await this.factStore.writeFactsBatch(pending.facts, senderId, 'user/approved');
           this.factStore.rebuildFacts(senderId);
         }
 

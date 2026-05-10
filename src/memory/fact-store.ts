@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { FactEntrySchema, FactInputSchema } from '../config/schema.js';
 import type { FactEntry, FactInput, FactCategory } from '../config/types.js';
+import type { OllamaClient } from '../ollama/client.js';
 
 /** Category display labels for facts.md */
 const CATEGORY_LABELS: Record<FactCategory, string> = {
@@ -33,20 +34,24 @@ const CATEGORY_TTL_DAYS: Record<FactCategory, number | null> = {
  */
 export class FactStore {
   private readonly basePath: string;
+  private readonly client?: OllamaClient;
   private factsCache = new Map<string, { entries: FactEntry[]; loadedAt: number }>();
   private static readonly CACHE_TTL_MS = 30_000;
   /** Max chars for facts.md per user — model-independent hard limit */
   private static readonly MAX_FACTS_CHARS = 3000;
+  /** Embedding similarity threshold — above this, reject as duplicate */
+  private static readonly EMBEDDING_DEDUP_THRESHOLD = 0.85;
   private migrating = false;
 
-  constructor(workspacePath: string) {
+  constructor(workspacePath: string, client?: OllamaClient) {
     this.basePath = join(workspacePath, 'memory');
+    this.client = client;
   }
 
   /**
    * Write a single fact. Returns the created entry, or null if deduplicated.
    */
-  writeFact(input: FactInput, senderId?: string, sourceOverride?: string, createdAtOverride?: string): FactEntry | null {
+  async writeFact(input: FactInput, senderId?: string, sourceOverride?: string, createdAtOverride?: string): Promise<FactEntry | null> {
     const parsed = FactInputSchema.parse(input);
     const hash = this.hashText(parsed.text);
     const memDir = this.memDir(senderId);
@@ -62,6 +67,20 @@ export class FactStore {
       for (const e of existing) {
         const existingNorm = this.normalizeText(e.text);
         if (existingNorm.includes(normalized) || normalized.includes(existingNorm)) return null;
+      }
+
+      // Dedup: embedding similarity — catch paraphrased duplicates that substring misses
+      if (this.client && existing.length > 0) {
+        try {
+          const isDup = await this.checkEmbeddingSimilarity(parsed.text, existing);
+          if (isDup) {
+            console.log(`[FactStore] Embedding dedup: rejected "${parsed.text.slice(0, 60)}..." (similar to existing fact)`);
+            return null;
+          }
+        } catch (err) {
+          // Non-blocking — if embedding check fails, proceed with write
+          console.warn('[FactStore] Embedding dedup failed, proceeding:', err instanceof Error ? err.message : err);
+        }
       }
     }
 
@@ -113,10 +132,10 @@ export class FactStore {
   /**
    * Write multiple facts in a batch. Returns created entries (deduped).
    */
-  writeFactsBatch(inputs: FactInput[], senderId?: string, sourceOverride?: string, createdAtOverride?: string): FactEntry[] {
+  async writeFactsBatch(inputs: FactInput[], senderId?: string, sourceOverride?: string, createdAtOverride?: string): Promise<FactEntry[]> {
     const entries: FactEntry[] = [];
     for (const input of inputs) {
-      const entry = this.writeFact(input, senderId, sourceOverride, createdAtOverride);
+      const entry = await this.writeFact(input, senderId, sourceOverride, createdAtOverride);
       if (entry) entries.push(entry);
     }
     return entries;
@@ -361,7 +380,7 @@ export class FactStore {
    * Uses a marker file (.migrated) to track whether migration has already run,
    * independent of whether the facts/ dir exists.
    */
-  migrateFromLegacy(senderId: string): number {
+  async migrateFromLegacy(senderId: string): Promise<number> {
     const memDir = this.memDir(senderId);
     const markerPath = join(memDir, '.migrated');
 
@@ -404,7 +423,7 @@ export class FactStore {
 
         // Preserve original date from filename so legacy facts don't appear "newest"
         const legacyCreatedAt = `${date}T00:00:00.000Z`;
-        const written = this.writeFactsBatch(inputs, senderId, `legacy/${file}`, legacyCreatedAt);
+        const written = await this.writeFactsBatch(inputs, senderId, `legacy/${file}`, legacyCreatedAt);
         migrated += written.length;
       }
     } finally {
@@ -434,8 +453,10 @@ export class FactStore {
     }
 
     // Always attempt legacy migration (uses .migrated marker to avoid repeat work)
+    // Fire-and-forget since loadFactsJson is sync — migration writes are async but
+    // this.migrating=true skips the embedding check so writes complete fast
     if (senderId) {
-      this.migrateFromLegacy(senderId);
+      this.migrateFromLegacy(senderId).catch(() => {});
     }
 
     const memDir = this.memDir(senderId);
@@ -473,6 +494,38 @@ export class FactStore {
 
   private hashText(text: string): string {
     return createHash('sha256').update(this.normalizeText(text)).digest('hex').slice(0, 16);
+  }
+
+  /**
+   * Embedding similarity check — catches paraphrased duplicates.
+   * Embeds the new fact and compares against all existing facts.
+   */
+  private async checkEmbeddingSimilarity(newText: string, existing: FactEntry[]): Promise<boolean> {
+    if (!this.client || existing.length === 0) return false;
+
+    // Embed the new fact + all existing facts in one batch call
+    const texts = [newText, ...existing.map(e => e.text)];
+    const embeddings = await this.client.embed(texts);
+    if (!embeddings || embeddings.length < 2) return false;
+
+    const newEmb = embeddings[0];
+    for (let i = 1; i < embeddings.length; i++) {
+      const sim = this.cosineSimilarity(newEmb, embeddings[i]);
+      if (sim >= FactStore.EMBEDDING_DEDUP_THRESHOLD) return true;
+    }
+    return false;
+  }
+
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) return 0;
+    let dot = 0, normA = 0, normB = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom === 0 ? 0 : dot / denom;
   }
 
   private hashExistsInIndex(memDir: string, hash: string): boolean {

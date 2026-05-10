@@ -38,7 +38,7 @@ export function createMemorySaveTool(
       }
 
       try {
-        const entry = factStore.writeFact(
+        const entry = await factStore.writeFact(
           { text: content, category, confidence: 1.0, source: 'user/memory_save' },
           ctx.senderId,
           'user/memory_save',

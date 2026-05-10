@@ -276,7 +276,7 @@ Output ONLY a bullet-point list of facts. If there are no notable facts, output 
       confidence: 0.7,
       source,
     }));
-    factStore.writeFactsBatch(inputs, senderId, source);
+    await factStore.writeFactsBatch(inputs, senderId, source);
     factStore.rebuildFacts(senderId);
   } else {
     console.warn('[Compactor] No FactStore available, skipping memory flush');
