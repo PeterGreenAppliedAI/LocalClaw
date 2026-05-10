@@ -6,6 +6,7 @@ import type { SessionStore } from '../sessions/store.js';
 import type { TaskStore } from '../tasks/store.js';
 import type { CronService } from '../cron/service.js';
 import type { FactStore } from '../memory/fact-store.js';
+import type { GraphMemoryStore } from '../memory/graph-store.js';
 import type { VisionService } from '../services/vision.js';
 import type { DispatchParams } from '../dispatch.js';
 import type { ExecutionMetricsStore } from '../metrics/execution-store.js';
@@ -19,6 +20,7 @@ export interface ConsoleApiDeps {
   taskStore: TaskStore;
   cronService?: CronService;
   factStore?: FactStore;
+  graphMemory?: GraphMemoryStore;
   visionService?: VisionService;
   executionMetrics?: ExecutionMetricsStore;
   dispatch: (params: Omit<DispatchParams, 'client' | 'registry' | 'config'>) => Promise<import('../dispatch.js').DispatchResult>;

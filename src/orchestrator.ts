@@ -29,6 +29,7 @@ import { ExecutionMetricsStore } from './metrics/execution-store.js';
 import { appendFileSync } from 'node:fs';
 import type { ConsoleApiDeps } from './console/types.js';
 import { enrichTasks, getAutoActions, filterForModel, formatTaskBoard, enrichCalendarOutput } from './temporal/urgency.js';
+import { GraphMemoryStore } from './memory/graph-store.js';
 import type { WebApiAdapter } from './channels/web/adapter.js';
 // Pipeline utilities kept in src/services/tts-stream.ts for future use with slower TTS models
 
@@ -148,6 +149,7 @@ export class Orchestrator {
   private heartbeatCron?: Cron;
   private embeddingStore?: EmbeddingStore;
   private factStore?: FactStore;
+  private graphMemory?: GraphMemoryStore;
   private taskStore?: TaskStore;
   private pipelineRegistry: PipelineRegistry;
   executionMetrics: ExecutionMetricsStore;
@@ -187,9 +189,18 @@ export class Orchestrator {
       bootstrapWorkspace(ws, agent.name);
     }
 
-    // Initialize FactStore
+    // Initialize FactStore (legacy) + GraphMemoryStore
     const defaultWorkspacePath = resolveWorkspacePath(this.config.agents.default, this.config);
     this.factStore = new FactStore(defaultWorkspacePath, this.client);
+
+    // Initialize graph memory (FalkorDB) — non-blocking, falls back to FactStore if unavailable
+    this.graphMemory = new GraphMemoryStore(this.client);
+    this.graphMemory.connect().then(() => {
+      console.log('[Orchestrator] Graph memory connected');
+    }).catch(err => {
+      console.warn('[Orchestrator] Graph memory unavailable, using flat FactStore:', err instanceof Error ? err.message : err);
+      this.graphMemory = undefined;
+    });
 
     // Set up cron service
     if (this.config.cron.enabled) {
@@ -280,6 +291,7 @@ export class Orchestrator {
         taskStore: this.taskStore!,
         cronService: this.cronService,
         factStore: this.factStore,
+        graphMemory: this.graphMemory,
         visionService: this.visionService,
         executionMetrics: this.executionMetrics,
         dispatch: (params) => dispatchMessage({
@@ -1552,6 +1564,7 @@ Write a useful ${timeOfDay} update:
         },
         modelOverride: hadAudio ? this.config.voice.model : undefined,
         factStore: this.factStore,
+        graphMemory: this.graphMemory,
       };
 
       // Voice path: single-shot TTS on full response
