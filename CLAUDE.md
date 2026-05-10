@@ -28,30 +28,34 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage)
 
 ### Memory System
 
-Memory uses **structured facts** with per-user isolation — JSONL index + consolidated JSON/Markdown.
+Memory uses a **dual-backend** architecture: **FalkorDB graph database** (primary) with flat JSONL FactStore (fallback).
 
-**Storage layout (per-user):**
-```
-workspace/
-  memory/
-    last-review.json                # Marker: timestamp of last heartbeat transcript review
-    <senderId>/
-      raw/YYYY-MM-DD/mem_<ts>.md    # Append-only raw facts with YAML frontmatter
-      index/YYYY-MM-DD.jsonl        # One JSONL line per FactEntry (fast scan)
-      facts/facts.json              # Machine-readable FactEntry[]
-      facts/facts.md                # Human-readable, sectioned by category
-      pending.json                  # Temp: fact candidates awaiting user approval (from !reset)
-  .learnings/
-    errors.jsonl                    # Tool execution error history (for error learning)
-  LEARNINGS.md                      # Promoted recurring error patterns (loaded into specialist context)
-```
+**Graph memory (`src/memory/graph-store.ts`):**
+- FalkorDB with native HNSW vector search (4096-dim embeddings via qwen3-embedding:8b)
+- Fact nodes with importance tiers (1-5), entity/tag nodes, ABOUT/TAGGED/SUPERSEDES edges
+- Semantic dedup on write (cosine distance < 0.15 rejected)
+- Multi-signal search scoring: `similarity * 0.5 + recency * 0.2 + importance * 0.3`
+- Auto-injection: relevant facts silently injected into specialist context on every message
+- SUPERSEDES edges for temporal fact evolution (old → new with history)
+- Multi-hop traversal through shared entities, cluster detection for briefings
+
+**Flat store fallback (`src/memory/fact-store.ts`):**
+- JSONL index + facts.json, used when FalkorDB is unavailable
+- Still handles heartbeat diffing, review candidates, removed.jsonl tracking
+- Embedding dedup (cosine > 0.85) + hash + substring checks
+
+**Importance tiers on FactEntry:**
+- 5=critical (health/family, never expires), 4=identity (job/projects, never expires)
+- 3=preference (90 days), 2=context (30 days), 1=ephemeral (7 days)
+
+**Known limitation:** Multi-signal scoring uses fixed linear weights. A reranker (cross-encoder or LLM-based) may be needed if wrong facts consistently surface over correct ones. Monitor auto-injection quality before adding complexity.
 
 **Fact extraction paths:**
-1. **`!reset` (user-approved)** — On session clear, facts extracted via router model, candidates shown. User replies `!save` or `!discard`.
-2. **Heartbeat (autonomous)** — Every 2 hours, `reviewTranscripts()` scans sessions, extracts facts, writes directly.
-3. **`memory_forget`** — Removes facts by text match. Pipeline branch: save/recall/forget.
+1. **`!reset` (user-approved)** — On session clear, facts extracted via router model with importance assignment, candidates shown.
+2. **Heartbeat (autonomous)** — Every 2 hours, `reviewTranscripts()` scans sessions, extracts facts with existing facts shown to prevent re-extraction.
+3. **`memory_forget`** — Removes from both graph and flat store. Records removal to prevent re-extraction.
 
-**Search:** `memory_search` checks per-user `facts/facts.json` first (keyword scoring with tag/entity boost), then shared facts, then workspace markdown files. `source="knowledge"` for vector search over imported documents.
+**Search:** `memory_search` uses graph vector KNN (primary) or flat store keyword scoring (fallback). `source="knowledge"` for vector search over imported documents.
 
 **Self-improvement store:** `.learnings/errors.jsonl` records tool failures. Before tool execution, `findHints()` checks for matching past errors and prepends hints. `enrichObservation()` scans tool output for 8 known error patterns (permission denied, timeout, 404, rate limit, etc.) and enriches with suggestions. Recurring patterns (3+ occurrences) promoted to `LEARNINGS.md` via heartbeat.
 
@@ -238,7 +242,8 @@ src/
     tokens.ts               #   estimateTokens() — word-aware heuristic
 
   memory/                   # Memory system
-    fact-store.ts           #   FactStore (JSONL index, dedup, TTL, consolidation, removeFact)
+    fact-store.ts           #   FactStore (JSONL index, dedup, TTL, consolidation, removeFact) — fallback
+    graph-store.ts          #   GraphMemoryStore (FalkorDB, vector search, entity linking, SUPERSEDES)
     embeddings.ts           #   EmbeddingStore (SQLite + vectors, used for knowledge_import)
     consolidation.ts        #   consolidateFactsWithLLM() — LLM-driven dedup
     search.ts               #   searchMarkdownFiles() — keyword search over workspace .md files
