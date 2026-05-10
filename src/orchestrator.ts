@@ -813,6 +813,7 @@ Write a useful ${timeOfDay} update:
   private async extractFacts(
     transcript: import('./sessions/types.js').ConversationTurn[],
     recentlyRemoved?: Array<{ text: string; reason: string }>,
+    senderId?: string,
   ): Promise<FactInput[]> {
     const userTurns = transcript.filter(t => t.role === 'user');
     console.log(`[Facts] Transcript has ${transcript.length} turns (${userTurns.length} user)`);
@@ -852,6 +853,19 @@ Write a useful ${timeOfDay} update:
             'Categories: stable = permanent facts (name, location, job, preferences), context = temporary/situational, decision = choices the user made, question = open questions.',
             'Importance (imp): 5=critical (health conditions, family, safety), 4=identity (job title, employer, key projects), 3=preference (tool choices, food preferences, style), 2=context (current tasks, upcoming events), 1=ephemeral (one-off mentions, passing comments).',
             'If nothing worth remembering, return [].',
+            ...((() => {
+              // Show existing facts so the LLM avoids re-extracting them
+              if (this.factStore && senderId) {
+                try {
+                  const existing = this.factStore.loadFactsJson(senderId);
+                  if (existing.length > 0) {
+                    const summary = existing.slice(0, 15).map(f => `- "${f.text}"`).join('\n');
+                    return ['', `ALREADY STORED (do NOT re-extract these or paraphrases of these):`, summary];
+                  }
+                } catch { /* best-effort */ }
+              }
+              return [];
+            })()),
             ...(recentlyRemoved && recentlyRemoved.length > 0 ? [
               '',
               'IMPORTANT: The user has explicitly REMOVED these facts. Do NOT re-extract anything similar:',
@@ -1054,7 +1068,7 @@ Write a useful ${timeOfDay} update:
 
         // Load recently-removed facts to suppress re-extraction
         const recentlyRemoved = this.factStore?.loadRecentlyRemoved(senderId) ?? [];
-        const facts = await this.extractFacts(transcript, recentlyRemoved);
+        const facts = await this.extractFacts(transcript, recentlyRemoved, senderId);
         if (facts.length > 0) {
           allFacts.push(...facts);
           console.log(`[Heartbeat] Extracted ${facts.length} facts from ${file} (user: ${senderId})`);
@@ -1122,7 +1136,7 @@ Write a useful ${timeOfDay} update:
       // Extract facts from the conversation
       let replyText = 'Session cleared. Starting fresh!';
       try {
-        const facts = await this.extractFacts(transcript);
+        const facts = await this.extractFacts(transcript, undefined, msg.senderId);
         if (facts.length > 0) {
           const userMemDir = join(workspacePath, 'memory', msg.senderId);
           mkdirSync(userMemDir, { recursive: true });
