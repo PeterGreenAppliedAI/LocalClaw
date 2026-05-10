@@ -140,6 +140,10 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 - FalkorDB discussion: bot held multi-turn technical conversation, correctly pulled user's ML engineer role and DGX Spark setup from graph memory for context
 - Migration dedup: caught 2 paraphrased duplicates during 23-fact migration that flat store had missed
 - Narrated tool call detection: added to capability gap detector after chat faked a `[brave_search()]` call
+- Personalized conversation: "What would you like to talk about?" → bot built a menu from graph memory (open-source models, DGX Spark, edge AI, Long Island events, System Prompt podcast). Zero prompting from user.
+- Unity AI discussion: bot autonomously connected Unity research to user's LocalClaw setup and edge computing interests via auto-injected graph facts
+- FalkorDB discussion: multi-turn technical conversation where bot correctly pulled user's ML engineer role and infrastructure context
+- `!forget register agent` working with flexible word matching after exact CONTAINS failed on "registered agent" vs "register agent change"
 
 ---
 
