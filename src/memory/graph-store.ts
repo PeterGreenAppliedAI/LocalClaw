@@ -258,7 +258,8 @@ export class GraphMemoryStore {
   async removeFact(textMatch: string, senderId: string): Promise<number> {
     if (!this.graph) await this.connect();
 
-    const result = await this.graph!.query(
+    // Try exact CONTAINS first, then try each word individually for flexible matching
+    let result = await this.graph!.query(
       `MATCH (f:Fact {senderId: $senderId})
        WHERE f.text CONTAINS $match
        DETACH DELETE f
@@ -266,7 +267,25 @@ export class GraphMemoryStore {
       { params: { senderId, match: textMatch } }
     );
 
-    const deleted = ((result.data ?? [])[0] as any)?.deleted ?? 0;
+    let deleted = ((result.data ?? [])[0] as any)?.deleted ?? 0;
+
+    // Fallback: if exact match found nothing, try matching key words
+    if (deleted === 0) {
+      const words = textMatch.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      if (words.length >= 2) {
+        // Match facts containing ALL significant words
+        const conditions = words.map((_, i) => `toLower(f.text) CONTAINS $w${i}`).join(' AND ');
+        const wordParams: Record<string, string> = { senderId };
+        words.forEach((w, i) => { wordParams[`w${i}`] = w; });
+
+        const fallbackResult = await this.graph!.query(
+          `MATCH (f:Fact {senderId: $senderId}) WHERE ${conditions} DETACH DELETE f RETURN count(f) as deleted`,
+          { params: wordParams }
+        );
+        deleted = ((fallbackResult.data ?? [])[0] as any)?.deleted ?? 0;
+      }
+    }
+
     if (deleted > 0) {
       console.log(`[GraphMemory] Removed ${deleted} fact(s) matching "${textMatch.slice(0, 40)}"`);
     }

@@ -1377,6 +1377,38 @@ Write a useful ${timeOfDay} update:
       return;
     }
 
+    if (trimmed.startsWith('!forget')) {
+      const query = msg.content.trim().slice('!forget'.length).trim();
+      if (!query || query.length < 3) {
+        await this.channelRegistry.send(
+          { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+          { text: 'Usage: **!forget <search term>** — removes facts containing that text.' },
+        ).catch(() => {});
+        return;
+      }
+
+      let removed = 0;
+      // Graph memory
+      if (this.graphMemory) {
+        try { removed += await this.graphMemory.removeFact(query, msg.senderId); } catch { /* best-effort */ }
+      }
+      // Flat store
+      if (this.factStore) {
+        removed += this.factStore.removeFact(query, msg.senderId);
+        this.factStore.recordRemoval(query, 'user_denied', msg.senderId);
+      }
+
+      const replyText = removed > 0
+        ? `Removed ${removed} fact(s) matching "${query}" from memory.`
+        : `No facts found matching "${query}". Try a different search term.`;
+
+      await this.channelRegistry.send(
+        { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+        { text: replyText },
+      ).catch(() => {});
+      return;
+    }
+
     if (trimmed.startsWith('!research')) {
       const rawArgs = msg.content.trim().slice('!research'.length).trim();
 
