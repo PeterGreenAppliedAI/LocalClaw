@@ -177,7 +177,7 @@ localclaw/
 │   ├── context/              # Token estimation, budget calculator, structured compaction
 │   ├── sessions/             # Transcript persistence + compaction summaries
 │   ├── cron/                 # Scheduling service
-│   ├── memory/               # Structured fact store (char-bounded), keyword search, vector search
+│   ├── memory/               # Graph memory (FalkorDB), fact store, embeddings, consolidation
 │   └── exec/                 # Docker sandbox + persistent code sessions
 ├── console/                  # React + Vite + TailwindCSS management console
 │   ├── src/pages/            # Dashboard, Chat, Sessions, Tasks, Cron, Memory, Channels, Tools, Config
@@ -446,28 +446,37 @@ vision: {
 
 ### Memory System
 
-Memory uses **structured facts** with per-user isolation, snapshot-based diff for deterministic review, and LLM reasoning for staleness/connection detection.
+Memory uses a **FalkorDB graph database** with native vector search for semantic dedup, entity linking, temporal awareness, and multi-hop reasoning. Facts are stored as graph nodes with embeddings, connected through shared entities.
 
-**Storage layout:**
+**Architecture:**
 ```
-workspace/memory/
-  <senderId>/
-    raw/YYYY-MM-DD/mem_*.md       # Append-only raw facts (YAML frontmatter)
-    index/YYYY-MM-DD.jsonl        # One JSONL line per fact (fast scan)
-    facts/facts.json              # Machine-readable FactEntry[]
-    facts/facts.md                # Human-readable, sectioned by category
-    pending.json                  # Fact candidates awaiting user approval (!reset)
-    heartbeat-pending.json        # Review candidates from heartbeat (!heartbeat)
-    heartbeat-snapshot.json       # Snapshot for diff-based review
-    removed.jsonl                 # Recently removed facts (30-day, prevents re-extraction)
+FalkorDB (Docker, localhost:6379)
+  Graph: localclaw_memory
+    (:Fact {text, importance, category, confidence, embedding, createdAt, senderId})
+    (:Entity {name, type})
+    (:Tag {name})
+    (Fact)-[:ABOUT]->(Entity)       # fact links to entities it mentions
+    (Fact)-[:TAGGED]->(Tag)         # fact categorization
+    (Fact)-[:SUPERSEDES]->(Fact)    # temporal: new version replaces old
 ```
+
+**Capabilities:**
+- **Semantic dedup** — Embedding similarity (cosine > 0.85) rejects paraphrased duplicates on write
+- **Importance tiers** — 5=critical (health/family), 4=identity (job/projects), 3=preference, 2=context, 1=ephemeral. Drives TTL and retrieval priority
+- **Auto-injection** — Every incoming message triggers vector KNN search. Relevant facts silently injected into specialist context. Multi-signal scoring: similarity * 0.5 + recency * 0.2 + importance * 0.3
+- **SUPERSEDES edges** — Fact updates create new versions linked to old. History preserved: "ML engineer" → "Senior ML engineer"
+- **Temporal queries** — "What did I know last month?" via createdAt filters + SUPERSEDES chain
+- **Multi-hop reasoning** — Traverse shared entities: DevMesh → AI → career fair. Finds connections the model can't
+- **Community detection** — Clusters of related facts by entity co-occurrence (work cluster, health cluster, hobby cluster)
+- **Extraction awareness** — Existing facts shown to extraction LLM to prevent re-extraction
 
 **Fact lifecycle:**
-1. **Extraction** — `!reset` (user-approved) or heartbeat (autonomous) extracts facts from conversation transcripts via LLM
-2. **Storage** — FactStore handles dedup (hash + substring), auto-TTL by category (stable=never, context=14d, decision=30d, question=7d)
-3. **Review** — Heartbeat surfaces 2-3 candidates per cycle. User replies `!heartbeat yes/no` to confirm or remove
-4. **Removal** — `memory_forget` tool or `!heartbeat no`. Removed facts recorded in `removed.jsonl` so heartbeat won't re-extract them
-5. **Diff-based reasoning** — Each heartbeat compares current facts against last snapshot (new/unchanged/removed), sends structured diff to LLM for reasoning about staleness, connections, and importance
+1. **Extraction** — `!reset` (user-approved) or heartbeat (autonomous) extracts facts from conversation transcripts via LLM. LLM assigns importance level (1-5)
+2. **Storage** — GraphMemoryStore handles dedup (embedding similarity), creates entity/tag nodes and edges
+3. **Review** — Heartbeat surfaces candidates per cycle. User replies `!heartbeat yes/no` to confirm or remove
+4. **Removal** — `memory_forget` tool or `!heartbeat no`
+5. **Evolution** — Facts update via SUPERSEDES edges, preserving history
+6. **Injection** — On every message, top relevant facts auto-injected into specialist context
 
 Each fact has: category (`stable`/`context`/`decision`/`question`), confidence score, tags, entities, source, expiration, and `lastReviewedAt` for review fatigue prevention.
 
@@ -759,6 +768,7 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Document Gen | LibreOffice (headless) |
 | iMessage | BlueBubbles (REST API) |
 | Scheduling | croner |
+| Memory Graph | FalkorDB (graph database with native HNSW vector search) |
 | Knowledge Store | better-sqlite3 (vector embeddings for imported documents) |
 | TTS | Kokoro TTS (HTTP, OpenAI-compatible) |
 | STT | faster-whisper (HTTP) |

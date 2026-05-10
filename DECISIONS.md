@@ -105,6 +105,36 @@ A log of significant decisions, failed experiments, and why things are the way t
 **Fix (briefing):** Added explicit rule: "Calendar is the ONLY source of truth for events. NEVER invent or recall events from memory."
 **Lesson:** Broad memory search queries like "recent activity decisions context" pull everything. The model can't filter relevance -- it tries to use everything it sees.
 
+### Memory system overhaul: flat store to graph database (May 2026)
+
+**Problem:** The JSONL-based FactStore accumulated 14 near-duplicate facts about the same topic. Layered dedup defenses (hash, substring, embedding similarity) were individually weak. Memory facts only surfaced in briefings, never in conversations. No relationship modeling between facts.
+
+**Evolution (Phases 1-4 on flat store):**
+1. Embedding dedup on write (cosine > 0.85 rejected via qwen3-embedding)
+2. Importance tiers (1-5) driving TTL and retrieval priority
+3. Auto-injection: embedding search on every message, contextually relevant facts silently injected into specialist context
+4. Extraction awareness: existing facts shown to extraction LLM to prevent re-extraction
+
+**Decision: FalkorDB graph database (Phase 5)**
+
+Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph database with native HNSW vector search.
+
+**Why FalkorDB over alternatives:**
+- vs Neo4j: Free (MIT-adjacent), 20MB vs 2.6GB memory, sub-ms lookups, native vector search. Neo4j Community can't cluster.
+- vs SQLite (existing EmbeddingStore): No graph traversal, no relationship modeling, brute-force vector search.
+- vs Memgraph: No native vector search.
+
+**What the graph enables that flat storage can't:**
+- SUPERSEDES edges: fact evolution with history ("ML engineer" → "Senior ML engineer")
+- Temporal queries: "what did I know last month?" via createdAt filters + SUPERSEDES chain
+- Multi-hop reasoning: traverse shared entities to find connected facts (DevMesh → AI → career fair)
+- Community detection: clusters of related facts by entity co-occurrence (work cluster, health cluster, hobby cluster)
+- Native vector KNN: O(log n) via HNSW index, not O(n) brute-force
+
+**Infrastructure:** FalkorDB runs in Docker on the Mac Mini alongside LocalClaw. ~20MB for the graph at current scale.
+
+**Status:** GraphMemoryStore built and tested. Integration into LocalClaw dispatch/orchestrator pending.
+
 ---
 
 ## Ollama Version Issues
