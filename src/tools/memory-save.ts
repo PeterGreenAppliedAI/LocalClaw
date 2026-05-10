@@ -38,8 +38,10 @@ export function createMemorySaveTool(
       }
 
       try {
+        // Map category to sensible importance default
+        const importanceMap: Record<string, number> = { stable: 4, context: 2, decision: 3, question: 1 };
         const entry = await factStore.writeFact(
-          { text: content, category, confidence: 1.0, source: 'user/memory_save' },
+          { text: content, category, confidence: 1.0, source: 'user/memory_save', importance: importanceMap[category] ?? 3 },
           ctx.senderId,
           'user/memory_save',
         );
