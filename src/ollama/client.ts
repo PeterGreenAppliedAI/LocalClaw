@@ -118,9 +118,21 @@ export class OllamaClient {
   }
 
   async embed(input: string | string[], model = 'qwen3-embedding:8b'): Promise<number[][]> {
-    const body: OllamaEmbedParams = { model, input, keep_alive: this.keepAlive };
-    const res = await this.post<OllamaEmbedResponse>('/api/embed', body);
-    return res.embeddings;
+    // Try /api/embed first (standard Ollama), fall back to /api/embeddings (gateway compat)
+    try {
+      const body: OllamaEmbedParams = { model, input, keep_alive: this.keepAlive };
+      const res = await this.post<OllamaEmbedResponse>('/api/embed', body);
+      return res.embeddings;
+    } catch {
+      // Fallback: /api/embeddings with single-prompt format
+      const texts = Array.isArray(input) ? input : [input];
+      const results: number[][] = [];
+      for (const text of texts) {
+        const res = await this.post<{ embedding: number[] }>('/api/embeddings', { model, prompt: text });
+        results.push(res.embedding);
+      }
+      return results;
+    }
   }
 
   async listModels(): Promise<OllamaModel[]> {
