@@ -392,6 +392,16 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
 
   result.category = effectiveCategory;
 
+  // Pipeline downgrade: research pipeline aborted because request is conversational, not a report
+  if (result.answer === '__DOWNGRADE_TO_WEB_SEARCH__' && !params._reRouted) {
+    console.log('[Dispatch] Research pipeline downgraded to web_search (conversational context)');
+    return dispatchMessage({
+      ...params,
+      overrideCategory: 'web_search',
+      _reRouted: true,
+    });
+  }
+
   // Silent re-route: if chat couldn't fulfill the request, re-classify and re-dispatch
   if (effectiveCategory === 'chat' && !params.overrideCategory && !params._reRouted) {
     const CAPABILITY_GAP_PATTERNS = [
@@ -754,6 +764,10 @@ async function runPipelineDispatch(
     routerModel: config.router?.model,
     sourceContext: params.sourceContext,
     onStream: params.onStream,
+    conversational: !params.cronMode && (() => {
+      const state = params.sessionStore?.loadState(agentId, sessionKey ?? 'default');
+      return !!state && state.turnCount > 0;
+    })(),
   };
 
   // Sub-dispatch for plan pipeline orchestration — delegates sub-tasks to specialists

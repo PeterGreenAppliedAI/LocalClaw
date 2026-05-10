@@ -194,6 +194,19 @@ export const researchPipeline: PipelineDefinition = {
       type: 'code',
       execute: (ctx) => {
         const msg = ctx.userMessage.toLowerCase();
+
+        // Conversational downgrade: if user is mid-conversation and doesn't want a report/deck,
+        // abort the research pipeline and let dispatch re-route to web_search
+        if (ctx.conversational) {
+          const hasArtifactIntent = /\b(report|deck|brief|pdf|docx|presentation|slide|deep.?dive|write.?up|memo|teardown|market|analyze|analysis)\b/i.test(msg);
+          if (!hasArtifactIntent) {
+            ctx.abort = true;
+            ctx.answer = '__DOWNGRADE_TO_WEB_SEARCH__';
+            console.log('[Research] Conversational context, no artifact intent — downgrading to web_search');
+            return;
+          }
+        }
+
         const currentType = ctx.params.artifactType as string;
         if (!currentType || currentType === 'memo') {
           if (/\b(pdf|docx)\b.*\breport\b/i.test(msg) || /\breport\b.*\b(pdf|docx)\b/i.test(msg) || /\bpdf report\b/i.test(msg)) {

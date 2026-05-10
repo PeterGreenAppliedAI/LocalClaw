@@ -37,6 +37,8 @@ export interface PipelineContext {
   loopIndex?: number;
   /** Set to true to abort the pipeline early */
   abort?: boolean;
+  /** True when the user is in an active conversation (has prior turns). Specialists can adjust behavior. */
+  conversational?: boolean;
   /** Final answer (set by the last stage or an early exit) */
   answer?: string;
   /** Stream callback — stages with stream: true will use this for progressive output */
