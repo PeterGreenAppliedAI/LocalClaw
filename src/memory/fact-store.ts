@@ -15,12 +15,21 @@ const CATEGORY_LABELS: Record<FactCategory, string> = {
 
 const CATEGORY_ORDER: FactCategory[] = ['stable', 'context', 'decision', 'question'];
 
-/** Auto-expiry TTLs by category. null = never expires. */
+/** Auto-expiry TTLs by category (legacy fallback). null = never expires. */
 const CATEGORY_TTL_DAYS: Record<FactCategory, number | null> = {
   stable: null,
   context: 14,
   decision: 30,
   question: 7,
+};
+
+/** Importance-based TTLs. null = never expires. Overrides category TTL when importance is set. */
+const IMPORTANCE_TTL_DAYS: Record<number, number | null> = {
+  5: null,    // critical: health, family — never expires
+  4: null,    // identity: job, employer, key projects — never expires
+  3: 90,      // preference: dark mode, cookies, tool choices
+  2: 30,      // context: current tasks, upcoming events, recent decisions
+  1: 7,       // ephemeral: one-off mentions, transient questions
 };
 
 /**
@@ -89,10 +98,10 @@ export class FactStore {
     const dateStr = now.toISOString().slice(0, 10);
     const ts = now.toISOString().replace(/[:.]/g, '-');
 
-    // Auto-compute expiresAt from category TTL if not explicitly set
+    // Auto-compute expiresAt from importance TTL (falls back to category TTL for legacy facts)
     let expiresAt = parsed.expiresAt;
     if (!expiresAt) {
-      const ttlDays = CATEGORY_TTL_DAYS[parsed.category];
+      const ttlDays = IMPORTANCE_TTL_DAYS[parsed.importance ?? 2] ?? CATEGORY_TTL_DAYS[parsed.category];
       if (ttlDays !== null) {
         const created = new Date(createdAt);
         created.setDate(created.getDate() + ttlDays);
@@ -112,6 +121,7 @@ export class FactStore {
       senderId,
       tags: parsed.tags,
       entities: parsed.entities,
+      importance: parsed.importance ?? 2,
     });
 
     // Write raw file
@@ -419,6 +429,7 @@ export class FactStore {
           category: 'stable' as const,
           confidence: 0.7,
           source: `legacy/${file}`,
+          importance: 4,  // legacy facts are identity-level (never expire)
         }));
 
         // Preserve original date from filename so legacy facts don't appear "newest"
@@ -430,13 +441,13 @@ export class FactStore {
       this.migrating = false;
     }
 
+    // Mark migration complete BEFORE rebuild (prevents recursive re-migration)
+    writeFileSync(markerPath, new Date().toISOString());
+
     if (migrated > 0) {
       this.rebuildFacts(senderId);
       console.log(`[FactStore] Migrated ${migrated} facts from legacy files for user ${senderId}`);
     }
-
-    // Mark migration complete
-    writeFileSync(markerPath, new Date().toISOString());
 
     return migrated;
   }
@@ -452,10 +463,9 @@ export class FactStore {
       return cached.entries;
     }
 
-    // Always attempt legacy migration (uses .migrated marker to avoid repeat work)
-    // Fire-and-forget since loadFactsJson is sync — migration writes are async but
-    // this.migrating=true skips the embedding check so writes complete fast
-    if (senderId) {
+    // Attempt legacy migration if not already in progress
+    // Fire-and-forget since loadFactsJson is sync
+    if (senderId && !this.migrating) {
       this.migrateFromLegacy(senderId).catch(() => {});
     }
 
@@ -503,9 +513,11 @@ export class FactStore {
   private async checkEmbeddingSimilarity(newText: string, existing: FactEntry[]): Promise<boolean> {
     if (!this.client || existing.length === 0) return false;
 
-    // Embed the new fact + all existing facts in one batch call
-    const texts = [newText, ...existing.map(e => e.text)];
-    const embeddings = await this.client.embed(texts);
+    // Compare against the 10 most recent facts (duplicates are usually recent)
+    // This limits API calls to 2: one for new fact, one batch for recent facts
+    const recent = existing.slice(-10);
+    const allTexts = [newText, ...recent.map(e => e.text)];
+    const embeddings = await this.client.embed(allTexts);
     if (!embeddings || embeddings.length < 2) return false;
 
     const newEmb = embeddings[0];

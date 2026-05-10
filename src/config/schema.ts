@@ -281,6 +281,8 @@ export const FactEntrySchema = z.object({
   entities: z.array(z.string()).default([]),
   /** Timestamp of last heartbeat review — prevents review fatigue */
   lastReviewedAt: z.string().optional(),
+  /** Importance tier: 5=critical (health/family), 4=identity (job/projects), 3=preference, 2=context, 1=ephemeral */
+  importance: z.number().min(1).max(5).default(2),
 });
 
 /** Input shape for creating a new fact (id/hash/createdAt auto-generated). */
@@ -292,6 +294,8 @@ export const FactInputSchema = z.object({
   expiresAt: z.string().optional(),
   tags: z.array(z.string()).default([]),
   entities: z.array(z.string()).default([]),
+  /** Importance tier: 5=critical (health/family), 4=identity (job/projects), 3=preference, 2=context, 1=ephemeral */
+  importance: z.number().min(1).max(5).default(2),
 });
 
 export const LocalClawConfigSchema = z.object({

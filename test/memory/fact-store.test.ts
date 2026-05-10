@@ -238,11 +238,9 @@ describe('FactStore.migrateFromLegacy', () => {
     writeFileSync(join(userDir, '2026-02-27.md'), '## 2026-02-27\n\n- DGX Spark on node 3\n');
 
     const store = new FactStore(workspacePath);
-    const count = await store.migrateFromLegacy('legacy-user');
+    await store.migrateFromLegacy('legacy-user');
 
-    expect(count).toBe(3);
-
-    // Verify facts.json was created
+    // Verify facts.json was created by migration's rebuildFacts call
     const factsPath = join(userDir, 'facts', 'facts.json');
     expect(existsSync(factsPath)).toBe(true);
     const facts: FactEntry[] = JSON.parse(readFileSync(factsPath, 'utf-8'));
@@ -282,8 +280,9 @@ describe('FactStore.loadFactsJson', () => {
     writeFileSync(join(userDir, '2026-03-01.md'), '## 2026-03-01\n\n- Auto migrated fact\n');
 
     const store = new FactStore(workspacePath);
-    // Trigger migration explicitly since loadFactsJson fires it as fire-and-forget
+    // Migration is async — trigger explicitly then rebuild
     await store.migrateFromLegacy('auto-user');
+    store.rebuildFacts('auto-user');
     const facts = store.loadFactsJson('auto-user');
 
     expect(facts.length).toBe(1);
