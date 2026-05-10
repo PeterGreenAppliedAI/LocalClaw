@@ -1607,14 +1607,21 @@ Write a useful ${timeOfDay} update:
                 const client = (adapter as any).getClient();
                 const ch = await client?.channels.fetch(msg.channelId);
                 if (ch && 'send' in ch) {
+                  const initContent = streamBuffer.length > 1990
+                    ? streamBuffer.slice(0, 1990) + ' ...'
+                    : streamBuffer + ' ...';
                   streamMsg = await (ch as any).send({
-                    content: streamBuffer + ' ...',
+                    content: initContent,
                     reply: { messageReference: msg.id },
                   });
                 }
               }
             } else {
-              await streamMsg.edit(streamBuffer + ' ...');
+              // Discord message limit is 2000 chars — truncate stream preview
+              const preview = streamBuffer.length > 1990
+                ? streamBuffer.slice(0, 1990) + ' ...'
+                : streamBuffer + ' ...';
+              await streamMsg.edit(preview);
             }
           } catch (err) {
             console.warn('[Orchestrator] Stream edit failed:', err instanceof Error ? err.message : err);
