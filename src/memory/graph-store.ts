@@ -71,7 +71,7 @@ export class GraphMemoryStore {
    * Add a fact to the graph. Checks for semantic duplicates first.
    * Returns the fact ID if stored, null if deduplicated.
    */
-  async addFact(input: FactInput, senderId: string): Promise<string | null> {
+  async addFact(input: FactInput, senderId: string, sourceSession?: string): Promise<string | null> {
     if (!this.graph) await this.connect();
 
     const text = input.text.trim();
@@ -141,6 +141,18 @@ export class GraphMemoryStore {
          CREATE (f)-[:TAGGED]->(t)`,
         { params: { name: tagName, senderId, factId: id } }
       );
+    }
+
+    // Provenance: link fact to the session it was extracted from
+    if (sourceSession) {
+      try {
+        await this.graph!.query(
+          `MATCH (f:Fact {id: $factId}), (t:Turn {sessionKey: $session, senderId: $senderId})
+           WITH f, t ORDER BY t.createdAt DESC LIMIT 1
+           CREATE (f)-[:EXTRACTED_FROM]->(t)`,
+          { params: { factId: id, session: sourceSession, senderId } }
+        );
+      } catch { /* best-effort */ }
     }
 
     console.log(`[GraphMemory] Stored: "${text.slice(0, 60)}" (imp=${importance}, cat=${category})`);
@@ -339,17 +351,33 @@ export class GraphMemoryStore {
     if (!this.graph) await this.connect();
     if (!text || text.length < 10) return;
 
-    // Truncate long turns for storage efficiency
     const stored = text.length > 500 ? text.slice(0, 500) : text;
+    const turnId = `turn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
     try {
       await this.graph!.query(
         `CREATE (:Turn {
-          text: $text, role: $role, senderId: $senderId,
+          id: $id, text: $text, role: $role, senderId: $senderId,
           sessionKey: $sessionKey, createdAt: $now
         })`,
-        { params: { text: stored, role, senderId, sessionKey, now: new Date().toISOString() } }
+        { params: { id: turnId, text: stored, role, senderId, sessionKey, now: new Date().toISOString() } }
       );
+
+      // Link turn to existing entities mentioned in the text
+      const entities = await this.graph!.query(
+        `MATCH (e:Entity {senderId: $senderId}) RETURN e.name`,
+        { params: { senderId } }
+      );
+      for (const row of (entities.data ?? []) as any[]) {
+        const entityName = row['e.name'];
+        if (entityName && stored.toLowerCase().includes(entityName.toLowerCase())) {
+          await this.graph!.query(
+            `MATCH (t:Turn {id: $turnId}), (e:Entity {name: $name, senderId: $senderId})
+             CREATE (t)-[:MENTIONS]->(e)`,
+            { params: { turnId, name: entityName, senderId } }
+          );
+        }
+      }
     } catch (err) {
       console.warn('[GraphMemory] Failed to store turn:', err instanceof Error ? err.message : err);
     }
@@ -363,29 +391,73 @@ export class GraphMemoryStore {
   }>> {
     if (!this.graph) await this.connect();
 
-    const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    if (words.length === 0) return [];
+    const results: Array<{ text: string; role: string; sessionKey: string; createdAt: string }> = [];
+    const seen = new Set<string>();
 
-    // Match turns containing all significant query words
-    const conditions = words.map((_, i) => `toLower(t.text) CONTAINS $w${i}`).join(' AND ');
-    const wordParams: Record<string, string> = { senderId };
-    words.forEach((w, i) => { wordParams[`w${i}`] = w; });
+    // Strategy 1: Entity traversal — find turns that MENTIONS entities matching the query
+    try {
+      const entityResult = await this.graph!.query(
+        `MATCH (t:Turn {senderId: $senderId})-[:MENTIONS]->(e:Entity)
+         WHERE toLower(e.name) CONTAINS toLower($query)
+         RETURN t.text, t.role, t.sessionKey, t.createdAt
+         ORDER BY t.createdAt DESC
+         LIMIT ${maxResults}`,
+        { params: { senderId, query } }
+      );
+      for (const row of (entityResult.data ?? []) as any[]) {
+        const key = row['t.text'];
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({ text: row['t.text'], role: row['t.role'], sessionKey: row['t.sessionKey'], createdAt: row['t.createdAt'] ?? '' });
+        }
+      }
+    } catch { /* entity search optional */ }
 
-    const result = await this.graph!.query(
-      `MATCH (t:Turn {senderId: $senderId})
-       WHERE ${conditions}
-       RETURN t.text, t.role, t.sessionKey, t.createdAt
-       ORDER BY t.createdAt DESC
-       LIMIT ${maxResults}`,
-      { params: wordParams }
-    );
+    // Strategy 2: Keyword matching (fallback and supplement)
+    if (results.length < maxResults) {
+      const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      if (words.length > 0) {
+        const conditions = words.map((_, i) => `toLower(t.text) CONTAINS $w${i}`).join(' AND ');
+        const wordParams: Record<string, string> = { senderId };
+        words.forEach((w, i) => { wordParams[`w${i}`] = w; });
 
-    return (result.data ?? []).map((row: any) => ({
-      text: row['t.text'],
-      role: row['t.role'],
-      sessionKey: row['t.sessionKey'],
-      createdAt: row['t.createdAt'] ?? '',
-    }));
+        try {
+          const keywordResult = await this.graph!.query(
+            `MATCH (t:Turn {senderId: $senderId})
+             WHERE ${conditions}
+             RETURN t.text, t.role, t.sessionKey, t.createdAt
+             ORDER BY t.createdAt DESC
+             LIMIT ${maxResults}`,
+            { params: wordParams }
+          );
+          for (const row of (keywordResult.data ?? []) as any[]) {
+            const key = row['t.text'];
+            if (!seen.has(key)) {
+              seen.add(key);
+              results.push({ text: row['t.text'], role: row['t.role'], sessionKey: row['t.sessionKey'], createdAt: row['t.createdAt'] ?? '' });
+            }
+          }
+        } catch { /* keyword search fallback */ }
+      }
+    }
+
+    // Strategy 3: If query is empty (used by heartbeat for recent turns), return latest
+    if (query === '' && results.length === 0) {
+      try {
+        const recentResult = await this.graph!.query(
+          `MATCH (t:Turn {senderId: $senderId})
+           RETURN t.text, t.role, t.sessionKey, t.createdAt
+           ORDER BY t.createdAt DESC
+           LIMIT ${maxResults}`,
+          { params: { senderId } }
+        );
+        for (const row of (recentResult.data ?? []) as any[]) {
+          results.push({ text: row['t.text'], role: row['t.role'], sessionKey: row['t.sessionKey'], createdAt: row['t.createdAt'] ?? '' });
+        }
+      } catch { /* best-effort */ }
+    }
+
+    return results.slice(0, maxResults);
   }
 
   // ========== SUPERSEDES — Temporal fact evolution ==========

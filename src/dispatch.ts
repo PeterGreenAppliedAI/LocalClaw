@@ -325,10 +325,22 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
         stableFacts = stable.slice(0, 5).map(f => `- ${f.text}`);
 
         if (message.length > 10) {
+          // Vector KNN search
           const results = await params.graphMemory.search(message, senderId, 5);
           contextFacts = results
             .filter(r => !stableFacts.some(s => s.includes(r.text)))
             .map(r => `- ${r.text}`);
+
+          // Multi-hop: find connected facts through shared entities
+          if (results.length > 0) {
+            try {
+              const hops = await params.graphMemory.findMultiHop(message, senderId, 2, 3);
+              const hopFacts = hops
+                .filter(h => !stableFacts.some(s => s.includes(h.text)) && !contextFacts.some(c => c.includes(h.text)))
+                .map(h => `- ${h.text}`);
+              contextFacts.push(...hopFacts);
+            } catch { /* multi-hop optional */ }
+          }
         }
       } else if (params.factStore) {
         // Flat store fallback

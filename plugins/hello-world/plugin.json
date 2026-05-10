@@ -1,0 +1,7 @@
+{
+  "name": "hello-world",
+  "version": "1.0.0",
+  "type": "tool",
+  "main": "index.js",
+  "description": "Test plugin"
+}
