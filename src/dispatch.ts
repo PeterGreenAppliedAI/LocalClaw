@@ -400,9 +400,16 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       /\bif I (?:had|could) (?:access|tools|the ability)/i,
       /\byou (?:would need to|should|could try|might want to) (?:use|open|go to|check|visit)/i,
       /\bI don't have (?:the ability|access|tools|a way|direct)/i,
+      // Narrated tool calls — model writes tool syntax as text without actually calling tools
+      /\[\w+\s*\(.*\)\]/i,
     ];
     if (CAPABILITY_GAP_PATTERNS.some(p => p.test(result.answer))) {
-      const reClassification = await classifyMessage(client, config.router, message);
+      // Use conversation context for re-classification — "Sure go ahead" alone won't classify correctly
+      const lastAssistant = history?.slice().reverse().find(h => h.role === 'assistant');
+      const contextMessage = lastAssistant
+        ? `${lastAssistant.content.slice(-300)}\nUser: ${message}`
+        : message;
+      const reClassification = await classifyMessage(client, config.router, contextMessage);
       if (reClassification.category !== 'chat') {
         console.log(`[Dispatch] Silent re-route: chat gap detected → ${reClassification.category}`);
         const reResult = await dispatchMessage({
