@@ -310,17 +310,73 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     }
   }
 
-  // 4b. User priming — pull stable facts so specialists know who they're talking to
+  // 4b. User priming — stable facts + embedding-based contextual memory injection
   let userPriming = '';
-  if (params.factStore && senderId) {
+  if (params.factStore && senderId && !params.cronMode) {
     try {
-      const stableFacts = params.factStore.loadFactsJson(senderId)
-        .filter(f => f.category === 'stable' && f.confidence >= 0.7)
-        .sort((a, b) => b.confidence - a.confidence)
-        .slice(0, 10)
+      const allFacts = params.factStore.loadFactsJson(senderId);
+
+      // Layer 1: High-importance stable facts (always injected)
+      const stableFacts = allFacts
+        .filter(f => (f.importance ?? 2) >= 4 && f.confidence >= 0.7)
+        .sort((a, b) => (b.importance ?? 2) - (a.importance ?? 2))
+        .slice(0, 5)
         .map(f => `- ${f.text}`);
-      if (stableFacts.length > 0) {
-        userPriming = `## Background context about this user (do NOT reference unless directly relevant to what they're asking about)\n${stableFacts.join('\n')}`;
+
+      // Layer 2: Contextually relevant facts via embedding similarity
+      let contextFacts: string[] = [];
+      if (client && allFacts.length > 0 && message.length > 10) {
+        try {
+          const [queryEmb] = await client.embed(message);
+          if (queryEmb) {
+            const factsWithText = allFacts.filter(f =>
+              !stableFacts.some(s => s.includes(f.text)) && f.text.length > 5
+            );
+            if (factsWithText.length > 0) {
+              const factTexts = factsWithText.map(f => f.text);
+              const factEmbeddings = await client.embed(factTexts);
+
+              // Score: similarity * 0.5 + recency * 0.2 + importance * 0.3
+              const scored = factsWithText.map((f, i) => {
+                let sim = 0;
+                if (factEmbeddings[i]) {
+                  let dot = 0, nA = 0, nB = 0;
+                  for (let j = 0; j < queryEmb.length && j < factEmbeddings[i].length; j++) {
+                    dot += queryEmb[j] * factEmbeddings[i][j];
+                    nA += queryEmb[j] * queryEmb[j];
+                    nB += factEmbeddings[i][j] * factEmbeddings[i][j];
+                  }
+                  const denom = Math.sqrt(nA) * Math.sqrt(nB);
+                  sim = denom > 0 ? dot / denom : 0;
+                }
+
+                const ageMs = Date.now() - new Date(f.createdAt).getTime();
+                const recency = Math.exp(-ageMs / (7 * 24 * 60 * 60 * 1000)); // 7-day half-life
+                const importance = ((f.importance ?? 2) - 1) / 4; // normalize 1-5 to 0-1
+
+                return { fact: f, score: sim * 0.5 + recency * 0.2 + importance * 0.3 };
+              });
+
+              contextFacts = scored
+                .filter(s => s.score > 0.35)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 5)
+                .map(s => `- ${s.fact.text}`);
+            }
+          }
+        } catch (err) {
+          // Non-blocking — continue without contextual injection
+          console.warn('[Dispatch] Memory injection failed:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      // Combine layers, deduplicate
+      const allPriming = [...new Set([...stableFacts, ...contextFacts])];
+      if (allPriming.length > 0) {
+        userPriming = `## Background context about this user (do NOT reference unless directly relevant)\n${allPriming.join('\n')}`;
+        if (contextFacts.length > 0) {
+          console.log(`[Dispatch] Memory injection: ${stableFacts.length} stable + ${contextFacts.length} contextual facts`);
+        }
       }
     } catch {
       // Non-critical — continue without priming
