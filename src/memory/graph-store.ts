@@ -311,6 +311,304 @@ export class GraphMemoryStore {
     return ((result.data ?? [])[0] as any)?.cnt ?? 0;
   }
 
+  // ========== SUPERSEDES — Temporal fact evolution ==========
+
+  /**
+   * Update a fact by creating a new version and linking with SUPERSEDES edge.
+   * Old fact is kept for history. Returns new fact ID.
+   */
+  async updateFact(oldText: string, newInput: FactInput, senderId: string): Promise<string | null> {
+    if (!this.graph) await this.connect();
+
+    // Find the old fact
+    const oldResult = await this.graph!.query(
+      `MATCH (f:Fact {senderId: $senderId}) WHERE f.text CONTAINS $match RETURN f.id, f.text LIMIT 1`,
+      { params: { senderId, match: oldText } }
+    );
+    if ((oldResult.data ?? []).length === 0) return null;
+
+    const oldId = (oldResult.data![0] as any)['f.id'];
+
+    // Create the new fact directly (skip dedup — this IS an intentional update)
+    const [embedding] = await this.client.embed(newInput.text);
+    if (!embedding) return null;
+
+    const newId = `fact_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    await this.graph!.query(
+      `CREATE (:Fact {
+        id: $id, text: $text, senderId: $senderId,
+        importance: $importance, category: $category, confidence: $confidence,
+        createdAt: $createdAt, source: $source, embedding: vecf32($emb)
+      })`,
+      {
+        params: {
+          id: newId, text: newInput.text, senderId,
+          importance: newInput.importance ?? 2, category: newInput.category ?? 'stable',
+          confidence: newInput.confidence ?? 0.8, createdAt: now,
+          source: newInput.source ?? 'update', emb: embedding,
+        },
+      }
+    );
+
+    // Link: new SUPERSEDES old
+    await this.graph!.query(
+      `MATCH (old:Fact {id: $oldId}), (new:Fact {id: $newId})
+       CREATE (new)-[:SUPERSEDES {at: $now}]->(old)
+       SET old.superseded = true`,
+      { params: { oldId, newId, now: new Date().toISOString() } }
+    );
+
+    console.log(`[GraphMemory] Fact updated: "${oldText.slice(0, 40)}" → "${newInput.text.slice(0, 40)}"`);
+    return newId;
+  }
+
+  /**
+   * Get the history of a fact — follow SUPERSEDES chain backwards.
+   */
+  async getFactHistory(factText: string, senderId: string): Promise<Array<{ text: string; createdAt: string; current: boolean }>> {
+    if (!this.graph) await this.connect();
+
+    const result = await this.graph!.query(
+      `MATCH (current:Fact {senderId: $senderId})-[:SUPERSEDES*0..10]->(old:Fact)
+       WHERE current.text CONTAINS $match
+       RETURN old.text, old.createdAt, old.superseded
+       ORDER BY old.createdAt DESC`,
+      { params: { senderId, match: factText } }
+    );
+
+    // Also include the current (non-superseded) fact
+    const currentResult = await this.graph!.query(
+      `MATCH (f:Fact {senderId: $senderId}) WHERE f.text CONTAINS $match RETURN f.text, f.createdAt, f.superseded ORDER BY f.createdAt DESC LIMIT 1`,
+      { params: { senderId, match: factText } }
+    );
+    const allRows = [...(currentResult.data ?? []), ...(result.data ?? [])];
+
+    const seen = new Set<string>();
+    return allRows
+      .map((row: any) => {
+        const text = row['old.text'] ?? row['f.text'];
+        if (seen.has(text)) return null;
+        seen.add(text);
+        return {
+          text,
+          createdAt: row['old.createdAt'] ?? row['f.createdAt'] ?? '',
+          current: !(row['old.superseded'] ?? row['f.superseded']),
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+  }
+
+  // ========== TEMPORAL QUERIES ==========
+
+  /**
+   * Get facts as they were at a specific point in time.
+   */
+  async getFactsAt(senderId: string, asOf: Date): Promise<GraphSearchResult[]> {
+    if (!this.graph) await this.connect();
+
+    // Get facts created before asOf that haven't been superseded (or were superseded after asOf)
+    const result = await this.graph!.query(
+      `MATCH (f:Fact {senderId: $senderId})
+       WHERE f.createdAt <= $asOf
+       OPTIONAL MATCH (newer:Fact)-[s:SUPERSEDES]->(f)
+       WHERE s.at <= $asOf
+       WITH f, newer
+       WHERE newer IS NULL
+       RETURN f.text, f.importance, f.category, f.confidence, f.createdAt
+       ORDER BY f.importance DESC, f.createdAt DESC`,
+      { params: { senderId, asOf: asOf.toISOString() } }
+    );
+
+    return (result.data ?? []).map((row: any) => ({
+      text: row['f.text'],
+      importance: row['f.importance'],
+      category: row['f.category'],
+      confidence: row['f.confidence'],
+      score: 1,
+      createdAt: row['f.createdAt'] ?? '',
+      entities: [],
+    }));
+  }
+
+  /**
+   * Get facts that changed between two dates.
+   */
+  async getFactChanges(senderId: string, since: Date, until?: Date): Promise<{
+    added: GraphSearchResult[];
+    superseded: Array<{ oldText: string; newText: string; changedAt: string }>;
+  }> {
+    if (!this.graph) await this.connect();
+    const untilStr = (until ?? new Date()).toISOString();
+
+    // New facts added in the window (not updates of existing facts)
+    const addedResult = await this.graph!.query(
+      `MATCH (f:Fact {senderId: $senderId})
+       WHERE f.createdAt >= $since AND f.createdAt <= $until
+       OPTIONAL MATCH (f)-[:SUPERSEDES]->(old:Fact)
+       WITH f, old WHERE old IS NULL
+       RETURN f.text, f.importance, f.category, f.confidence, f.createdAt
+       ORDER BY f.createdAt DESC`,
+      { params: { senderId, since: since.toISOString(), until: untilStr } }
+    );
+
+    // Facts that were superseded in the window
+    const supersededResult = await this.graph!.query(
+      `MATCH (new:Fact {senderId: $senderId})-[s:SUPERSEDES]->(old:Fact)
+       WHERE s.at >= $since AND s.at <= $until
+       RETURN old.text, new.text, s.at
+       ORDER BY s.at DESC`,
+      { params: { senderId, since: since.toISOString(), until: untilStr } }
+    );
+
+    return {
+      added: (addedResult.data ?? []).map((row: any) => ({
+        text: row['f.text'],
+        importance: row['f.importance'],
+        category: row['f.category'],
+        confidence: row['f.confidence'],
+        score: 1,
+        createdAt: row['f.createdAt'] ?? '',
+        entities: [],
+      })),
+      superseded: (supersededResult.data ?? []).map((row: any) => ({
+        oldText: row['old.text'],
+        newText: row['new.text'],
+        changedAt: row['s.at'],
+      })),
+    };
+  }
+
+  // ========== MULTI-HOP REASONING ==========
+
+  /**
+   * Find facts connected within N hops through shared entities.
+   * "Peter works at DevMesh" → DevMesh → "DevMesh does AI" → AI → "AI career fair next week"
+   */
+  async findMultiHop(query: string, senderId: string, maxHops = 3, topK = 10): Promise<GraphSearchResult[]> {
+    if (!this.graph) await this.connect();
+
+    // First find the most relevant fact via vector search
+    const [queryEmb] = await this.client.embed(query);
+    if (!queryEmb) return [];
+
+    const seedResult = await this.graph!.query(
+      `CALL db.idx.vector.queryNodes('Fact', 'embedding', 1, vecf32($emb))
+       YIELD node, score
+       WHERE node.senderId = $senderId
+       RETURN node.id, node.text, score`,
+      { params: { emb: queryEmb, senderId } }
+    );
+
+    if ((seedResult.data ?? []).length === 0) return [];
+    const seedId = (seedResult.data![0] as any)['node.id'];
+
+    // Traverse from seed through entities — 1 hop (shared entity)
+    const hop1Result = await this.graph!.query(
+      `MATCH (seed:Fact {id: $seedId})-[:ABOUT]->(:Entity)<-[:ABOUT]-(related:Fact)
+       WHERE related.senderId = $senderId AND related.id <> $seedId
+       RETURN DISTINCT related.text AS text, related.importance AS importance,
+              related.category AS category, related.confidence AS confidence,
+              related.createdAt AS createdAt, 1 AS hops
+       LIMIT $topK`,
+      { params: { seedId, senderId, topK } }
+    );
+
+    // 2 hops (entity → fact → entity → fact)
+    const hop2Result = await this.graph!.query(
+      `MATCH (seed:Fact {id: $seedId})-[:ABOUT]->(:Entity)<-[:ABOUT]-(mid:Fact)-[:ABOUT]->(:Entity)<-[:ABOUT]-(far:Fact)
+       WHERE far.senderId = $senderId AND far.id <> $seedId AND mid.id <> $seedId
+       RETURN DISTINCT far.text AS text, far.importance AS importance,
+              far.category AS category, far.confidence AS confidence,
+              far.createdAt AS createdAt, 2 AS hops
+       LIMIT $topK`,
+      { params: { seedId, senderId, topK } }
+    );
+
+    const allHops = [...(hop1Result.data ?? []), ...(hop2Result.data ?? [])];
+    const seen = new Set<string>();
+
+    return allHops
+      .map((row: any) => {
+        if (seen.has(row.text)) return null;
+        seen.add(row.text);
+        return {
+          text: row.text,
+          importance: row.importance ?? 2,
+          category: row.category ?? 'stable',
+          confidence: row.confidence ?? 0.8,
+          score: 1 / (row.hops ?? 1),
+          createdAt: row.createdAt ?? '',
+          entities: [],
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+  }
+
+  // ========== COMMUNITY DETECTION — Fact Clusters ==========
+
+  /**
+   * Find clusters of related facts by entity co-occurrence.
+   * Returns groups of facts that share entities.
+   */
+  async getClusters(senderId: string): Promise<Array<{ entity: string; facts: string[]; importance: number }>> {
+    if (!this.graph) await this.connect();
+
+    const result = await this.graph!.query(
+      `MATCH (f:Fact {senderId: $senderId})-[:ABOUT]->(e:Entity)
+       WITH e, collect(f.text) AS facts, max(f.importance) AS maxImp, count(f) AS cnt
+       WHERE cnt >= 2
+       RETURN e.name, facts, maxImp
+       ORDER BY maxImp DESC, cnt DESC`,
+      { params: { senderId } }
+    );
+
+    return (result.data ?? []).map((row: any) => ({
+      entity: row['e.name'],
+      facts: row['facts'] ?? [],
+      importance: row['maxImp'] ?? 2,
+    }));
+  }
+
+  /**
+   * Get a narrative summary of clusters for briefing context.
+   * Groups facts by shared entities, returns structured clusters.
+   */
+  async getClusterSummary(senderId: string): Promise<Array<{ theme: string; entities: string[]; factCount: number; topFacts: string[] }>> {
+    if (!this.graph) await this.connect();
+
+    // Find entities that connect multiple facts
+    const result = await this.graph!.query(
+      `MATCH (f:Fact {senderId: $senderId})-[:ABOUT]->(e:Entity)
+       WITH e, collect(DISTINCT f.text) AS facts, count(DISTINCT f) AS cnt
+       WHERE cnt >= 2
+       RETURN e.name, e.type, facts, cnt
+       ORDER BY cnt DESC
+       LIMIT 10`,
+      { params: { senderId } }
+    );
+
+    // Group entities that share facts into themes
+    const clusters: Array<{ theme: string; entities: string[]; factCount: number; topFacts: string[] }> = [];
+    const seen = new Set<string>();
+
+    for (const row of (result.data ?? []) as any[]) {
+      const entity = row['e.name'];
+      const facts: string[] = row['facts'] ?? [];
+      if (seen.has(entity)) continue;
+      seen.add(entity);
+
+      clusters.push({
+        theme: entity,
+        entities: [entity],
+        factCount: facts.length,
+        topFacts: facts.slice(0, 3),
+      });
+    }
+
+    return clusters;
+  }
+
   async close(): Promise<void> {
     if (this.db) {
       await this.db.close();
