@@ -31,13 +31,25 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage)
 Memory uses a **dual-backend** architecture: **FalkorDB graph database** (primary) with flat JSONL FactStore (fallback).
 
 **Graph memory (`src/memory/graph-store.ts`):**
-- FalkorDB with native HNSW vector search (4096-dim embeddings via qwen3-embedding:8b)
-- Fact nodes with importance tiers (1-5), entity/tag nodes, ABOUT/TAGGED/SUPERSEDES edges
+- FalkorDB (GraphBLAS-based graph database, Docker on Mac Mini, Redis wire protocol)
+- Native HNSW vector search (4096-dim embeddings via qwen3-embedding:8b)
 - Semantic dedup on write (cosine distance < 0.15 rejected)
 - Multi-signal search scoring: `similarity * 0.5 + recency * 0.2 + importance * 0.3`
-- Auto-injection: relevant facts silently injected into specialist context on every message
-- SUPERSEDES edges for temporal fact evolution (old → new with history)
-- Multi-hop traversal through shared entities, cluster detection for briefings
+- Auto-injection: vector KNN + multi-hop entity traversal, silently injected into specialist context
+
+**Graph schema:**
+```
+(:Fact {text, importance, embedding})  -[:ABOUT]->       (:Entity {name, type})
+(:Fact)                                -[:TAGGED]->      (:Tag {name})
+(:Fact)                                -[:SUPERSEDES]->   (:Fact)           // temporal evolution
+(:Fact)                                -[:EXTRACTED_FROM]->(:Turn)          // provenance
+(:Turn {text, role, sessionKey})       -[:MENTIONS]->     (:Entity)         // conversation links
+(:UserModel {communicationStyle, decisionPattern, topicInterests, frustrationTriggers})
+```
+
+**Cross-session search:** Turn nodes stored on every dispatch. `memory_search source="conversations"` searches via entity traversal + keyword fallback.
+
+**Behavioral user modeling:** UserModel node updated every heartbeat by qwen3.6 analyzing recent interactions. Injected into specialist context as "User preferences."
 
 **Flat store fallback (`src/memory/fact-store.ts`):**
 - JSONL index + facts.json, used when FalkorDB is unavailable
@@ -55,7 +67,9 @@ Memory uses a **dual-backend** architecture: **FalkorDB graph database** (primar
 2. **Heartbeat (autonomous)** — Every 2 hours, `reviewTranscripts()` scans sessions, extracts facts with existing facts shown to prevent re-extraction.
 3. **`memory_forget`** — Removes from both graph and flat store. Records removal to prevent re-extraction.
 
-**Search:** `memory_search` uses graph vector KNN (primary) or flat store keyword scoring (fallback). `source="knowledge"` for vector search over imported documents.
+**Search:** `memory_search` uses graph vector KNN (primary) or flat store keyword scoring (fallback). `source="knowledge"` for vector search over imported documents. `source="conversations"` for cross-session search via entity traversal + keyword matching.
+
+**Commands:** `!forget <term>` — direct command, bypasses router, removes matching facts from both graph and flat store with flexible word-level matching.
 
 **Self-improvement store:** `.learnings/errors.jsonl` records tool failures. Before tool execution, `findHints()` checks for matching past errors and prepends hints. `enrichObservation()` scans tool output for 8 known error patterns (permission denied, timeout, 404, rate limit, etc.) and enriches with suggestions. Recurring patterns (3+ occurrences) promoted to `LEARNINGS.md` via heartbeat.
 
@@ -224,8 +238,12 @@ src/
     types.ts                #   OllamaMessage, OllamaTool, OllamaToolCall
 
   skills/                   # Self-improving procedural memory
-    store.ts                #   SkillStore — save/load/update skill files
+    store.ts                #   SkillStore — save/load/update/archive/merge skill files
     matcher.ts              #   findMatchingSkill() — keyword scoring with threshold + ratio check
+
+  plugins/                  # Plugin system — dynamic tool discovery
+    loader.ts               #   Scan plugins/ and ~/.localclaw/plugins/, dynamic import, auto-register
+    types.ts                #   PluginManifest, PluginExport interfaces
 
   agents/                   # Agent routing & workspace
     resolve-route.ts        #   Binding-based agent routing
