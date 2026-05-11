@@ -123,7 +123,7 @@ export class GraphMemoryStore {
     if (entities.length === 0) {
       try {
         const nerResponse = await this.client.chat({
-          model: 'phi4:14b',
+          model: 'phi4-mini',
           messages: [{
             role: 'user',
             content: `Extract named entities from this text. Return ONLY a JSON array of strings. Include: people, companies, products, technologies, places, events. Exclude generic words.\n\nText: "${text}"\n\nReturn: ["entity1", "entity2"]`,
