@@ -655,11 +655,17 @@ export class Orchestrator {
               model: 'qwen3.6:35b',
               messages: [{
                 role: 'user',
-                content: `Analyze these recent interactions and describe the user's behavioral patterns. Return JSON:
-{"communicationStyle":"brief/detailed/technical/casual","decisionPattern":"data-driven/intuitive/collaborative","topicInterests":"comma-separated","frustrationTriggers":"what annoys them"}
-Recent interactions:\n${turnSummary}\nReturn ONLY JSON. /no_think`,
+                content: `You are analyzing a user's behavior from their recent conversations. Read the interactions below and fill in SPECIFIC observations about this person.
+
+Recent interactions:
+${turnSummary}
+
+Based on these interactions, describe this specific user. Example output:
+{"communicationStyle":"direct and technical, prefers concise answers","decisionPattern":"data-driven, asks for verification before committing","topicInterests":"AI agents, local inference, podcast content, business automation","frustrationTriggers":"hallucinated data, wrong routing, verbose output"}
+
+Now write YOUR analysis of THIS user. Return ONLY the JSON object with your specific observations, not generic descriptions. /no_think`,
               }],
-              options: { temperature: 0.3, num_predict: 512 },
+              options: { temperature: 0.3, num_predict: 1024 },
             });
 
             const modelRaw = (modelResponse.message?.content ?? '').trim();

@@ -118,8 +118,14 @@ export class GraphMemoryStore {
       }
     );
 
-    // Extract and link entities
-    const entities = input.entities ?? [];
+    // Extract and link entities — use provided entities + auto-extract capitalized proper nouns
+    let entities = input.entities ?? [];
+    if (entities.length === 0) {
+      // Auto-extract: find capitalized words that look like proper nouns (2+ chars, not sentence starters)
+      const words = text.match(/(?<=[.!?\s])\s*([A-Z][a-z]{2,}(?:\s[A-Z][a-z]+)*)/g) ?? [];
+      const stopWords = new Set(['The', 'This', 'That', 'What', 'When', 'Where', 'How', 'Can', 'Does', 'Has', 'Are', 'Was', 'Will', 'Not', 'For', 'And', 'But']);
+      entities = [...new Set(words.map(w => w.trim()).filter(w => !stopWords.has(w) && w.length > 2))].slice(0, 3);
+    }
     for (const entityName of entities) {
       await this.graph!.query(
         `MERGE (e:Entity {name: $name, senderId: $senderId})
