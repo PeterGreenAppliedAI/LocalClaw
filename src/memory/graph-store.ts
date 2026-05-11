@@ -118,13 +118,29 @@ export class GraphMemoryStore {
       }
     );
 
-    // Extract and link entities — use provided entities + auto-extract capitalized proper nouns
+    // Extract entities via LLM NER when none provided
     let entities = input.entities ?? [];
     if (entities.length === 0) {
-      // Auto-extract: find capitalized words that look like proper nouns (2+ chars, not sentence starters)
-      const words = text.match(/(?<=[.!?\s])\s*([A-Z][a-z]{2,}(?:\s[A-Z][a-z]+)*)/g) ?? [];
-      const stopWords = new Set(['The', 'This', 'That', 'What', 'When', 'Where', 'How', 'Can', 'Does', 'Has', 'Are', 'Was', 'Will', 'Not', 'For', 'And', 'But']);
-      entities = [...new Set(words.map(w => w.trim()).filter(w => !stopWords.has(w) && w.length > 2))].slice(0, 3);
+      try {
+        const nerResponse = await this.client.chat({
+          model: 'phi4:14b',
+          messages: [{
+            role: 'user',
+            content: `Extract named entities from this text. Return ONLY a JSON array of strings. Include: people, companies, products, technologies, places, events. Exclude generic words.\n\nText: "${text}"\n\nReturn: ["entity1", "entity2"]`,
+          }],
+          options: { temperature: 0, num_predict: 128 },
+        });
+        const nerRaw = (nerResponse.message?.content ?? '').trim();
+        const nerMatch = nerRaw.match(/\[[\s\S]*\]/);
+        if (nerMatch) {
+          const parsed = JSON.parse(nerMatch[0]);
+          if (Array.isArray(parsed)) {
+            entities = parsed.filter((e: unknown): e is string => typeof e === 'string' && e.length > 1).slice(0, 5);
+          }
+        }
+      } catch {
+        // NER failed — proceed without entities
+      }
     }
     for (const entityName of entities) {
       await this.graph!.query(
@@ -370,20 +386,22 @@ export class GraphMemoryStore {
       );
 
       // Link turn to existing entities mentioned in the text
-      const entities = await this.graph!.query(
-        `MATCH (e:Entity {senderId: $senderId}) RETURN e.name`,
-        { params: { senderId } }
-      );
-      for (const row of (entities.data ?? []) as any[]) {
-        const entityName = row['e.name'];
-        if (entityName && stored.toLowerCase().includes(entityName.toLowerCase())) {
-          await this.graph!.query(
-            `MATCH (t:Turn {id: $turnId}), (e:Entity {name: $name, senderId: $senderId})
-             CREATE (t)-[:MENTIONS]->(e)`,
-            { params: { turnId, name: entityName, senderId } }
-          );
+      try {
+        const existingEntities = await this.graph!.query(
+          `MATCH (e:Entity {senderId: $senderId}) RETURN e.name`,
+          { params: { senderId } }
+        );
+        for (const row of (existingEntities.data ?? []) as any[]) {
+          const entityName = row['e.name'];
+          if (entityName && stored.toLowerCase().includes(entityName.toLowerCase())) {
+            await this.graph!.query(
+              `MATCH (t:Turn {id: $turnId}), (e:Entity {name: $name, senderId: $senderId})
+               CREATE (t)-[:MENTIONS]->(e)`,
+              { params: { turnId, name: entityName, senderId } }
+            );
+          }
         }
-      }
+      } catch { /* best-effort entity linking */ }
     } catch (err) {
       console.warn('[GraphMemory] Failed to store turn:', err instanceof Error ? err.message : err);
     }
