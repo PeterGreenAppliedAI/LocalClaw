@@ -76,10 +76,9 @@ Returns a session ID and summary of what was built.`,
       try {
         const client = await getClient(config);
 
-        // Create a new session pointing at the builds directory
+        // Create a new session
         const session = await client.session.create({
           body: {},
-          query: { directory: buildsDir },
         });
 
         const sessionId = session.data?.id;
@@ -90,11 +89,12 @@ Returns a session ID and summary of what was built.`,
         // Parse model string "ollama/qwen3-coder:30b" → { providerID, modelID }
         const [providerID, modelID] = model.includes('/') ? model.split('/', 2) : ['ollama', model];
 
-        // Send the prompt
+        // Send the prompt with directory constraint
+        const fullPrompt = `IMPORTANT: Create ALL files inside the directory "${buildsDir}". Do NOT modify any files outside this directory. Do NOT modify README.md or any existing project files.\n\n${prompt}`;
         await client.session.prompt({
           path: { id: sessionId },
           body: {
-            parts: [{ type: 'text', text: prompt }],
+            parts: [{ type: 'text', text: fullPrompt }],
             model: { providerID, modelID },
           },
         });
