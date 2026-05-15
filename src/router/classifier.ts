@@ -115,12 +115,12 @@ function isLikelyFollowUp(message: string, previousCategory?: string): boolean {
   if (trimmed.startsWith('!')) return false;
   // Only stick on conversation-oriented categories — tool specialists finish in one turn
   if (previousCategory && !STICKY_CATEGORIES.has(previousCategory)) return false;
-  // Long messages only break sticky if they contain task/action intent
-  if (trimmed.length > 200) {
-    const hasTaskIntent = /\b(create|make|build|run|execute|search for|generate|produce|write me|send|schedule|research|analyze)\b/i.test(trimmed);
-    if (hasTaskIntent) return false;
-    // Long conversational message without task intent — keep sticky
-  }
+  // Explicit task commands break sticky regardless of message length
+  // These are imperative actions ("Build X", "Create X"), not conversational ("I build things")
+  const isImperativeTask = /^(build|create|make|generate|write|scaffold|implement|search for|run|execute|send|schedule)\b/i.test(trimmed);
+  if (isImperativeTask) return false;
+  // Long conversational messages without imperative task — keep sticky
+  if (trimmed.length > 200) return true;
   // Strong new-topic signals override stickiness
   if (hasStrongNewTopicSignal(trimmed)) return false;
   // Simple greetings are never follow-ups
