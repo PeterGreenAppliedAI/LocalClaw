@@ -121,25 +121,40 @@ export function createOpenCodeStatusTool(config: OpenCodeConfig): LocalClawTool 
       try {
         const client = await getClient(config);
 
-        const status = await client.session.status({
-          path: { id: sessionId },
-        });
+        // Status is a global map of sessionId → {type: "idle"|"retry"}
+        const statusResp = await client.session.status({});
+        const statusMap = statusResp.data ?? {};
+        const sessionStatus = statusMap[sessionId];
+        const statusText = sessionStatus?.type ?? 'complete'; // absent from map = done
 
+        // Get messages for summary
         const messages = await client.session.messages({
           path: { id: sessionId },
         });
 
         const msgList = messages.data ?? [];
-        const lastMessages = msgList.slice(-3);
+        const lastMessages = msgList.slice(-5);
         const summary = lastMessages
           .map((m: any) => {
-            const text = m.parts?.map((p: any) => p.text ?? p.type).join(' ') ?? '';
+            const parts = m.parts ?? [];
+            const text = parts.map((p: any) => {
+              if (p.type === 'text') return p.text?.slice(0, 150) ?? '';
+              if (p.type === 'tool-invocation') return `[tool: ${p.toolInvocation?.toolName ?? 'unknown'}]`;
+              return `[${p.type}]`;
+            }).join(' ');
             return `[${m.role}] ${text.slice(0, 200)}`;
           })
           .join('\n');
 
-        const statusText = status.data?.status ?? 'unknown';
-        return `Session: ${sessionId}\nStatus: ${statusText}\nRecent activity:\n${summary || '(no messages yet)'}`;
+        // Count file operations from messages
+        const toolCalls = msgList.flatMap((m: any) =>
+          (m.parts ?? []).filter((p: any) => p.type === 'tool-invocation')
+        );
+        const fileOps = toolCalls.filter((t: any) =>
+          ['write', 'edit', 'read'].includes(t.toolInvocation?.toolName)
+        ).length;
+
+        return `Session: ${sessionId}\nStatus: ${statusText}\nFile operations: ${fileOps}\nMessages: ${msgList.length}\nRecent activity:\n${summary || '(no messages yet)'}`;
       } catch (err) {
         return `Status check failed: ${err instanceof Error ? err.message : err}`;
       }
