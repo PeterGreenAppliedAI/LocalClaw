@@ -122,18 +122,29 @@ Returns a session ID and summary of what was built.`,
 
         const files = listFiles(buildsDir);
 
-        // Build concise summary — file list with sizes, no content dumps
+        // Build summary with file contents preview (8000 char limit in tool loop)
         const parts = [`OpenCode build complete (session: ${sessionId})`, '', `Files created (${files.length}):`];
-        for (const f of files.slice(0, 15)) {
+        let totalChars = 0;
+        for (const f of files.slice(0, 10)) {
+          if (f.endsWith('.lock') || f.endsWith('.log')) {
+            parts.push(`  ${f} (skipped — generated file)`);
+            continue;
+          }
           const fullPath = join(buildsDir, f);
           try {
-            const size = statSync(fullPath).size;
-            parts.push(`  ${f} (${size} bytes)`);
+            const content = readFileSync(fullPath, 'utf-8');
+            const preview = content.length > 600 ? content.slice(0, 600) + '\n...(truncated)' : content;
+            totalChars += preview.length;
+            if (totalChars > 6000) {
+              parts.push(`  ${f} (${content.length} bytes — omitted for space)`);
+            } else {
+              parts.push(`\n--- ${f} ---\n${preview}`);
+            }
           } catch {
-            parts.push(`  ${f}`);
+            parts.push(`  ${f} (could not read)`);
           }
         }
-        parts.push('', `Build directory: ${buildsDir}`, 'Build complete. All files are ready.');
+        parts.push('', `Build directory: ${buildsDir}`);
 
         return parts.join('\n');
       } catch (err) {
