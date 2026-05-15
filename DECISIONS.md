@@ -147,6 +147,17 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 
 ---
 
+## Known Issues
+
+### Double message delivery on Discord (intermittent)
+**Problem:** Occasionally the bot sends the same response twice in Discord — the stream preview message AND a separate final message, resulting in duplicate content.
+**Frequency:** Rare, observed twice in extended testing sessions.
+**Suspected cause:** Race condition between stream message edit and the channelRegistry.send fallback path. May also relate to silent re-route or capability gap detection triggering a second dispatch.
+**Impact:** Cosmetic — the response content is correct, just duplicated.
+**Status:** Logged for investigation. Not blocking daily use.
+
+---
+
 ## Ollama Version Issues
 
 ### Image generation API broken on 0.23.1 (May 2026)
