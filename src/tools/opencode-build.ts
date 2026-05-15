@@ -89,8 +89,19 @@ Returns a session ID and summary of what was built.`,
         // Parse model string "ollama/qwen3-coder:30b" → { providerID, modelID }
         const [providerID, modelID] = model.includes('/') ? model.split('/', 2) : ['ollama', model];
 
-        // Send the prompt with directory constraint
-        const fullPrompt = `IMPORTANT: Create ALL files inside the directory "${buildsDir}". Do NOT modify any files outside this directory. Do NOT modify README.md or any existing project files.\n\n${prompt}`;
+        // Send the prompt with directory constraint + quality standards
+        const fullPrompt = [
+          `IMPORTANT: Create ALL files inside the directory "${buildsDir}". Do NOT modify any files outside this directory. Do NOT modify README.md or any existing project files.`,
+          '',
+          prompt,
+          '',
+          'QUALITY STANDARDS:',
+          '- Tests MUST make real HTTP requests or function calls — no mocked assertions against hardcoded values.',
+          '- Tests should start the server/app, make actual requests, and validate responses.',
+          '- Include error case tests (invalid input, missing fields, not found).',
+          '- Code should have proper error handling, not just happy path.',
+          '- Include a package.json with correct dependencies and scripts (start, test).',
+        ].join('\n');
         await client.session.prompt({
           path: { id: sessionId },
           body: {
