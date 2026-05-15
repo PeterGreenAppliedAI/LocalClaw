@@ -312,6 +312,20 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     }
   }
 
+  // 4a2. Conversational guard — prevent pipeline misroutes when user is mid-conversation
+  // If classified as non-chat but session has prior turns and message has no task intent, stay on chat
+  if (effectiveCategory !== 'chat' && !params.cronMode && !params._reRouted && !params.overrideCategory) {
+    if (sessionState && sessionState.turnCount > 0) {
+      const hasTaskIntent = /\b(create|make|build|run|execute|search for|generate|produce|write me|send|schedule|research.*report|analyze.*data|give me a|find me a)\b/i.test(message);
+      if (!hasTaskIntent) {
+        console.log(`[Dispatch] Conversational guard: ${effectiveCategory} → chat (no task intent, turn ${sessionState.turnCount})`);
+        effectiveCategory = 'chat';
+        classification = { category: 'chat', confidence: 'sticky' as const };
+        specialistConfig = config.specialists.chat ?? specialistConfig;
+      }
+    }
+  }
+
   // 4b. User priming — graph memory (FalkorDB) or flat FactStore fallback
   let userPriming = '';
   if (senderId && !params.cronMode) {

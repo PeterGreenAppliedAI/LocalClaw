@@ -47,11 +47,14 @@ A log of significant decisions, failed experiments, and why things are the way t
 **Lesson:** Local models can't self-regulate in open-ended tool loops for simple tasks. Pipeline for simple commands, ReAct for complex multi-tool tasks.
 **Status:** Exec pipeline restored.
 
-### Sticky routing (April 2026)
-**Tried:** Sticky routing kept follow-up messages on the same specialist across all categories.
-**Result:** Short messages got trapped in wrong specialists. A greeting after a research task would route to research.
-**Lesson:** Sticky routing only makes sense for conversational categories.
-**Status:** Restricted to chat/memory only.
+### Sticky routing evolution (April-May 2026)
+**Original problem:** Sticky routing kept follow-up messages on the same specialist across all categories. Fixed: restricted to chat/memory only.
+**Second problem (May 2026):** Broad keyword hints ("what is", "who is") broke sticky for casual questions. "What are the privacy implications of NotebookLM?" triggered web_search keyword hint → broke sticky → model classified as research/multi → full report instead of chat.
+**Third problem:** Even when sticky held, the model classifier could override it. Conversational messages with technical keywords got classified as research/multi/web_search.
+**Fix (keyword hints):** Removed "what is" and "who is" from web_search keyword hint. These are questions, not search actions.
+**Fix (dispatch guard):** Added dispatch-level conversational guard: if classified as non-chat but session has prior turns (turnCount > 0) AND message has no explicit task intent (create, search for, generate, etc.), downgrade to chat. Catches ALL pipeline misroutes from conversational context — research, multi, web_search, everything.
+**What breaks through:** Explicit task intent always wins — "search for X", "create a report", "generate an image". Pre-model overrides (calendar, email, PDF) still fire. First messages (no session) unaffected. Cron jobs unaffected.
+**Status:** Active. Three layers: keyword tightening + task intent check for long messages + dispatch-level guard.
 
 ### Session isolation for pipelines (April 2026)
 **Decision:** All pipeline dispatches (plan, research, exec) run with fresh context -- no parent session history.

@@ -31,8 +31,9 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(remember|recall|we (discussed|talked)|last time|yesterday)\b/i, category: 'memory' },
   { pattern: /\b(tell|send|notify|message|announce)\b/i, category: 'message' },
   { pattern: /\b(homework|assignment|syllabus|lecture)\b/i, category: 'website' },
-  // Broad web_search last — "current" removed (false positive on "current directory" etc.)
-  { pattern: /\b(search|google|look up|find out|latest|news|what is|who is)\b/i, category: 'web_search' },
+  // Broad web_search last — only explicit search actions, not conversational questions
+  // "what is" and "who is" removed: they're questions, not search intent, and break sticky for casual chat
+  { pattern: /\b(search|google|look up|find out|latest|news)\b/i, category: 'web_search' },
 ];
 
 const VALID_CATEGORIES = new Set([
