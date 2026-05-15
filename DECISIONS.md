@@ -155,6 +155,18 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Lesson:** Never give a model-driven coding agent write access to your production codebase. Isolate its workspace at the process level, not the prompt level.
 **Status:** Active. User starts `opencode serve` from builds directory manually. LocalClaw tool detects and connects to the running server.
 
+### OpenCode specialist retry behavior (May 2026)
+**Problem:** Despite system prompt saying "Call opencode_build ONCE", the specialist calls it 2-3 times:
+- First call: build succeeds, returns file listing
+- Specialist reviews output, decides tests aren't good enough, starts second build
+- Or: first call times out (fetch failed), specialist retries with new session
+**Attempted fixes:**
+- System prompt: "Do NOT call opencode_build multiple times" — model ignores it
+- maxIterations: 3 → still retries. Need to drop to 2 (one build + one answer)
+- Content previews truncated at 2000 chars → specialist thought build was incomplete → retried. Fixed: bumped to 8000 char limit
+**Lesson:** Local models don't reliably follow "call this tool exactly once" instructions. Constrain via maxIterations, not prompts.
+**Status:** maxIterations set to 2 to force single build + answer.
+
 ---
 
 ## Known Issues
