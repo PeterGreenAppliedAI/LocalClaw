@@ -66,12 +66,19 @@ Returns a session ID and summary of what was built.`,
 
       const model = (params.model as string) || config.defaultModel;
 
-      // Ensure builds directory exists
-      const { mkdirSync } = await import('node:fs');
+      const { mkdirSync, readdirSync, statSync, readFileSync } = await import('node:fs');
       const { join } = await import('node:path');
       const workspace = ctx.workspacePath ?? 'data/workspaces/main';
       const buildsDir = join(workspace, 'builds');
-      mkdirSync(buildsDir, { recursive: true });
+
+      // Generate a project slug from the prompt
+      const slug = prompt
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .slice(0, 50)
+        .replace(/-+$/, '');
+      const projectDir = join(buildsDir, slug);
+      mkdirSync(projectDir, { recursive: true });
 
       try {
         const client = await getClient(config);
@@ -84,23 +91,23 @@ Returns a session ID and summary of what was built.`,
         const sessionId = session.data?.id;
         if (!sessionId) return 'Error: failed to create OpenCode session';
 
-        console.log(`[OpenCode] Session ${sessionId} created, sending prompt...`);
+        console.log(`[OpenCode] Session ${sessionId} created for project "${slug}"`);
 
         // Parse model string "ollama/qwen3-coder:30b" → { providerID, modelID }
         const [providerID, modelID] = model.includes('/') ? model.split('/', 2) : ['ollama', model];
 
-        // Send the prompt with directory constraint + quality standards
+        // Send the prompt — no directory constraint (OpenCode writes to its working dir)
+        // Quality standards appended automatically
         const fullPrompt = [
-          `IMPORTANT: Create ALL files inside the directory "${buildsDir}". Do NOT modify any files outside this directory. Do NOT modify README.md or any existing project files.`,
-          '',
           prompt,
           '',
           'QUALITY STANDARDS:',
+          '- Create all project files in the current directory.',
           '- Tests MUST make real HTTP requests or function calls — no mocked assertions against hardcoded values.',
           '- Tests should start the server/app, make actual requests, and validate responses.',
           '- Include error case tests (invalid input, missing fields, not found).',
           '- Code should have proper error handling, not just happy path.',
-          '- Include a package.json with correct dependencies and scripts (start, test).',
+          '- Include a dependency file (package.json, requirements.txt, go.mod) with correct dependencies.',
         ].join('\n');
         await client.session.prompt({
           path: { id: sessionId },
@@ -112,13 +119,12 @@ Returns a session ID and summary of what was built.`,
 
         console.log(`[OpenCode] Task completed in session ${sessionId}`);
 
-        // List files created in builds directory
-        const { readdirSync, statSync, readFileSync } = await import('node:fs');
+        // List files — check both project dir and builds root (OpenCode writes to its CWD)
         const listFiles = (dir: string, prefix = ''): string[] => {
           const entries: string[] = [];
           try {
             for (const f of readdirSync(dir)) {
-              if (f.startsWith('.') || f === 'node_modules' || f === '__pycache__') continue;
+              if (f.startsWith('.') || f === 'node_modules' || f === '__pycache__' || f === 'data') continue;
               const full = join(dir, f);
               const rel = prefix ? `${prefix}/${f}` : f;
               if (statSync(full).isDirectory()) {
@@ -131,17 +137,42 @@ Returns a session ID and summary of what was built.`,
           return entries;
         };
 
-        const files = listFiles(buildsDir);
+        // Move generated files from builds root into project subdirectory
+        const { renameSync } = await import('node:fs');
+        const rootFiles = readdirSync(buildsDir).filter(f =>
+          !f.startsWith('.') && f !== 'data' && f !== slug &&
+          !statSync(join(buildsDir, f)).isDirectory()
+        );
+        for (const f of rootFiles) {
+          try {
+            renameSync(join(buildsDir, f), join(projectDir, f));
+          } catch { /* best-effort */ }
+        }
+        // Also move any new directories (like node_modules, __pycache__)
+        const rootDirs = readdirSync(buildsDir).filter(f => {
+          if (f.startsWith('.') || f === 'data' || f === slug) return false;
+          try { return statSync(join(buildsDir, f)).isDirectory(); } catch { return false; }
+        });
+        for (const d of rootDirs) {
+          try {
+            renameSync(join(buildsDir, d), join(projectDir, d));
+          } catch { /* best-effort — might fail for node_modules */ }
+        }
+
+        console.log(`[OpenCode] Moved files to project directory: ${projectDir}`);
+
+        // List files in the project directory
+        const files = listFiles(projectDir);
 
         // Build summary with file contents preview (8000 char limit in tool loop)
-        const parts = [`OpenCode build complete (session: ${sessionId})`, '', `Files created (${files.length}):`];
+        const parts = [`OpenCode build complete (session: ${sessionId}, project: ${slug})`, '', `Files created (${files.length}):`];
         let totalChars = 0;
         for (const f of files.slice(0, 10)) {
           if (f.endsWith('.lock') || f.endsWith('.log')) {
             parts.push(`  ${f} (skipped — generated file)`);
             continue;
           }
-          const fullPath = join(buildsDir, f);
+          const fullPath = join(projectDir, f);
           try {
             const content = readFileSync(fullPath, 'utf-8');
             const preview = content.length > 600 ? content.slice(0, 600) + '\n...(truncated)' : content;
@@ -155,7 +186,7 @@ Returns a session ID and summary of what was built.`,
             parts.push(`  ${f} (could not read)`);
           }
         }
-        parts.push('', `Build directory: ${buildsDir}`);
+        parts.push('', `Project directory: ${projectDir}`);
 
         return parts.join('\n');
       } catch (err) {
