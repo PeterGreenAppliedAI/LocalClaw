@@ -71,12 +71,13 @@ Returns a session ID and summary of what was built.`,
       const workspace = ctx.workspacePath ?? 'data/workspaces/main';
       const buildsDir = join(workspace, 'builds');
 
-      // Generate a project slug from the prompt
-      const slug = prompt
+      // Generate a project slug from the first line/sentence of the prompt
+      const firstLine = prompt.split('\n')[0].split('.')[0];
+      const slug = firstLine
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .slice(0, 50)
-        .replace(/-+$/, '');
+        .replace(/-+$/, '') || `build-${Date.now()}`;
       const projectDir = join(buildsDir, slug);
       mkdirSync(projectDir, { recursive: true });
 
@@ -102,8 +103,7 @@ Returns a session ID and summary of what was built.`,
         // Parse model string "ollama/qwen3-coder:30b" → { providerID, modelID }
         const [providerID, modelID] = model.includes('/') ? model.split('/', 2) : ['ollama', model];
 
-        // Send the prompt — no directory constraint (OpenCode writes to its working dir)
-        // Quality standards appended automatically
+        // Build the prompt with quality standards
         const fullPrompt = [
           prompt,
           '',
@@ -115,7 +115,9 @@ Returns a session ID and summary of what was built.`,
           '- Code should have proper error handling, not just happy path.',
           '- Include a dependency file (package.json, requirements.txt, go.mod) with correct dependencies.',
         ].join('\n');
-        await client.session.prompt({
+
+        // Fire and forget — returns immediately (204)
+        await client.session.promptAsync({
           path: { id: sessionId },
           body: {
             parts: [{ type: 'text', text: fullPrompt }],
@@ -123,7 +125,31 @@ Returns a session ID and summary of what was built.`,
           },
         });
 
-        console.log(`[OpenCode] Task completed in session ${sessionId}`);
+        console.log(`[OpenCode] Prompt sent async, polling for completion...`);
+
+        // Poll for completion (5s intervals, 10 min max)
+        const maxWait = config.timeout || 600_000;
+        const startTime = Date.now();
+        while (Date.now() - startTime < maxWait) {
+          await new Promise(r => setTimeout(r, 5000));
+          try {
+            const statusResp = await client.session.status({});
+            const statusMap = statusResp.data ?? {};
+            const sessionStatus = statusMap[sessionId];
+            // absent from map or idle = done
+            if (!sessionStatus || sessionStatus.type === 'idle') {
+              console.log(`[OpenCode] Session ${sessionId} completed (idle)`);
+              break;
+            }
+            console.log(`[OpenCode] Session ${sessionId} status: ${(sessionStatus as any).type}`);
+          } catch {
+            // Status check failed — keep polling
+          }
+        }
+
+        if (Date.now() - startTime >= maxWait) {
+          console.warn(`[OpenCode] Session ${sessionId} timed out after ${maxWait / 1000}s`);
+        }
 
         // List files — check both project dir and builds root (OpenCode writes to its CWD)
         const listFiles = (dir: string, prefix = ''): string[] => {
