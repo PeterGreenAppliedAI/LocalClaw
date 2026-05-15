@@ -173,9 +173,19 @@ Returns a session ID and summary of what was built.`,
         // Move ONLY new files (not in snapshot) into project subdirectory
         const { renameSync } = await import('node:fs');
         const afterBuild = readdirSync(buildsDir);
-        const newEntries = afterBuild.filter(f =>
-          !existingBefore.has(f) && !f.startsWith('.') && f !== 'data' && f !== slug
-        );
+        // Only move files + known build-artifact dirs. Leave unknown dirs (old projects) in place.
+        const KNOWN_BUILD_DIRS = new Set([
+          'node_modules', '__pycache__', 'target', 'dist', 'build',
+          'venv', '.venv', 'tests', 'test', 'public', 'src', 'lib',
+        ]);
+        const newEntries = afterBuild.filter(f => {
+          if (existingBefore.has(f)) return false;
+          if (f.startsWith('.') || f === 'data' || f === slug) return false;
+          try {
+            if (statSync(join(buildsDir, f)).isDirectory()) return KNOWN_BUILD_DIRS.has(f);
+            return true; // always move files
+          } catch { return false; }
+        });
         for (const f of newEntries) {
           try {
             renameSync(join(buildsDir, f), join(projectDir, f));
