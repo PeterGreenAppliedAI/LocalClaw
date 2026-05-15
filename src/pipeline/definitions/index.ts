@@ -9,6 +9,7 @@ import { execPipeline } from './exec.js';
 import { heartbeatPipeline } from './heartbeat.js';
 import { researchPipeline } from './research.js';
 import { planPipeline } from './plan.js';
+import { codeGenPipeline } from './code-gen.js';
 
 /**
  * Register all pipeline definitions.
@@ -29,6 +30,9 @@ export function registerAllPipelines(registry: PipelineRegistry): void {
   registry.register(execPipeline);
   registry.register(heartbeatPipeline);
   registry.register(researchPipeline);
+
+  // Code generation
+  registry.register(codeGenPipeline);
 
   // Meta pipelines
   registry.register(planPipeline);
