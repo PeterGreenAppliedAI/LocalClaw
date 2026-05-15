@@ -148,6 +148,13 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 - FalkorDB discussion: multi-turn technical conversation where bot correctly pulled user's ML engineer role and infrastructure context
 - `!forget register agent` working with flexible word matching after exact CONTAINS failed on "registered agent" vs "register agent change"
 
+### OpenCode integration — workspace isolation (May 2026)
+**Problem:** OpenCode's headless server treats its startup directory as the project root. When started from the LocalClaw directory, it overwrote `package.json` (replaced all dependencies with Express) and `README.md` (replaced with Express API docs). Prompt instructions to "only write to builds/" were ignored by the model.
+**Root cause:** OpenCode is a model-driven agent with full filesystem access within its project directory. Prompt-based directory constraints are not enforceable — the model writes wherever it decides.
+**Fix:** Start `opencode serve` from a separate `data/workspaces/main/builds/` directory. OpenCode can only see and modify files within that directory. LocalClaw connects to the existing server via SDK — it doesn't manage the server lifecycle.
+**Lesson:** Never give a model-driven coding agent write access to your production codebase. Isolate its workspace at the process level, not the prompt level.
+**Status:** Active. User starts `opencode serve` from builds directory manually. LocalClaw tool detects and connects to the running server.
+
 ---
 
 ## Known Issues

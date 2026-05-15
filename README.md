@@ -76,6 +76,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Context Compaction | *(automatic)* | Structured compression (Goal/Progress/Next Steps), proactive at 50% budget, tool-pair sanitization |
 | Document Gen | `document` | Create and convert documents via LibreOffice headless — HTML/CSV → PDF/DOCX/XLSX/PPTX |
 | Image Gen | `image_generate` | Text-to-image and img2img via Flux model on dedicated hardware (Ollama) |
+| Code Generation | `opencode_build`, `opencode_status` | Delegate coding tasks to [OpenCode](https://opencode.ai) agent — scaffold projects, write tests, iterate. Isolated workspace. |
 | Self-Improvement | *(automatic)* | Error learning store, pattern matching, drift detection, learning promotion via heartbeat |
 | CLI | `npm run cli` | Terminal interface with streaming, slash commands, markdown rendering, session persistence |
 
@@ -697,6 +698,34 @@ Synthetic and system messages are filtered out. Over time this builds a dataset 
 
 **Temporal intelligence:** Task urgency and calendar event labeling are computed in code (`src/temporal/urgency.ts`), not by the model. Tasks get urgency tiers (critical/high/medium/low/dormant) and calendar events get relative day labels ([TODAY], [TOMORROW], [in N days]). Models receive pre-labeled data with instructions that labels are authoritative. This prevents models from hallucinating urgency or placing events on wrong days.
 
+### Code Generation (OpenCode)
+
+LocalClaw delegates coding tasks to [OpenCode](https://opencode.ai), an open-source AI coding agent. Rather than building a coding agent from scratch, LocalClaw integrates with OpenCode the same way it integrates with Ollama for inference and FalkorDB for memory — each tool does what it's best at.
+
+**How it works:**
+1. User: "Build a REST API with tests" → routes to `code_gen` specialist
+2. Specialist calls `opencode_build` tool → connects to OpenCode headless server via SDK
+3. OpenCode generates code, writes files, runs tests, iterates — using the same Ollama models
+4. Results: files in `data/workspaces/main/builds/`, summary delivered to Discord
+
+**Workspace isolation:** OpenCode's headless server runs from a dedicated builds directory, not the LocalClaw project root. This prevents the coding agent from modifying LocalClaw's own source code, package.json, or configuration files.
+
+**Setup:**
+```bash
+brew install opencode
+mkdir -p data/workspaces/main/builds
+cd data/workspaces/main/builds && opencode serve --port 3500
+```
+
+Configure in `localclaw.config.json5`:
+```json5
+openCode: {
+  enabled: true,
+  port: 3500,
+  defaultModel: "ollama/qwen3-coder:30b",
+}
+```
+
 ## AI-Assisted Development
 
 LocalClaw includes a `CLAUDE.md` file that provides project-level guidelines for AI code generation tools (Claude Code, etc.). When you open this repo in Claude Code, it automatically reads `CLAUDE.md` and follows the project's architecture, code standards, error handling patterns, and security rules.
@@ -757,6 +786,7 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Embedding Model | qwen3-embedding:8b |
 | Reasoning Model | nemotron-3-nano:30b (optional) |
 | Image Generation | flux2-klein:4b-fp8 (dedicated Mac Mini) |
+| Code Generation | [OpenCode](https://opencode.ai) (headless server, @opencode-ai/sdk) |
 | Voice Chat Model | qwen2.5:7b (for low-latency voice responses) |
 | Console Frontend | React 19 + Vite + TailwindCSS 4 |
 | Console Markdown | react-markdown + remark-gfm |
