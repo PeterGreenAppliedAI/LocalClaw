@@ -19,6 +19,7 @@
     "@azure/identity": "^4.13.0",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@mozilla/readability": "^0.6.0",
+    "@opencode-ai/sdk": "^1.14.51",
     "@slack/bolt": "^4.6.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.6.2",

@@ -215,6 +215,14 @@ export const STTConfigSchema = z.object({
   language: z.string().default('en'),
 });
 
+export const OpenCodeConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  port: z.number().default(3200),
+  hostname: z.string().default('127.0.0.1'),
+  defaultModel: z.string().default('ollama/qwen3-coder:30b'),
+  timeout: z.number().default(600000), // 10 min default
+});
+
 export const ImageGenConfigSchema = z.object({
   enabled: z.boolean().default(false),
   url: z.string().default('http://127.0.0.1:11434'),
@@ -317,6 +325,7 @@ export const LocalClawConfigSchema = z.object({
   stt: STTConfigSchema.default({}),
   vision: VisionConfigSchema.default({}),
   imageGen: ImageGenConfigSchema.default({}),
+  openCode: OpenCodeConfigSchema.default({}),
   voice: VoiceConfigSchema.default({}),
   heartbeat: HeartbeatConfigSchema.optional(),
 });

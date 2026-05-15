@@ -42,6 +42,7 @@ import { createDocumentTool } from './document.js';
 import { createGmailSearchTool, createGmailReadTool } from './gmail-read.js';
 import { createCalendarListTool, createCalendarSearchTool } from './calendar-read.js';
 import { createImageGenerateTool } from './image-generate.js';
+import { createOpenCodeBuildTool, createOpenCodeStatusTool } from './opencode-build.js';
 
 export interface RegisterToolsOptions {
   cronService?: CronService;
@@ -173,6 +174,13 @@ export async function registerAllTools(
   if (config.imageGen?.enabled) {
     registry.register(createImageGenerateTool(config.imageGen));
     console.log(`[Tools] Image generation registered (${config.imageGen.model})`);
+  }
+
+  // OpenCode (AI coding agent)
+  if (config.openCode?.enabled) {
+    registry.register(createOpenCodeBuildTool(config.openCode));
+    registry.register(createOpenCodeStatusTool(config.openCode));
+    console.log(`[Tools] OpenCode registered (${config.openCode.defaultModel})`);
   }
 
   // Workspace tools (always available)
