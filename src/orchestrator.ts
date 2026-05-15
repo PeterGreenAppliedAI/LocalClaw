@@ -1736,7 +1736,12 @@ Write a useful ${timeOfDay} update:
         if (streamMsg) {
           const media = extractMediaAttachments(result.answer);
           const chunks = splitFinalMessage(media.cleanText || result.answer, 2000);
-          await streamMsg.edit(chunks[0]);
+          // Only edit if final answer differs from what was already streamed
+          const streamedContent = streamBuffer.length > 1990 ? streamBuffer.slice(0, 1990) + ' ...' : streamBuffer + ' ...';
+          const needsEdit = chunks[0] !== streamedContent && chunks[0] !== streamBuffer;
+          if (needsEdit) {
+            await streamMsg.edit(chunks[0]);
+          }
           if (chunks.length > 1) {
             for (let i = 1; i < chunks.length; i++) {
               const adapter = this.channelRegistry.get(msg.channel);

@@ -32,7 +32,6 @@ export const codeGenPipeline: PipelineDefinition = {
     {
       name: 'report',
       type: 'llm',
-      stream: true,
       temperature: 0.3,
       maxTokens: 1024,
       buildPrompt: (ctx) => {
