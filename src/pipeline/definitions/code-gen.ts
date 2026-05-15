@@ -33,8 +33,18 @@ async function runTests(projectDir: string): Promise<{ pass: boolean; output: st
     installCmd = { cmd: 'npm', args: ['install', '--no-audit', '--no-fund'] };
     testCmd = { cmd: 'npm', args: ['test'] };
   } else if (existsSync(join(projectDir, 'requirements.txt'))) {
-    installCmd = { cmd: 'pip3', args: ['install', '-r', 'requirements.txt', '-q'] };
-    testCmd = { cmd: 'python3', args: ['-m', 'pytest', '-v'] };
+    // Create venv if needed (macOS blocks bare pip install)
+    const venvDir = join(projectDir, '.venv');
+    if (!existsSync(venvDir)) {
+      const venvResult = await run('python3', ['-m', 'venv', venvDir], projectDir, 30000);
+      if (venvResult.code !== 0) {
+        return { pass: false, output: `Failed to create venv:\n${venvResult.stderr}` };
+      }
+    }
+    const pip = join(venvDir, 'bin', 'pip');
+    const python = join(venvDir, 'bin', 'python');
+    installCmd = { cmd: pip, args: ['install', '-r', 'requirements.txt', '-q'] };
+    testCmd = { cmd: python, args: ['-m', 'pytest', '-v'] };
   } else if (existsSync(join(projectDir, 'go.mod'))) {
     testCmd = { cmd: 'go', args: ['test', './...'] };
   } else if (existsSync(join(projectDir, 'Cargo.toml'))) {
