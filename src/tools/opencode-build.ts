@@ -122,18 +122,18 @@ Returns a session ID and summary of what was built.`,
 
         const files = listFiles(buildsDir);
 
-        // Build summary with file contents preview
-        const parts = [`OpenCode build complete (session: ${sessionId}, model: ${model})`, `Files created (${files.length}):`];
-        for (const f of files.slice(0, 10)) {
+        // Build concise summary — file list with sizes, no content dumps
+        const parts = [`OpenCode build complete (session: ${sessionId})`, '', `Files created (${files.length}):`];
+        for (const f of files.slice(0, 15)) {
           const fullPath = join(buildsDir, f);
           try {
-            const content = readFileSync(fullPath, 'utf-8');
-            const preview = content.length > 500 ? content.slice(0, 500) + '\n...(truncated)' : content;
-            parts.push(`\n--- ${f} ---\n${preview}`);
+            const size = statSync(fullPath).size;
+            parts.push(`  ${f} (${size} bytes)`);
           } catch {
-            parts.push(`\n--- ${f} --- (could not read)`);
+            parts.push(`  ${f}`);
           }
         }
+        parts.push('', `Build directory: ${buildsDir}`, 'Build complete. All files are ready.');
 
         return parts.join('\n');
       } catch (err) {
