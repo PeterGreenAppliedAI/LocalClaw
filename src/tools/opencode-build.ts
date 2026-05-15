@@ -80,6 +80,12 @@ Returns a session ID and summary of what was built.`,
       const projectDir = join(buildsDir, slug);
       mkdirSync(projectDir, { recursive: true });
 
+      // Snapshot builds root before build — so we only move new files after
+      const existingBefore = new Set<string>();
+      try {
+        for (const f of readdirSync(buildsDir)) existingBefore.add(f);
+      } catch { /* empty dir */ }
+
       try {
         const client = await getClient(config);
 
@@ -137,26 +143,16 @@ Returns a session ID and summary of what was built.`,
           return entries;
         };
 
-        // Move generated files from builds root into project subdirectory
+        // Move ONLY new files (not in snapshot) into project subdirectory
         const { renameSync } = await import('node:fs');
-        const rootFiles = readdirSync(buildsDir).filter(f =>
-          !f.startsWith('.') && f !== 'data' && f !== slug &&
-          !statSync(join(buildsDir, f)).isDirectory()
+        const afterBuild = readdirSync(buildsDir);
+        const newEntries = afterBuild.filter(f =>
+          !existingBefore.has(f) && !f.startsWith('.') && f !== 'data' && f !== slug
         );
-        for (const f of rootFiles) {
+        for (const f of newEntries) {
           try {
             renameSync(join(buildsDir, f), join(projectDir, f));
           } catch { /* best-effort */ }
-        }
-        // Also move any new directories (like node_modules, __pycache__)
-        const rootDirs = readdirSync(buildsDir).filter(f => {
-          if (f.startsWith('.') || f === 'data' || f === slug) return false;
-          try { return statSync(join(buildsDir, f)).isDirectory(); } catch { return false; }
-        });
-        for (const d of rootDirs) {
-          try {
-            renameSync(join(buildsDir, d), join(projectDir, d));
-          } catch { /* best-effort — might fail for node_modules */ }
         }
 
         console.log(`[OpenCode] Moved files to project directory: ${projectDir}`);
