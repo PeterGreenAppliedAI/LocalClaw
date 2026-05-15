@@ -1,33 +1,48 @@
 import type { PipelineDefinition } from '../types.js';
 
 /**
- * Code generation pipeline: extract → build → report
+ * Code generation pipeline: enrich → build → report
  *
- * Deterministic — no ReAct loop. One opencode_build call, one result.
+ * Deterministic — no ReAct loop.
+ * 1. LLM enriches the user's request into a detailed build specification
+ * 2. opencode_build executes with the enriched prompt
+ * 3. LLM summarizes what was built
  */
 export const codeGenPipeline: PipelineDefinition = {
   name: 'code_gen',
   stages: [
     {
-      name: 'extract_params',
-      type: 'extract',
-      schema: {
-        prompt: { type: 'string', description: 'What to build — language, framework, features, tests', required: true },
-        model: { type: 'string', description: 'Model to use (optional)' },
-      },
-      examples: [
-        { input: 'Build a Python CLI that reads CSV files and outputs stats', output: { prompt: 'Build a Python CLI that reads CSV files and outputs stats with tests' } },
-        { input: 'Create a REST API with Express and tests', output: { prompt: 'Create a Node.js Express REST API with tests using built-in test runner' } },
-      ],
+      name: 'enrich',
+      type: 'llm',
+      temperature: 0.3,
+      maxTokens: 1024,
+      buildPrompt: (ctx) => ({
+        system: [
+          'You are a software architect preparing a detailed build specification for a coding agent.',
+          'The user has a high-level request. Your job is to expand it into a precise, actionable specification.',
+          '',
+          'Include in your specification:',
+          '- Language and framework (do NOT specify version numbers — let the package manager resolve latest)',
+          '- File structure (which files to create)',
+          '- Each endpoint/function with expected inputs and outputs',
+          '- Error handling requirements (validation, error responses)',
+          '- Test file with real integration tests (actual HTTP requests or function calls, NOT mocked assertions)',
+          '- A package.json/requirements.txt with correct dependencies',
+          '',
+          'Write ONLY the specification as a clear, numbered list. No explanation, no preamble.',
+        ].join('\n'),
+        user: ctx.userMessage,
+      }),
     },
     {
       name: 'build',
       type: 'tool',
       tool: 'opencode_build',
-      resolveParams: (ctx) => ({
-        prompt: ctx.params.prompt,
-        ...(ctx.params.model ? { model: ctx.params.model } : {}),
-      }),
+      resolveParams: (ctx) => {
+        const enrichedPrompt = ctx.stageResults.enrich as string;
+        console.log(`[CodeGen] Enriched prompt: ${enrichedPrompt.slice(0, 200)}...`);
+        return { prompt: enrichedPrompt };
+      },
     },
     {
       name: 'report',
