@@ -71,14 +71,14 @@ Returns a session ID and summary of what was built.`,
       const workspace = ctx.workspacePath ?? 'data/workspaces/main';
       const buildsDir = join(workspace, 'builds');
 
-      // Generate a readable project slug from the original user message (or prompt fallback)
-      const nameSource = (params.projectName as string) || prompt;
-      const slug = nameSource
+      // Use LLM-chosen project name or generate from prompt
+      const projectName = (params.projectName as string) || '';
+      const slug = projectName
         .toLowerCase()
-        .replace(/^build\s+a?\s*/i, '')  // strip "build a" prefix
-        .replace(/[^a-z0-9]+/g, '-')
-        .slice(0, 50)
-        .replace(/-+$/, '') || `build-${Date.now()}`;
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 50) || `build-${Date.now()}`;
       const projectDir = join(buildsDir, slug);
       mkdirSync(projectDir, { recursive: true });
 

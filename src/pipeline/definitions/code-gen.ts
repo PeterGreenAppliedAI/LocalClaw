@@ -29,7 +29,8 @@ export const codeGenPipeline: PipelineDefinition = {
           '- Test file with real integration tests (actual HTTP requests or function calls, NOT mocked assertions)',
           '- A package.json/requirements.txt with correct dependencies',
           '',
-          'Write ONLY the specification as a clear, numbered list. No explanation, no preamble.',
+          'FIRST LINE: Write a short project name (2-4 words, lowercase, hyphens). Example: "file-monitor-cli"',
+          'Then write the specification as a clear, numbered list. No other explanation.',
         ].join('\n'),
         user: ctx.userMessage,
       }),
@@ -41,7 +42,12 @@ export const codeGenPipeline: PipelineDefinition = {
       resolveParams: (ctx) => {
         const enrichedPrompt = ctx.stageResults.enrich as string;
         console.log(`[CodeGen] Enriched prompt: ${enrichedPrompt.slice(0, 200)}...`);
-        return { prompt: enrichedPrompt, projectName: ctx.userMessage };
+        // First line of enriched output is the project name
+        const lines = enrichedPrompt.split('\n');
+        const projectName = lines[0].trim();
+        const spec = lines.slice(1).join('\n').trim();
+        console.log(`[CodeGen] Project: ${projectName}`);
+        return { prompt: spec || enrichedPrompt, projectName };
       },
     },
     {
