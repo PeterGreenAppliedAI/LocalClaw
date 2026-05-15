@@ -155,6 +155,14 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Lesson:** Never give a model-driven coding agent write access to your production codebase. Isolate its workspace at the process level, not the prompt level.
 **Status:** Active. User starts `opencode serve` from builds directory manually. LocalClaw tool detects and connects to the running server.
 
+### OpenCode pipeline evolution (May 2026)
+**Phase 1 (ReAct):** Specialist called opencode_build in a ReAct loop. Model retried 2-3x despite "call once" instructions.
+**Phase 2 (Pipeline):** Deterministic extract → build → report. Extract stage mangled user intent. Replaced with LLM enrichment stage.
+**Phase 3 (Verify/Fix):** Added verify (run tests), fix (send errors to same session), re-verify stages. Uses `when` guards for conditional execution. Session reuse via `sessionId` parameter.
+**Phase 4 (Iterative builds):** Session persistence (`.opencode-session.json` per project). `list_projects` code stage scans existing projects. Enrich LLM outputs `[MODIFY] <slug>` for modifications vs new project name. `resolveParams` loads saved session data for reuse.
+**Key pattern:** Each stage does ONE thing. Code controls the flow. Model executes within constraints. No model decisions about retry/flow.
+**Status:** Active. Full pipeline: list_projects → enrich → build → verify → [fix] → [re-verify] → report.
+
 ### OpenCode specialist retry behavior (May 2026)
 **Problem:** Despite system prompt saying "Call opencode_build ONCE", the specialist calls it 2-3 times:
 - First call: build succeeds, returns file listing

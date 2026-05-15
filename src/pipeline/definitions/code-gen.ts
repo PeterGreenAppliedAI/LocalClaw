@@ -82,28 +82,69 @@ export const codeGenPipeline: PipelineDefinition = {
   name: 'code_gen',
   stages: [
     {
+      name: 'list_projects',
+      type: 'code',
+      execute: async (ctx: PipelineContext) => {
+        const { readdirSync, statSync, existsSync, readFileSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const workspace = ctx.toolContext.workspacePath ?? 'data/workspaces/main';
+        const buildsDir = join(workspace, 'builds');
+
+        const projects: string[] = [];
+        const sessions: Record<string, { sessionId: string; model: string }> = {};
+        try {
+          for (const f of readdirSync(buildsDir)) {
+            if (f.startsWith('.') || f === 'data') continue;
+            const full = join(buildsDir, f);
+            const sessionFile = join(full, '.opencode-session.json');
+            if (statSync(full).isDirectory() && existsSync(sessionFile)) {
+              projects.push(f);
+              try {
+                sessions[f] = JSON.parse(readFileSync(sessionFile, 'utf-8'));
+              } catch { /* corrupt session file */ }
+            }
+          }
+        } catch { /* no builds dir yet */ }
+
+        ctx.params._existingProjects = projects;
+        ctx.params._projectSessions = sessions;
+        ctx.params._buildsDir = buildsDir;
+        if (projects.length > 0) {
+          console.log(`[CodeGen] Existing projects: ${projects.join(', ')}`);
+        }
+      },
+    },
+    {
       name: 'enrich',
       type: 'llm',
       temperature: 0.3,
       maxTokens: 1024,
-      buildPrompt: (ctx) => ({
-        system: [
-          'You are a software architect preparing a detailed build specification for a coding agent.',
-          'The user has a high-level request. Your job is to expand it into a precise, actionable specification.',
-          '',
-          'Include in your specification:',
-          '- Language and framework (do NOT specify version numbers — let the package manager resolve latest)',
-          '- File structure (which files to create)',
-          '- Each endpoint/function with expected inputs and outputs',
-          '- Error handling requirements (validation, error responses)',
-          '- Test file with real integration tests (actual HTTP requests or function calls, NOT mocked assertions)',
-          '- A package.json/requirements.txt with correct dependencies',
-          '',
-          'FIRST LINE: Write a short project name (2-4 words, lowercase, hyphens). Example: "file-monitor-cli"',
-          'Then write the specification as a clear, numbered list. No other explanation.',
-        ].join('\n'),
-        user: ctx.userMessage,
-      }),
+      buildPrompt: (ctx) => {
+        const projects = (ctx.params._existingProjects as string[]) || [];
+        const projectList = projects.length > 0
+          ? `\n\nEXISTING PROJECTS (can be modified instead of creating new):\n${projects.map(p => `- ${p}`).join('\n')}\n\nIf the user's request references an existing project, write "[MODIFY] <slug>" on the first line (e.g., "[MODIFY] websocket-chat-server"). Otherwise write a new project name.`
+          : '';
+
+        return {
+          system: [
+            'You are a software architect preparing a detailed build specification for a coding agent.',
+            'The user has a high-level request. Your job is to expand it into a precise, actionable specification.',
+            '',
+            'Include in your specification:',
+            '- Language and framework (do NOT specify version numbers — let the package manager resolve latest)',
+            '- File structure (which files to create or modify)',
+            '- Each endpoint/function with expected inputs and outputs',
+            '- Error handling requirements (validation, error responses)',
+            '- Test file with real integration tests (actual HTTP requests or function calls, NOT mocked assertions)',
+            '- A package.json/requirements.txt with correct dependencies',
+            '',
+            'FIRST LINE: Write a short project name (2-4 words, lowercase, hyphens). Example: "file-monitor-cli"',
+            'Then write the specification as a clear, numbered list. No other explanation.',
+            projectList,
+          ].join('\n'),
+          user: ctx.userMessage,
+        };
+      },
     },
     {
       name: 'build',
@@ -113,10 +154,28 @@ export const codeGenPipeline: PipelineDefinition = {
         const enrichedPrompt = ctx.stageResults.enrich as string;
         console.log(`[CodeGen] Enriched prompt: ${enrichedPrompt.slice(0, 200)}...`);
         const lines = enrichedPrompt.split('\n');
-        const projectName = lines[0].trim();
+        const firstLine = lines[0].trim();
         const spec = lines.slice(1).join('\n').trim();
-        console.log(`[CodeGen] Project: ${projectName}`);
-        return { prompt: spec || enrichedPrompt, projectName };
+
+        // Check for [MODIFY] prefix — reuse existing project + session
+        const modifyMatch = firstLine.match(/^\[MODIFY\]\s*(.+)/i);
+        if (modifyMatch) {
+          const existingSlug = modifyMatch[1].trim();
+          const buildsDir = ctx.params._buildsDir as string;
+          const projectDir = `${buildsDir}/${existingSlug}`;
+          const sessions = (ctx.params._projectSessions ?? {}) as Record<string, { sessionId: string }>;
+          const savedSession = sessions[existingSlug];
+
+          if (savedSession?.sessionId) {
+            console.log(`[CodeGen] MODIFY existing project: ${existingSlug}, session: ${savedSession.sessionId}`);
+            return { prompt: spec || enrichedPrompt, sessionId: savedSession.sessionId, projectDir };
+          }
+          console.log(`[CodeGen] MODIFY: no saved session for ${existingSlug}, creating new`);
+          return { prompt: spec || enrichedPrompt, projectName: existingSlug };
+        }
+
+        console.log(`[CodeGen] New project: ${firstLine}`);
+        return { prompt: spec || enrichedPrompt, projectName: firstLine };
       },
     },
     {

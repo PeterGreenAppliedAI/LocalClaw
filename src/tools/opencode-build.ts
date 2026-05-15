@@ -231,6 +231,17 @@ Returns a session ID and summary of what was built.`,
         }
         parts.push('', `Project directory: ${projectDir}`);
 
+        // Persist session for iterative builds
+        const { writeFileSync } = await import('node:fs');
+        try {
+          writeFileSync(join(projectDir, '.opencode-session.json'), JSON.stringify({
+            sessionId,
+            model,
+            lastBuild: new Date().toISOString(),
+            projectName: slug,
+          }));
+        } catch { /* best-effort */ }
+
         return parts.join('\n');
       } catch (err) {
         return `OpenCode build failed: ${err instanceof Error ? err.message : err}`;
