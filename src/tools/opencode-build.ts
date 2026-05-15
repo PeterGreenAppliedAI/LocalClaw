@@ -22,7 +22,7 @@ async function getClient(config: OpenCodeConfig): Promise<any> {
     const health = await fetch(baseUrl, { signal: AbortSignal.timeout(2000) });
     if (health.ok || health.status === 200) {
       console.log(`[OpenCode] Connected to existing server at ${baseUrl}`);
-      clientInstance = createOpencodeClient({ baseUrl });
+      clientInstance = createOpencodeClient({ baseUrl, signal: AbortSignal.timeout(600_000) });
       return clientInstance;
     }
   } catch {
@@ -36,7 +36,7 @@ async function getClient(config: OpenCodeConfig): Promise<any> {
       hostname: config.hostname,
     });
     console.log(`[OpenCode] Server running at ${serverInstance.url}`);
-    clientInstance = createOpencodeClient({ baseUrl: serverInstance.url });
+    clientInstance = createOpencodeClient({ baseUrl: serverInstance.url, signal: AbortSignal.timeout(600_000) });
     return clientInstance;
   } catch (err) {
     throw new Error(`OpenCode server failed to start: ${err instanceof Error ? err.message : err}`);
