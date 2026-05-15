@@ -55,6 +55,8 @@ Returns a session ID and summary of what was built.`,
       properties: {
         prompt: { type: 'string', description: 'Description of what to build' },
         model: { type: 'string', description: 'Model to use (e.g., ollama/qwen3-coder:30b)' },
+        sessionId: { type: 'string', description: 'Reuse existing OpenCode session (for fix/modify)' },
+        projectDir: { type: 'string', description: 'Existing project directory (for fix/modify)' },
       },
       required: ['prompt'],
     },
@@ -65,66 +67,85 @@ Returns a session ID and summary of what was built.`,
       if (!prompt?.trim()) return 'Error: prompt is required';
 
       const model = (params.model as string) || config.defaultModel;
+      const existingSessionId = params.sessionId as string | undefined;
+      const existingProjectDir = params.projectDir as string | undefined;
 
-      const { mkdirSync, readdirSync, statSync, readFileSync } = await import('node:fs');
+      const { mkdirSync, readdirSync, statSync, readFileSync, renameSync } = await import('node:fs');
       const { join } = await import('node:path');
       const workspace = ctx.workspacePath ?? 'data/workspaces/main';
       const buildsDir = join(workspace, 'builds');
 
-      // Use LLM-chosen project name or generate from prompt
-      const projectName = (params.projectName as string) || '';
-      const slug = projectName
-        .toLowerCase()
-        .replace(/[^a-z0-9-]+/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, 50) || `build-${Date.now()}`;
-      const projectDir = join(buildsDir, slug);
-      mkdirSync(projectDir, { recursive: true });
-
-      // Snapshot builds root before build — so we only move new files after
-      const existingBefore = new Set<string>();
-      try {
-        for (const f of readdirSync(buildsDir)) existingBefore.add(f);
-      } catch { /* empty dir */ }
-
       try {
         const client = await getClient(config);
-
-        // Create a new session
-        const session = await client.session.create({
-          body: {},
-        });
-
-        const sessionId = session.data?.id;
-        if (!sessionId) return 'Error: failed to create OpenCode session';
-
-        console.log(`[OpenCode] Session ${sessionId} created for project "${slug}"`);
-
-        // Parse model string "ollama/qwen3-coder:30b" → { providerID, modelID }
         const [providerID, modelID] = model.includes('/') ? model.split('/', 2) : ['ollama', model];
 
-        // Build the prompt with quality standards
-        const fullPrompt = [
-          prompt,
-          '',
-          'QUALITY STANDARDS:',
-          '- Create all project files in the current directory.',
-          '- Tests MUST make real HTTP requests or function calls — no mocked assertions against hardcoded values.',
-          '- Tests should start the server/app, make actual requests, and validate responses.',
-          '- Include error case tests (invalid input, missing fields, not found).',
-          '- Code should have proper error handling, not just happy path.',
-          '- Include a dependency file (package.json, requirements.txt, go.mod) with correct dependencies.',
-        ].join('\n');
+        let sessionId: string;
+        let projectDir: string;
+        let slug: string;
 
-        // Fire and forget — returns immediately (204)
-        await client.session.promptAsync({
-          path: { id: sessionId },
-          body: {
-            parts: [{ type: 'text', text: fullPrompt }],
-            model: { providerID, modelID },
-          },
-        });
+        if (existingSessionId && existingProjectDir) {
+          // --- Reuse existing session (fix/modify flow) ---
+          sessionId = existingSessionId;
+          projectDir = existingProjectDir;
+          slug = projectDir.split('/').pop() || 'unknown';
+          console.log(`[OpenCode] Reusing session ${sessionId} for project "${slug}"`);
+
+          await client.session.promptAsync({
+            path: { id: sessionId },
+            body: {
+              parts: [{ type: 'text', text: prompt }],
+              model: { providerID, modelID },
+            },
+          });
+        } else {
+          // --- New build flow ---
+          const projectName = (params.projectName as string) || '';
+          slug = projectName
+            .toLowerCase()
+            .replace(/[^a-z0-9-]+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .slice(0, 50) || `build-${Date.now()}`;
+          projectDir = join(buildsDir, slug);
+          mkdirSync(projectDir, { recursive: true });
+
+          // Snapshot builds root before build
+          const existingBefore = new Set<string>();
+          try {
+            for (const f of readdirSync(buildsDir)) existingBefore.add(f);
+          } catch { /* empty dir */ }
+
+          const session = await client.session.create({ body: {} });
+          sessionId = session.data?.id;
+          if (!sessionId) return 'Error: failed to create OpenCode session';
+          console.log(`[OpenCode] Session ${sessionId} created for project "${slug}"`);
+
+          // Append quality standards to prompt
+          const fullPrompt = [
+            prompt,
+            '',
+            'QUALITY STANDARDS:',
+            '- Create all project files in the current directory.',
+            '- Tests MUST make real HTTP requests or function calls — no mocked assertions against hardcoded values.',
+            '- Tests should start the server/app, make actual requests, and validate responses.',
+            '- Include error case tests (invalid input, missing fields, not found).',
+            '- Code should have proper error handling, not just happy path.',
+            '- Include a dependency file (package.json, requirements.txt, go.mod) with correct dependencies.',
+          ].join('\n');
+
+          await client.session.promptAsync({
+            path: { id: sessionId },
+            body: {
+              parts: [{ type: 'text', text: fullPrompt }],
+              model: { providerID, modelID },
+            },
+          });
+
+          // After polling, move new files to project dir
+          // (deferred to after the shared polling block below)
+          // Store snapshot for post-build move
+          (params as any)._existingBefore = existingBefore;
+        }
 
         console.log(`[OpenCode] Prompt sent async, polling for completion...`);
 
@@ -137,22 +158,41 @@ Returns a session ID and summary of what was built.`,
             const statusResp = await client.session.status({});
             const statusMap = statusResp.data ?? {};
             const sessionStatus = statusMap[sessionId];
-            // absent from map or idle = done
             if (!sessionStatus || sessionStatus.type === 'idle') {
               console.log(`[OpenCode] Session ${sessionId} completed (idle)`);
               break;
             }
             console.log(`[OpenCode] Session ${sessionId} status: ${(sessionStatus as any).type}`);
-          } catch {
-            // Status check failed — keep polling
-          }
+          } catch { /* keep polling */ }
         }
 
         if (Date.now() - startTime >= maxWait) {
           console.warn(`[OpenCode] Session ${sessionId} timed out after ${maxWait / 1000}s`);
         }
 
-        // List files — check both project dir and builds root (OpenCode writes to its CWD)
+        // Move new files for new builds (skip for session reuse — files already in project dir)
+        if (!existingSessionId) {
+          const existingBefore = (params as any)._existingBefore as Set<string>;
+          const afterBuild = readdirSync(buildsDir);
+          const KNOWN_BUILD_DIRS = new Set([
+            'node_modules', '__pycache__', 'target', 'dist', 'build',
+            'venv', '.venv', 'tests', 'test', 'public', 'src', 'lib',
+          ]);
+          const newEntries = afterBuild.filter(f => {
+            if (existingBefore.has(f)) return false;
+            if (f.startsWith('.') || f === 'data' || f === slug) return false;
+            try {
+              if (statSync(join(buildsDir, f)).isDirectory()) return KNOWN_BUILD_DIRS.has(f);
+              return true;
+            } catch { return false; }
+          });
+          for (const f of newEntries) {
+            try { renameSync(join(buildsDir, f), join(projectDir, f)); } catch { /* best-effort */ }
+          }
+          console.log(`[OpenCode] Moved ${newEntries.length} entries to project directory: ${projectDir}`);
+        }
+
+        // List files in the project directory
         const listFiles = (dir: string, prefix = ''): string[] => {
           const entries: string[] = [];
           try {
@@ -160,44 +200,14 @@ Returns a session ID and summary of what was built.`,
               if (f.startsWith('.') || f === 'node_modules' || f === '__pycache__' || f === 'data') continue;
               const full = join(dir, f);
               const rel = prefix ? `${prefix}/${f}` : f;
-              if (statSync(full).isDirectory()) {
-                entries.push(...listFiles(full, rel));
-              } else {
-                entries.push(rel);
-              }
+              if (statSync(full).isDirectory()) entries.push(...listFiles(full, rel));
+              else entries.push(rel);
             }
           } catch { /* best-effort */ }
           return entries;
         };
 
-        // Move ONLY new files (not in snapshot) into project subdirectory
-        const { renameSync } = await import('node:fs');
-        const afterBuild = readdirSync(buildsDir);
-        // Only move files + known build-artifact dirs. Leave unknown dirs (old projects) in place.
-        const KNOWN_BUILD_DIRS = new Set([
-          'node_modules', '__pycache__', 'target', 'dist', 'build',
-          'venv', '.venv', 'tests', 'test', 'public', 'src', 'lib',
-        ]);
-        const newEntries = afterBuild.filter(f => {
-          if (existingBefore.has(f)) return false;
-          if (f.startsWith('.') || f === 'data' || f === slug) return false;
-          try {
-            if (statSync(join(buildsDir, f)).isDirectory()) return KNOWN_BUILD_DIRS.has(f);
-            return true; // always move files
-          } catch { return false; }
-        });
-        for (const f of newEntries) {
-          try {
-            renameSync(join(buildsDir, f), join(projectDir, f));
-          } catch { /* best-effort */ }
-        }
-
-        console.log(`[OpenCode] Moved files to project directory: ${projectDir}`);
-
-        // List files in the project directory
         const files = listFiles(projectDir);
-
-        // Build summary with file contents preview (8000 char limit in tool loop)
         const parts = [`OpenCode build complete (session: ${sessionId}, project: ${slug})`, '', `Files created (${files.length}):`];
         let totalChars = 0;
         for (const f of files.slice(0, 10)) {

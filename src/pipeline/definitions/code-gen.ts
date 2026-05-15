@@ -1,13 +1,83 @@
-import type { PipelineDefinition } from '../types.js';
+import type { PipelineDefinition, PipelineContext } from '../types.js';
 
 /**
- * Code generation pipeline: enrich → build → report
+ * Code generation pipeline: enrich → build → verify → [fix] → [re-verify] → report
  *
  * Deterministic — no ReAct loop.
  * 1. LLM enriches the user's request into a detailed build specification
  * 2. opencode_build executes with the enriched prompt
- * 3. LLM summarizes what was built
+ * 3. Verify: detect project type, install deps, run tests
+ * 4. Fix (conditional): if tests fail, send errors to same OpenCode session
+ * 5. Re-verify (conditional): run tests again after fix
+ * 6. LLM summarizes what was built + test status
  */
+
+/** Detect project type and run tests in the given directory */
+async function runTests(projectDir: string): Promise<{ pass: boolean; output: string; skipped?: boolean }> {
+  const { existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { execFile } = await import('node:child_process');
+
+  const run = (cmd: string, args: string[], cwd: string, timeout = 60000): Promise<{ code: number; stdout: string; stderr: string }> =>
+    new Promise(resolve => {
+      execFile(cmd, args, { cwd, timeout, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+        resolve({ code: err ? (err as any).code ?? 1 : 0, stdout: stdout ?? '', stderr: stderr ?? '' });
+      });
+    });
+
+  // Detect project type and determine commands
+  let installCmd: { cmd: string; args: string[] } | null = null;
+  let testCmd: { cmd: string; args: string[] };
+
+  if (existsSync(join(projectDir, 'package.json'))) {
+    installCmd = { cmd: 'npm', args: ['install', '--no-audit', '--no-fund'] };
+    testCmd = { cmd: 'npm', args: ['test'] };
+  } else if (existsSync(join(projectDir, 'requirements.txt'))) {
+    installCmd = { cmd: 'pip3', args: ['install', '-r', 'requirements.txt', '-q'] };
+    testCmd = { cmd: 'python3', args: ['-m', 'pytest', '-v'] };
+  } else if (existsSync(join(projectDir, 'go.mod'))) {
+    testCmd = { cmd: 'go', args: ['test', './...'] };
+  } else if (existsSync(join(projectDir, 'Cargo.toml'))) {
+    testCmd = { cmd: 'cargo', args: ['test'] };
+  } else {
+    return { pass: true, output: 'No recognized project type — skipped tests', skipped: true };
+  }
+
+  // Install dependencies
+  if (installCmd) {
+    console.log(`[CodeGen] Installing dependencies in ${projectDir}...`);
+    const install = await run(installCmd.cmd, installCmd.args, projectDir, 120000);
+    if (install.code !== 0) {
+      return { pass: false, output: `Dependency install failed:\n${(install.stderr || install.stdout).slice(0, 3000)}` };
+    }
+  }
+
+  // Run tests
+  console.log(`[CodeGen] Running tests: ${testCmd.cmd} ${testCmd.args.join(' ')}`);
+  const result = await run(testCmd.cmd, testCmd.args, projectDir);
+  const output = `${result.stdout}\n${result.stderr}`.trim().slice(0, 3000);
+
+  if (result.code === 0) {
+    console.log(`[CodeGen] Verify: PASS`);
+    return { pass: true, output };
+  } else {
+    console.log(`[CodeGen] Verify: FAIL — ${output.slice(0, 200)}`);
+    return { pass: false, output };
+  }
+}
+
+/** Extract project directory from build result string */
+function extractProjectDir(buildResult: string): string | null {
+  const match = buildResult.match(/Project directory: (.+)/);
+  return match ? match[1].trim() : null;
+}
+
+/** Extract session ID from build result string */
+function extractSessionId(buildResult: string): string | null {
+  const match = buildResult.match(/session: ([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
 export const codeGenPipeline: PipelineDefinition = {
   name: 'code_gen',
   stages: [
@@ -42,12 +112,70 @@ export const codeGenPipeline: PipelineDefinition = {
       resolveParams: (ctx) => {
         const enrichedPrompt = ctx.stageResults.enrich as string;
         console.log(`[CodeGen] Enriched prompt: ${enrichedPrompt.slice(0, 200)}...`);
-        // First line of enriched output is the project name
         const lines = enrichedPrompt.split('\n');
         const projectName = lines[0].trim();
         const spec = lines.slice(1).join('\n').trim();
         console.log(`[CodeGen] Project: ${projectName}`);
         return { prompt: spec || enrichedPrompt, projectName };
+      },
+    },
+    {
+      name: 'verify',
+      type: 'code',
+      execute: async (ctx: PipelineContext) => {
+        const buildResult = ctx.stageResults.build as string;
+        const projectDir = extractProjectDir(buildResult);
+        if (!projectDir) {
+          ctx.params._verifyResult = { pass: false, output: 'Could not determine project directory' };
+          return;
+        }
+        ctx.params._projectDir = projectDir;
+        ctx.params._sessionId = extractSessionId(buildResult);
+        ctx.params._verifyResult = await runTests(projectDir);
+      },
+    },
+    {
+      name: 'fix',
+      type: 'code',
+      when: (ctx) => {
+        const result = ctx.params._verifyResult as any;
+        return result && !result.pass && !result.skipped && !!ctx.params._sessionId;
+      },
+      execute: async (ctx: PipelineContext) => {
+        const verifyResult = ctx.params._verifyResult as { pass: boolean; output: string };
+        const sessionId = ctx.params._sessionId as string;
+        const projectDir = ctx.params._projectDir as string;
+
+        console.log(`[CodeGen] Fix: sending test errors to session ${sessionId}`);
+
+        const fixPrompt = [
+          'The tests failed with the following errors. Fix the code so all tests pass.',
+          'Do NOT change the test expectations. Fix the implementation code only.',
+          '',
+          'Error output:',
+          verifyResult.output,
+        ].join('\n');
+
+        // Call opencode_build with existing session
+        const fixResult = await ctx.executor('opencode_build', {
+          prompt: fixPrompt,
+          sessionId,
+          projectDir,
+        }, ctx.toolContext);
+
+        ctx.stageResults.fix = fixResult;
+        ctx.params._fixApplied = true;
+        console.log(`[CodeGen] Fix applied`);
+      },
+    },
+    {
+      name: 're_verify',
+      type: 'code',
+      when: (ctx) => !!ctx.params._fixApplied,
+      execute: async (ctx: PipelineContext) => {
+        const projectDir = ctx.params._projectDir as string;
+        console.log(`[CodeGen] Re-verify after fix...`);
+        ctx.params._verifyResult = await runTests(projectDir);
       },
     },
     {
@@ -57,9 +185,23 @@ export const codeGenPipeline: PipelineDefinition = {
       maxTokens: 1024,
       buildPrompt: (ctx) => {
         const buildResult = ctx.stageResults.build as string;
+        const verifyResult = ctx.params._verifyResult as { pass: boolean; output: string; skipped?: boolean } | undefined;
+        const fixApplied = !!ctx.params._fixApplied;
+
+        let testStatus = 'Tests: not run';
+        if (verifyResult?.skipped) {
+          testStatus = 'Tests: skipped (no recognized project type)';
+        } else if (verifyResult?.pass) {
+          testStatus = fixApplied ? 'Tests: PASS (after fix)' : 'Tests: PASS';
+        } else if (verifyResult && !verifyResult.pass) {
+          testStatus = fixApplied
+            ? `Tests: STILL FAILING after fix attempt\nErrors:\n${verifyResult.output.slice(0, 500)}`
+            : `Tests: FAILING\nErrors:\n${verifyResult.output.slice(0, 500)}`;
+        }
+
         return {
-          system: 'You are summarizing the results of a code generation task. List the files created with a brief description of each. Mention if tests were included. Be concise.',
-          user: `The build tool returned:\n\n${buildResult}\n\nSummarize what was built.`,
+          system: 'You are summarizing the results of a code generation task. List the files created with a brief description of each. Include the test status. Be concise.',
+          user: `The build tool returned:\n\n${buildResult}\n\n${testStatus}\n\nSummarize what was built and the test results.`,
         };
       },
     },
