@@ -99,8 +99,43 @@ Returns a session ID and summary of what was built.`,
           },
         });
 
-        console.log(`[OpenCode] Task started in session ${sessionId}`);
-        return `OpenCode task started (session: ${sessionId}, model: ${model}). Use opencode_status to check progress.`;
+        console.log(`[OpenCode] Task completed in session ${sessionId}`);
+
+        // List files created in builds directory
+        const { readdirSync, statSync, readFileSync } = await import('node:fs');
+        const listFiles = (dir: string, prefix = ''): string[] => {
+          const entries: string[] = [];
+          try {
+            for (const f of readdirSync(dir)) {
+              if (f.startsWith('.') || f === 'node_modules' || f === '__pycache__') continue;
+              const full = join(dir, f);
+              const rel = prefix ? `${prefix}/${f}` : f;
+              if (statSync(full).isDirectory()) {
+                entries.push(...listFiles(full, rel));
+              } else {
+                entries.push(rel);
+              }
+            }
+          } catch { /* best-effort */ }
+          return entries;
+        };
+
+        const files = listFiles(buildsDir);
+
+        // Build summary with file contents preview
+        const parts = [`OpenCode build complete (session: ${sessionId}, model: ${model})`, `Files created (${files.length}):`];
+        for (const f of files.slice(0, 10)) {
+          const fullPath = join(buildsDir, f);
+          try {
+            const content = readFileSync(fullPath, 'utf-8');
+            const preview = content.length > 500 ? content.slice(0, 500) + '\n...(truncated)' : content;
+            parts.push(`\n--- ${f} ---\n${preview}`);
+          } catch {
+            parts.push(`\n--- ${f} --- (could not read)`);
+          }
+        }
+
+        return parts.join('\n');
       } catch (err) {
         return `OpenCode build failed: ${err instanceof Error ? err.message : err}`;
       }
