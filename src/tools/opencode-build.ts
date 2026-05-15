@@ -71,7 +71,7 @@ Returns a session ID and summary of what was built.`,
 
         // Create a new session
         const session = await client.session.create({
-          body: { model },
+          body: {},
         });
 
         const sessionId = session.data?.id;
@@ -79,11 +79,15 @@ Returns a session ID and summary of what was built.`,
 
         console.log(`[OpenCode] Session ${sessionId} created, sending prompt...`);
 
-        // Send the prompt (async — returns immediately, OpenCode works in background)
-        await client.session.promptAsync({
+        // Parse model string "ollama/qwen3-coder:30b" → { providerID, modelID }
+        const [providerID, modelID] = model.includes('/') ? model.split('/', 2) : ['ollama', model];
+
+        // Send the prompt
+        await client.session.prompt({
           path: { id: sessionId },
           body: {
             parts: [{ type: 'text', text: prompt }],
+            model: { providerID, modelID },
           },
         });
 
