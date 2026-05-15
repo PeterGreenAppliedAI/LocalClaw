@@ -22,7 +22,7 @@
     "@opencode-ai/sdk": "^1.14.51",
     "@slack/bolt": "^4.6.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^12.10.0",
     "croner": "^10.0.1",
     "discord.js": "^14.25.1",
     "falkordb": "^6.6.2",
