@@ -14,18 +14,28 @@ let clientInstance: any = null;
 async function getClient(config: OpenCodeConfig): Promise<any> {
   if (clientInstance) return clientInstance;
 
+  const { createOpencodeServer, createOpencodeClient } = await import('@opencode-ai/sdk');
+  const baseUrl = `http://${config.hostname}:${config.port}`;
+
+  // Check if server is already running (user started it manually or from a previous run)
   try {
-    const { createOpencodeServer, createOpencodeClient } = await import('@opencode-ai/sdk');
-
-    if (!serverInstance) {
-      console.log(`[OpenCode] Starting server on port ${config.port}...`);
-      serverInstance = await createOpencodeServer({
-        port: config.port,
-        hostname: config.hostname,
-      });
-      console.log(`[OpenCode] Server running at ${serverInstance.url}`);
+    const health = await fetch(baseUrl, { signal: AbortSignal.timeout(2000) });
+    if (health.ok || health.status === 200) {
+      console.log(`[OpenCode] Connected to existing server at ${baseUrl}`);
+      clientInstance = createOpencodeClient({ baseUrl });
+      return clientInstance;
     }
+  } catch {
+    // Server not running — start one
+  }
 
+  try {
+    console.log(`[OpenCode] Starting server on port ${config.port}...`);
+    serverInstance = await createOpencodeServer({
+      port: config.port,
+      hostname: config.hostname,
+    });
+    console.log(`[OpenCode] Server running at ${serverInstance.url}`);
     clientInstance = createOpencodeClient({ baseUrl: serverInstance.url });
     return clientInstance;
   } catch (err) {
