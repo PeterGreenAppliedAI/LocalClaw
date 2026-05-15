@@ -71,10 +71,11 @@ Returns a session ID and summary of what was built.`,
       const workspace = ctx.workspacePath ?? 'data/workspaces/main';
       const buildsDir = join(workspace, 'builds');
 
-      // Generate a project slug from the first line/sentence of the prompt
-      const firstLine = prompt.split('\n')[0].split('.')[0];
-      const slug = firstLine
+      // Generate a readable project slug from the original user message (or prompt fallback)
+      const nameSource = (params.projectName as string) || prompt;
+      const slug = nameSource
         .toLowerCase()
+        .replace(/^build\s+a?\s*/i, '')  // strip "build a" prefix
         .replace(/[^a-z0-9]+/g, '-')
         .slice(0, 50)
         .replace(/-+$/, '') || `build-${Date.now()}`;

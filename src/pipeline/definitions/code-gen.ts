@@ -41,7 +41,7 @@ export const codeGenPipeline: PipelineDefinition = {
       resolveParams: (ctx) => {
         const enrichedPrompt = ctx.stageResults.enrich as string;
         console.log(`[CodeGen] Enriched prompt: ${enrichedPrompt.slice(0, 200)}...`);
-        return { prompt: enrichedPrompt };
+        return { prompt: enrichedPrompt, projectName: ctx.userMessage };
       },
     },
     {
