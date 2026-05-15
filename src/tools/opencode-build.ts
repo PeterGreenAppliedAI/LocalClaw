@@ -66,12 +66,20 @@ Returns a session ID and summary of what was built.`,
 
       const model = (params.model as string) || config.defaultModel;
 
+      // Ensure builds directory exists
+      const { mkdirSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const workspace = ctx.workspacePath ?? 'data/workspaces/main';
+      const buildsDir = join(workspace, 'builds');
+      mkdirSync(buildsDir, { recursive: true });
+
       try {
         const client = await getClient(config);
 
-        // Create a new session
+        // Create a new session pointing at the builds directory
         const session = await client.session.create({
           body: {},
+          query: { directory: buildsDir },
         });
 
         const sessionId = session.data?.id;
