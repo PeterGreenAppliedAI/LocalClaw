@@ -80,4 +80,30 @@ describe('enrichObservation', () => {
     const input = 'Search returned 5 results successfully';
     expect(enrichObservation(input, undefined, 'web_search')).toBe(input);
   });
+
+  it('provides tool-specific guidance for web_fetch 404', () => {
+    const result = enrichObservation('Error: HTTP 404 Not Found', undefined, 'web_fetch');
+    expect(result).toContain('web_search to find the correct');
+    expect(result).not.toContain('check the URL'); // generic suggestion replaced
+  });
+
+  it('provides tool-specific guidance for exec permission denied', () => {
+    const result = enrichObservation('Error: EACCES: permission denied', undefined, 'exec');
+    expect(result).toContain('Docker backend');
+  });
+
+  it('provides tool-specific guidance for browser timeout', () => {
+    const result = enrichObservation('Error: Operation timed out', undefined, 'browser');
+    expect(result).toContain('wait action');
+  });
+
+  it('provides tool-specific guidance for web_search rate limit', () => {
+    const result = enrichObservation('Error: 429 Too Many Requests', undefined, 'web_search');
+    expect(result).toContain('Wait 30s');
+  });
+
+  it('falls back to generic suggestion for unknown tools', () => {
+    const result = enrichObservation('Error: EACCES: permission denied', undefined, 'unknown_tool');
+    expect(result).toContain('Check file permissions');
+  });
 });

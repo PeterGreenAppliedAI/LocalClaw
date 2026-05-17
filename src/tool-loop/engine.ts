@@ -21,6 +21,12 @@ export interface RunReActLoopParams {
   promptContext?: PromptContext;
   /** Error learning store for recording failures and hinting from past errors */
   errorStore?: ErrorLearningStore;
+  /** Optional observation summarizer for context-aware trimming */
+  summarizeObservations?: {
+    enabled: boolean;
+    client: OllamaClient;
+    model: string;
+  };
 }
 
 /**
@@ -32,7 +38,14 @@ export interface RunReActLoopParams {
  * 3. Truncate large tool call arguments in older assistant messages (e.g., write_file content)
  * 4. Replace older tool observation content with a truncated preview
  */
-export function trimToolLoopMessages(messages: OllamaMessage[], contextSize: number): void {
+/** Callback to summarize a tool observation using a fast model. Returns summary or null on failure. */
+export type ObservationSummarizer = (observation: string, toolName: string) => Promise<string | null>;
+
+export async function trimToolLoopMessages(
+  messages: OllamaMessage[],
+  contextSize: number,
+  summarizer?: ObservationSummarizer,
+): Promise<void> {
   const budget = Math.floor(contextSize * 0.85); // leave room for output + overhead
   if (estimateMessagesTokens(messages) <= budget) return;
 
@@ -79,13 +92,28 @@ export function trimToolLoopMessages(messages: OllamaMessage[], contextSize: num
     if (estimateMessagesTokens(messages) <= budget) return;
   }
 
-  // Pass 2: Truncate tool observation content
+  // Pass 2: Summarize or truncate tool observation content
   for (let i = 0; i < messages.length; i++) {
     if (protectedSet.has(i)) continue;
     if (messages[i].role !== 'tool') continue;
 
     const original = messages[i].content ?? '';
     if (original.length > 300) {
+      // Large observations (>1000 chars): attempt LLM summarization if available
+      if (summarizer && original.length > 1000) {
+        try {
+          const summary = await summarizer(original, 'tool');
+          if (summary && summary.length < original.length) {
+            messages[i] = { ...messages[i], content: `[Summarized]: ${summary}` };
+            if (estimateMessagesTokens(messages) <= budget) return;
+            continue;
+          }
+        } catch {
+          // Summarization failed — fall through to hard truncation
+        }
+      }
+
+      // Hard truncation fallback
       messages[i] = {
         ...messages[i],
         content: `[Truncated: ${original.slice(0, 200)}... (${original.length} chars)]`,
@@ -333,7 +361,22 @@ const MAX_TOOL_RESULT_CHARS = 2000;
  *   5. Safety: max iterations limit
  */
 export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResult> {
-  const { client, config, tools, executor, toolContext, userMessage, history, workspaceContext, promptContext, errorStore } = params;
+  const { client, config, tools, executor, toolContext, userMessage, history, workspaceContext, promptContext, errorStore, summarizeObservations } = params;
+
+  // Build observation summarizer if enabled
+  const observationSummarizer: ObservationSummarizer | undefined = summarizeObservations?.enabled
+    ? async (observation: string) => {
+        const resp = await summarizeObservations.client.chat({
+          model: summarizeObservations.model,
+          messages: [
+            { role: 'system', content: 'Summarize this tool output in 2-3 sentences. Preserve: key data points, error messages, file paths, URLs, and status codes. Omit: verbose formatting, repeated content, boilerplate.' },
+            { role: 'user', content: observation.slice(0, 4000) },
+          ],
+          options: { temperature: 0.1, num_predict: 200 },
+        });
+        return resp.message?.content ?? null;
+      }
+    : undefined;
 
   // Build system prompt with full ReAct format instructions, tool list, and examples
   const systemPrompt = buildReActSystemPrompt(config.systemPrompt, tools, workspaceContext, promptContext);
@@ -396,7 +439,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
   for (let i = 0; i < config.maxIterations; i++) {
     // Trim older tool observations if over budget
     if (config.contextSize) {
-      trimToolLoopMessages(messages, config.contextSize);
+      await trimToolLoopMessages(messages, config.contextSize, observationSummarizer);
     }
 
     const response = await client.chat({

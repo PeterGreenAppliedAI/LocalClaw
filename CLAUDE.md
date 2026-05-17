@@ -71,7 +71,7 @@ Memory uses a **dual-backend** architecture: **FalkorDB graph database** (primar
 
 **Commands:** `!forget <term>` — direct command, bypasses router, removes matching facts from both graph and flat store with flexible word-level matching.
 
-**Self-improvement store:** `.learnings/errors.jsonl` records tool failures. Before tool execution, `findHints()` checks for matching past errors and prepends hints. `enrichObservation()` scans tool output for 8 known error patterns (permission denied, timeout, 404, rate limit, etc.) and enriches with suggestions. Recurring patterns (3+ occurrences) promoted to `LEARNINGS.md` via heartbeat.
+**Self-improvement store:** `.learnings/errors.jsonl` records tool failures. Before tool execution, `findHints()` checks for matching past errors and prepends hints. `enrichObservation()` scans tool output for 8 known error patterns (permission denied, timeout, 404, rate limit, etc.) and enriches with **tool-specific recovery instructions** via `TOOL_RECOVERY_MAP` (e.g., web_fetch 404 → "use web_search to find correct URL"). Falls back to generic suggestions for unknown tools. Recurring patterns (3+ occurrences) promoted to `LEARNINGS.md` via heartbeat.
 
 ---
 
@@ -188,7 +188,7 @@ src/
   pipeline/                 # Deterministic pipeline engine
     executor.ts             #   Stage runner (extract, tool, llm, code, branch, loop, parallel_tool)
     registry.ts             #   Pipeline registry
-    types.ts                #   Stage types, PipelineContext
+    types.ts                #   Stage types, PipelineContext, SubDispatchResult
     extractor.ts            #   LLM-based parameter extraction with JSON repair
     definitions/            #   Pipeline definitions per category
       plan.ts               #     Plan pipeline (foreman handoffs, skill check, reflection)
@@ -333,6 +333,7 @@ Document/media tools return `[FILE:path]` tokens. These are:
 
 ### Foreman handoff pattern (`src/pipeline/definitions/plan.ts`)
 Plan pipeline sub-dispatches use structured briefings (not raw result dumps):
+- Sub-dispatch returns typed `SubDispatchResult` with status, filePaths, urls, category (extracted at dispatch layer)
 - Write full step results to `.plan-artifacts/step-N.txt`
 - Build handoff message with: task, plan context, completed steps (status + artifact paths), available artifacts
 - Specialists use `read_file` to access prior step content on demand
@@ -346,7 +347,8 @@ Tool-using specialists get `minimal` workspace context (SOUL.md + IDENTITY.md + 
 ### Tool-loop guardrails (`src/tool-loop/engine.ts`)
 - **Hallucination detection** — catches models claiming actions without tool calls. Repair prompt sent once.
 - **Drift detection** — catches repeating tool calls, hedging language, growing responses. Re-anchor prompt after 3+ iterations.
-- **Error learning** — records failures, hints before execution, enriches observations with pattern suggestions.
+- **Error learning** — records failures, hints before execution, enriches observations with tool-specific recovery guidance.
+- **Observation summarization** — optional LLM-based summarization for old tool observations (>1000 chars) when context budget is tight. Preserves key data vs hard truncation. Config: `session.summarizeToolObservations`.
 - **Param validation** — runtime type coercion (string→number, string→boolean) + enum + required field checks before execution.
 
 ### Heartbeat vs Briefing

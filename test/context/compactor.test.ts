@@ -94,18 +94,18 @@ describe('computeBudget', () => {
 // ---- Tool loop trimming ----
 
 describe('trimToolLoopMessages', () => {
-  it('does nothing when under budget', () => {
+  it('does nothing when under budget', async () => {
     const messages: OllamaMessage[] = [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'hi' },
       { role: 'assistant', content: 'hello' },
     ];
     const originalContent = messages.map(m => m.content);
-    trimToolLoopMessages(messages, 32768);
+    await trimToolLoopMessages(messages, 32768);
     expect(messages.map(m => m.content)).toEqual(originalContent);
   });
 
-  it('truncates older tool messages when over budget', () => {
+  it('truncates older tool messages when over budget', async () => {
     const longObservation = 'x'.repeat(10000);
     const messages: OllamaMessage[] = [
       { role: 'system', content: 'sys' },
@@ -121,7 +121,7 @@ describe('trimToolLoopMessages', () => {
     ];
 
     // Use a small context size to force trimming
-    trimToolLoopMessages(messages, 2000);
+    await trimToolLoopMessages(messages, 2000);
 
     // Older tool messages (indices 3, 5) should be truncated
     expect(messages[3].content).toContain('[Truncated:');
@@ -131,7 +131,7 @@ describe('trimToolLoopMessages', () => {
     expect(messages[9].content).toBe(longObservation);
   });
 
-  it('preserves system message untouched', () => {
+  it('preserves system message untouched', async () => {
     const messages: OllamaMessage[] = [
       { role: 'system', content: 'a'.repeat(5000) },
       { role: 'tool', content: 'x'.repeat(5000) },
@@ -139,9 +139,68 @@ describe('trimToolLoopMessages', () => {
       { role: 'tool', content: 'y'.repeat(5000) },
     ];
 
-    trimToolLoopMessages(messages, 1000);
+    await trimToolLoopMessages(messages, 1000);
     // System message should never be trimmed
     expect(messages[0].content).toBe('a'.repeat(5000));
+  });
+
+  it('uses summarizer for large observations when available', async () => {
+    const messages: OllamaMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'query' },
+      { role: 'assistant', content: 'searching' },
+      { role: 'tool', content: 'x'.repeat(2000) },           // old, large — should be summarized
+      { role: 'assistant', content: 'more' },                 // recent — protected
+      { role: 'tool', content: 'y'.repeat(2000) },           // recent — protected
+      { role: 'assistant', content: 'answer' },               // recent — protected
+      { role: 'user', content: 'thanks' },                    // recent — protected
+    ];
+
+    const summarizer = vi.fn().mockResolvedValue('Key finding: data processed successfully');
+    await trimToolLoopMessages(messages, 500, summarizer);
+
+    expect(summarizer).toHaveBeenCalled();
+    expect(messages[3].content).toContain('[Summarized]');
+    expect(messages[3].content).toContain('Key finding');
+  });
+
+  it('falls back to truncation when summarizer fails', async () => {
+    const messages: OllamaMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'query' },
+      { role: 'assistant', content: 'searching' },
+      { role: 'tool', content: 'x'.repeat(2000) },
+      { role: 'assistant', content: 'more' },
+      { role: 'tool', content: 'y'.repeat(2000) },
+      { role: 'assistant', content: 'answer' },
+      { role: 'user', content: 'thanks' },
+    ];
+
+    const summarizer = vi.fn().mockRejectedValue(new Error('LLM unavailable'));
+    await trimToolLoopMessages(messages, 500, summarizer);
+
+    expect(messages[3].content).toContain('[Truncated:');
+  });
+
+  it('skips summarization for observations between 300-1000 chars', async () => {
+    const messages: OllamaMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'query' },
+      { role: 'assistant', content: 'searching' },
+      { role: 'tool', content: 'x'.repeat(800) },            // 300-1000 range — skip summarizer, hard truncate
+      { role: 'assistant', content: 'found stuff and more' },
+      { role: 'tool', content: 'y'.repeat(800) },
+      { role: 'assistant', content: 'final answer here' },    // recent — protected
+      { role: 'tool', content: 'z'.repeat(800) },            // recent — protected
+      { role: 'assistant', content: 'done for you' },         // recent — protected
+      { role: 'user', content: 'thanks' },                    // recent — protected
+    ];
+
+    const summarizer = vi.fn().mockResolvedValue('Summary');
+    await trimToolLoopMessages(messages, 200, summarizer);
+
+    expect(summarizer).not.toHaveBeenCalled();
+    expect(messages[3].content).toContain('[Truncated:');
   });
 });
 

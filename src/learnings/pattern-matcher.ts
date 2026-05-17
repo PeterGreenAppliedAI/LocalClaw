@@ -22,6 +22,43 @@ const ERROR_PATTERNS: ErrorPattern[] = [
 ];
 
 /**
+ * Tool-specific recovery instructions — maps (toolName, errorType) → actionable guidance.
+ * These override the generic suggestions in ERROR_PATTERNS when available.
+ */
+const TOOL_RECOVERY_MAP: Record<string, Record<string, string>> = {
+  web_fetch: {
+    http_error: 'URL returned 404/403. Use web_search to find the correct/current URL, or try an alternative domain.',
+    timeout: 'Page took too long to load. Try web_search for a cached version, or use a simpler URL.',
+    connection_refused: 'Server is unreachable. Use web_search to find an alternative source for this information.',
+    rate_limit: 'Rate limited by this site. Wait 30s then retry, or use web_search for alternative sources.',
+  },
+  browser: {
+    timeout: 'Page load timed out. Try browser with a wait action first, or navigate to a simpler page.',
+    connection_refused: 'Cannot connect to browser. The Playwright service may not be running.',
+    http_error: 'Page returned an error. Try navigating to the site root first, then follow links.',
+  },
+  exec: {
+    permission_denied: 'Permission denied. If using allowlist mode, check the command is allowed. Try Docker backend if available.',
+    timeout: 'Command timed out. Break the task into smaller steps or use a shorter-running command.',
+    module_not_found: 'Module not found. Install it first: exec npm install <pkg> or exec pip install <pkg>.',
+    out_of_memory: 'Out of memory. Reduce input size or process data in smaller chunks.',
+  },
+  web_search: {
+    rate_limit: 'Search API rate limited. Wait 30s before retrying or simplify the query.',
+    timeout: 'Search timed out. Retry with a shorter, simpler query.',
+    connection_refused: 'Search API unreachable. Check API key and service availability.',
+  },
+  document: {
+    timeout: 'Document creation timed out. Reduce content size or try a simpler format.',
+    permission_denied: 'Cannot create document. Check LibreOffice is installed and accessible.',
+  },
+  image_generate: {
+    timeout: 'Image generation timed out. Try a simpler prompt or smaller dimensions.',
+    connection_refused: 'Image service unreachable. Check the image generation endpoint is running.',
+  },
+};
+
+/**
  * Detect a known error pattern in tool output.
  * Returns the matched pattern type and suggestion, or null if no match.
  */
@@ -46,7 +83,11 @@ export function enrichObservation(
   const detected = detectErrorPattern(observation);
   if (!detected) return observation;
 
-  let enrichment = `[Error pattern: ${detected.type}. ${detected.suggestion}`;
+  // Tool-specific recovery takes priority over generic suggestion
+  const toolRecovery = TOOL_RECOVERY_MAP[toolName]?.[detected.type];
+  const suggestion = toolRecovery ?? detected.suggestion;
+
+  let enrichment = `[Error pattern: ${detected.type}. ${suggestion}`;
 
   // Search past learnings for this tool + pattern type
   if (errorStore) {

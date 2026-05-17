@@ -149,6 +149,11 @@ export const SessionConfigSchema = z.object({
   maxHistoryTurns: z.number().default(100),
   contextSize: z.number().default(32768),
   recentTurnsToKeep: z.number().default(6),
+  /** Use a fast LLM to summarize old tool observations instead of hard-truncating.
+   *  Only activates for observations >1000 chars when context budget is tight. */
+  summarizeToolObservations: z.boolean().default(false),
+  /** Model for observation summarization (defaults to router model if not set). */
+  summarizationModel: z.string().optional(),
 });
 
 export const WebSearchConfigSchema = z.object({

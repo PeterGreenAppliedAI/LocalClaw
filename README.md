@@ -77,7 +77,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Document Gen | `document` | Create and convert documents via LibreOffice headless — HTML/CSV → PDF/DOCX/XLSX/PPTX |
 | Image Gen | `image_generate` | Text-to-image and img2img via Flux model on dedicated hardware (Ollama) |
 | Code Generation | `opencode_build`, `opencode_status` | Delegate coding tasks to [OpenCode](https://opencode.ai) agent — scaffold projects, write tests, iterate. Isolated workspace. |
-| Self-Improvement | *(automatic)* | Error learning store, pattern matching, drift detection, learning promotion via heartbeat |
+| Self-Improvement | *(automatic)* | Error learning store, tool-specific recovery guidance, drift detection, observation summarization, learning promotion via heartbeat |
 | CLI | `npm run cli` | Terminal interface with streaming, slash commands, markdown rendering, session persistence |
 
 ## Quick Start
@@ -816,6 +816,18 @@ Several architectural patterns in LocalClaw were adapted from open source agent 
 | **[agent-reasoning](https://github.com/jasperan/agent-reasoning)** (jasperan) | Self-reflection stage for plan pipeline (draft → critique → improve), inspired by peer-reviewed cognitive architecture research (Chain-of-Thought, Tree of Thoughts, ReAct) |
 
 These frameworks solve similar problems but assume frontier models (GPT-4, Claude) are driving the agent. LocalClaw's contribution is adapting these patterns for local models (7B-30B parameters) running on Ollama, where the model can't reliably orchestrate its own workflow — deterministic pipelines control the flow, and the model only extracts parameters and synthesizes text.
+
+| **[Goose](https://github.com/aaif-goose/goose)** (AAIF/Block) | Tool-specific error recovery (errors as actionable prompts, not generic "try again"), structured sub-dispatch results (typed metadata over regex extraction), LLM-based observation summarization (smart compaction over hard truncation) |
+
+## Roadmap
+
+| Priority | Feature | Description |
+|----------|---------|-------------|
+| Next | **SearXNG integration** | Self-hosted meta-search engine replacing paid search APIs (Brave/Perplexity/Grok/Tavily). Runs in separate VM. Zero API costs, no rate limits, configurable search engines. |
+| Next | **Provider abstraction (vLLM/OpenAI-compat)** | LLM client trait supporting Ollama, vLLM, LM Studio, and any OpenAI-compatible endpoint. Enables multi-backend routing. |
+| Planned | **qwen3-coder-next:80b** | Test larger coding model against qwen3-coder:30b for OpenCode builds. Better quality, slower throughput. |
+| Planned | **nemotron3:33b video pipeline** | Multimodal video/meeting summarization. New pipeline for watch → transcribe → summarize → extract actions. |
+| Backlog | **MCP client support** | Consume external MCP servers as tools (Jira, Notion, GitHub, etc.) without building custom tool factories. |
 
 ## License
 

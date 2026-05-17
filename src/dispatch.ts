@@ -669,6 +669,9 @@ async function runSpecialist(
       userPriming: userPriming || undefined,
     },
     errorStore,
+    summarizeObservations: config.session.summarizeToolObservations
+      ? { enabled: true, client, model: config.session.summarizationModel ?? config.router.model }
+      : undefined,
   });
 
   return {
@@ -871,7 +874,13 @@ async function runPipelineDispatch(
         skipPipeline: true, // go to tool-loop, not pipeline (prevents plan→plan recursion)
         onStream: undefined, // don't stream sub-task responses
       });
-      return { answer: result.answer, steps: result.steps };
+
+      const answer = result.answer;
+      // Extract structured references at the dispatch layer (not post-hoc in plan.ts)
+      const filePaths = answer.match(/(?:data\/|research\/|\.plan-artifacts\/)[^\s,)"]+/g) ?? [];
+      const urls = [...new Set(answer.match(/https?:\/\/[^\s)"\]]+/g) ?? [])];
+
+      return { answer, steps: result.steps, status: 'success' as const, filePaths, urls, category: subCategory };
     };
   }
 

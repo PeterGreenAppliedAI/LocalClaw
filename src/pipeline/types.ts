@@ -47,7 +47,21 @@ export interface PipelineContext {
   metricsCollector?: import('../metrics/collector.js').MetricsCollector;
   /** Sub-dispatch function — sends a message to a specialist and returns the result.
    *  Used by the plan pipeline orchestrator to delegate sub-tasks. */
-  subDispatch?: (message: string, category: string) => Promise<{ answer: string; steps?: Array<{ tool?: string; params?: Record<string, unknown>; observation?: string }> }>;
+  subDispatch?: (message: string, category: string) => Promise<SubDispatchResult>;
+}
+
+/** Structured result from a sub-dispatch call. Typed metadata avoids post-hoc regex extraction. */
+export interface SubDispatchResult {
+  answer: string;
+  steps?: Array<{ tool?: string; params?: Record<string, unknown>; observation?: string }>;
+  /** Whether the sub-dispatch completed without error */
+  status: 'success' | 'error';
+  /** File paths extracted from the answer (workspace-relative paths) */
+  filePaths: string[];
+  /** URLs found in the answer */
+  urls: string[];
+  /** The category that was dispatched to */
+  category: string;
 }
 
 // --- Stage types ---

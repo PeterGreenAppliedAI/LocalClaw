@@ -175,6 +175,25 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Lesson:** Local models don't reliably follow "call this tool exactly once" instructions. Constrain via maxIterations, not prompts.
 **Status:** maxIterations set to 2 to force single build + answer.
 
+### Tool-specific error recovery (May 2026)
+**Problem:** Tool errors returned generic "Try a different approach or tool" regardless of which tool failed or why. The 8 error patterns in `enrichObservation()` had generic suggestions (e.g., "Check file permissions") that didn't help the model recover.
+**Fix:** Added `TOOL_RECOVERY_MAP` — a lookup table mapping (toolName, errorType) → actionable recovery instruction. When `web_fetch` gets a 404, model is told "Use web_search to find the correct URL." When `exec` gets EACCES, model is told to try Docker backend.
+**Why this matters:** Goose's architecture treats errors as prompts — recovery instructions tailored to the specific failure. LocalClaw already had `enrichObservation()` but it was generic. Now it's tool-aware.
+**Status:** Active. `src/learnings/pattern-matcher.ts`.
+
+### Structured sub-dispatch results (May 2026)
+**Problem:** Plan pipeline sub-dispatches returned raw text strings. File paths and URLs were regex-extracted post-hoc from the answer, which was fragile and could miss paths in unexpected formats.
+**Fix:** Added `SubDispatchResult` typed interface. Dispatch layer now extracts paths/URLs at source (where it has the full answer) and returns structured metadata. Plan pipeline uses typed fields instead of regex.
+**Why this matters:** Separates data extraction from orchestration. Foreman handoffs are now based on structured data, not text parsing.
+**Status:** Active. `src/pipeline/types.ts`, `src/dispatch.ts`, `src/pipeline/definitions/plan.ts`.
+
+### LLM-based observation summarization (May 2026)
+**Decision:** Added optional LLM summarization for old tool observations in the tool-loop context trimmer.
+**How it works:** When context budget is tight (>85%), observations >1000 chars are summarized by a fast model (router model by default) before truncation. Observations 300-1000 chars hard-truncate as before. Controlled by `session.summarizeToolObservations` config flag.
+**Why:** Hard truncation to 300 chars loses key data (errors, file paths, status codes) buried in middle of output. Smart summarization preserves what matters. Goose uses LLM-based summarization too but for full session compaction — this is more targeted (per-observation).
+**Fallback:** If LLM call fails, falls back to hard truncation. Zero risk of breaking existing behavior.
+**Status:** Available, disabled by default. Enable in config when running models with high context pressure.
+
 ---
 
 ## Known Issues

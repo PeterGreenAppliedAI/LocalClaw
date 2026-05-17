@@ -479,19 +479,15 @@ export const planPipeline: PipelineDefinition = {
                 const resultFile = join(ARTIFACT_DIR, `step-${stepIndex + 1}.txt`);
                 try { writeFileSync(resultFile, observation); } catch { /* best-effort */ }
 
-                // Extract structured references
-                const filePaths = observation.match(/(?:data\/|research\/)[^\s,)"]+/g) ?? [];
-                const urls = [...new Set(observation.match(/https?:\/\/[^\s)"\]]+/g) ?? [])];
-
-                // Update foreman state
+                // Update foreman state — use structured data from sub-dispatch
                 foremanState.completedSteps.push({
                   index: stepIndex,
                   specialist: step.specialist,
                   purpose: step.purpose,
-                  status: 'success',
+                  status: result.status,
                   resultFile,
-                  filePaths,
-                  urls,
+                  filePaths: result.filePaths,
+                  urls: result.urls,
                 });
 
                 ctx.metricsCollector?.trackStep({
