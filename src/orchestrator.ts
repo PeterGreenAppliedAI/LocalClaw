@@ -671,7 +671,24 @@ Now write YOUR analysis of THIS user. Return ONLY the JSON object with your spec
             const modelRaw = (modelResponse.message?.content ?? '').trim();
             const modelMatch = modelRaw.match(/\{[\s\S]*\}/);
             if (modelMatch) {
-              const parsed = JSON.parse(modelMatch[0]);
+              // Try parsing directly; if trailing text breaks it, find the balanced closing brace
+              let jsonStr = modelMatch[0];
+              let parsed: Record<string, unknown>;
+              try {
+                parsed = JSON.parse(jsonStr);
+              } catch {
+                // Find balanced closing brace — scan for matching depth
+                const start = modelRaw.indexOf('{');
+                if (start !== -1) {
+                  let depth = 0;
+                  for (let ci = start; ci < modelRaw.length; ci++) {
+                    if (modelRaw[ci] === '{') depth++;
+                    else if (modelRaw[ci] === '}') depth--;
+                    if (depth === 0) { jsonStr = modelRaw.slice(start, ci + 1); break; }
+                  }
+                }
+                parsed = JSON.parse(jsonStr);
+              }
               const updates: Record<string, string> = {};
               for (const [k, v] of Object.entries(parsed)) {
                 if (typeof v === 'string' && v.length > 0) updates[k] = v;
