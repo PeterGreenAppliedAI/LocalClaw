@@ -23,9 +23,11 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
   switch (stage.type) {
     case 'extract': {
       const extraContext = stage.context ? stage.context(ctx) : undefined;
+      // Use router model for extraction — it's a structured task, not reasoning
+      const extractModel = ctx.routerModel ?? ctx.model;
       const params = await extractParams(
         ctx.client,
-        ctx.model,
+        extractModel,
         stage.schema,
         ctx.userMessage,
         stage.examples,

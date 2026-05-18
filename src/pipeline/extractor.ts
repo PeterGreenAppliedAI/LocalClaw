@@ -89,19 +89,39 @@ export async function extractParams(
 }
 
 function tryParseJson(text: string): Record<string, unknown> | null {
+  // Strip thinking model tags (qwen3.6, nemotron, etc.)
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
   // Try direct parse
   try {
-    const obj = JSON.parse(text);
+    const obj = JSON.parse(cleaned);
     if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) return obj;
   } catch { /* fall through */ }
 
   // Try extracting JSON from markdown fences or surrounding text
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     try {
       const obj = JSON.parse(jsonMatch[0]);
       if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) return obj;
-    } catch { /* fall through */ }
+    } catch {
+      // Greedy match may have caught trailing text — try balanced brace extraction
+      const start = cleaned.indexOf('{');
+      if (start !== -1) {
+        let depth = 0;
+        for (let i = start; i < cleaned.length; i++) {
+          if (cleaned[i] === '{') depth++;
+          else if (cleaned[i] === '}') depth--;
+          if (depth === 0) {
+            try {
+              const obj = JSON.parse(cleaned.slice(start, i + 1));
+              if (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) return obj;
+            } catch { /* fall through */ }
+            break;
+          }
+        }
+      }
+    }
   }
 
   return null;
