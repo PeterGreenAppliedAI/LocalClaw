@@ -386,7 +386,7 @@ export const researchPipeline: PipelineDefinition = {
     {
       name: 'synthesize',
       type: 'llm',
-      model: 'qwen3.6:35b',
+      model: 'gemma4:26b',
       temperature: 0.3,
       maxTokens: 8192,
       buildPrompt: (ctx) => {
@@ -591,6 +591,7 @@ export const researchPipeline: PipelineDefinition = {
           {
             name: 'render_deck',
             type: 'llm',
+            model: 'gemma4:26b',
             temperature: 0.2,
             maxTokens: 8192,
             buildPrompt: (ctx) => {
