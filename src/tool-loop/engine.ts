@@ -9,6 +9,18 @@ import { parseReActResponse } from './parser.js';
 import type { ErrorLearningStore } from '../learnings/error-store.js';
 import { enrichObservation } from '../learnings/pattern-matcher.js';
 
+/** Build Ollama options from ReActConfig, omitting undefined sampling params. */
+function buildOllamaOptions(config: ReActConfig, effectiveTemperature: number): Record<string, unknown> {
+  const opts: Record<string, unknown> = {
+    temperature: effectiveTemperature,
+    num_predict: config.maxTokens,
+  };
+  if (config.topK !== undefined) opts.top_k = config.topK;
+  if (config.topP !== undefined) opts.top_p = config.topP;
+  if (config.repeatPenalty !== undefined) opts.repeat_penalty = config.repeatPenalty;
+  return opts;
+}
+
 export interface RunReActLoopParams {
   client: OllamaClient;
   config: ReActConfig;
@@ -446,10 +458,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       model: config.model,
       messages,
       tools: ollamaTools.length > 0 ? ollamaTools : undefined,
-      options: {
-        temperature: effectiveTemperature,
-        num_predict: config.maxTokens,
-      },
+      options: buildOllamaOptions(config, effectiveTemperature),
     });
 
     const msg = response.message;
@@ -730,10 +739,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
     const finalResponse = await client.chat({
       model: config.model,
       messages,
-      options: {
-        temperature: config.temperature,
-        num_predict: config.maxTokens,
-      },
+      options: buildOllamaOptions(config, config.temperature),
       // No tools — force a text answer
     });
 

@@ -17,6 +17,9 @@ export interface ReActConfig {
   model: string;
   temperature: number;
   maxTokens: number;
+  topK?: number;
+  topP?: number;
+  repeatPenalty?: number;
   systemPrompt?: string;
   contextSize?: number;
 }

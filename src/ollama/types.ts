@@ -33,6 +33,9 @@ export interface OllamaChatParams {
     temperature?: number;
     num_predict?: number;
     stop?: string[];
+    top_k?: number;
+    top_p?: number;
+    repeat_penalty?: number;
   };
   keep_alive?: string;
   stream?: boolean;
@@ -55,6 +58,9 @@ export interface OllamaGenerateParams {
     temperature?: number;
     num_predict?: number;
     stop?: string[];
+    top_k?: number;
+    top_p?: number;
+    repeat_penalty?: number;
   };
   keep_alive?: string;
   stream?: false;

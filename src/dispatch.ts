@@ -652,6 +652,9 @@ async function runSpecialist(
       maxIterations: specialist.maxIterations,
       temperature: specialist.temperature,
       maxTokens: specialist.maxTokens,
+      topK: specialist.topK,
+      topP: specialist.topP,
+      repeatPenalty: specialist.repeatPenalty,
       systemPrompt,
       contextSize: config.session.contextSize,
     },
@@ -1092,10 +1095,15 @@ async function runAsBareChat(
     { role: 'user', content: message },
   ];
 
+  const options: Record<string, unknown> = { temperature, num_predict: maxTokens };
+  if (specialist?.topK !== undefined) options.top_k = specialist.topK;
+  if (specialist?.topP !== undefined) options.top_p = specialist.topP;
+  if (specialist?.repeatPenalty !== undefined) options.repeat_penalty = specialist.repeatPenalty;
+
   const chatParams = {
     model: chatModel,
     messages,
-    options: { temperature, num_predict: maxTokens },
+    options,
   };
 
   const response = onStream

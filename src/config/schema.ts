@@ -23,6 +23,12 @@ export const SpecialistConfigSchema = z.object({
   systemPrompt: z.string().optional(),
   maxTokens: z.number().default(4096),
   temperature: z.number().default(0.7),
+  /** Sampling: top-K candidates (Ollama default: 40). Lower = more focused. */
+  topK: z.number().optional(),
+  /** Sampling: nucleus probability threshold (Ollama default: 0.9). Lower = less random. */
+  topP: z.number().optional(),
+  /** Sampling: repetition penalty (Ollama default: 1.1). Higher = less repetition. */
+  repeatPenalty: z.number().optional(),
   maxIterations: z.number().default(10),
   tools: z.array(z.string()).default([]),
   /** Workspace context level: 'full' injects all workspace files, 'minimal' injects SOUL+IDENTITY only.

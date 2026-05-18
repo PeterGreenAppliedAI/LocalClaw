@@ -50,13 +50,17 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
         ...(ctx.history ?? []),
         { role: 'user', content: user },
       ];
+      const stageOptions: Record<string, unknown> = {
+        temperature: stage.temperature ?? 0.5,
+        num_predict: stage.maxTokens ?? 2048,
+      };
+      if (stage.topK !== undefined) stageOptions.top_k = stage.topK;
+      if (stage.topP !== undefined) stageOptions.top_p = stage.topP;
+      if (stage.repeatPenalty !== undefined) stageOptions.repeat_penalty = stage.repeatPenalty;
       const chatParams = {
         model: stage.model ?? ctx.model,
         messages,
-        options: {
-          temperature: stage.temperature ?? 0.5,
-          num_predict: stage.maxTokens ?? 2048,
-        },
+        options: stageOptions,
       };
       const response = stage.stream && ctx.onStream
         ? await ctx.client.chatStream(chatParams, ctx.onStream)

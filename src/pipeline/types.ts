@@ -88,6 +88,9 @@ export interface LlmStage extends BaseStage {
   model?: string;
   maxTokens?: number;
   temperature?: number;
+  topK?: number;
+  topP?: number;
+  repeatPenalty?: number;
   /** Stream output progressively via ctx.onStream. Use on the final user-facing stage. */
   stream?: boolean;
 }
