@@ -123,13 +123,24 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
     case 'parallel_tool': {
       const paramsList = stage.resolveParamsList(ctx);
       console.log(`[Pipeline] Parallel "${stage.name}": ${paramsList.length} concurrent ${stage.tool} calls`);
-      const results = await Promise.all(
+      const settled = await Promise.allSettled(
         paramsList.map(async (params) => {
           const observation = await ctx.executor(stage.tool, params, ctx.toolContext);
           ctx.steps.push({ tool: stage.tool, params, observation });
           return observation;
         }),
       );
+      // Collect successful results, log failures but don't abort
+      const results: string[] = [];
+      for (const r of settled) {
+        if (r.status === 'fulfilled') {
+          results.push(r.value);
+        } else {
+          const errMsg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+          console.warn(`[Pipeline] Parallel "${stage.name}": one ${stage.tool} call failed: ${errMsg}`);
+          ctx.steps.push({ tool: stage.tool, params: {}, observation: `Error: ${errMsg}` });
+        }
+      }
       return results;
     }
 
