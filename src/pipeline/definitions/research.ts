@@ -499,7 +499,9 @@ export const researchPipeline: PipelineDefinition = {
               options: { temperature: 0.2, num_predict: 4096 },
             });
 
-            let code = (response.message?.content ?? '').replace(/^```(?:python)?\n?/m, '').replace(/\n?```$/m, '').trim();
+            let code = (response.message?.content ?? '')
+              .replace(/<think>[\s\S]*?<\/think>/g, '')  // Strip thinking model tags
+              .replace(/^```(?:python)?\n?/m, '').replace(/\n?```$/m, '').trim();
             console.log(`[Research] Charts: generated ${code.length} chars of Python`);
 
             // Execute chart code
