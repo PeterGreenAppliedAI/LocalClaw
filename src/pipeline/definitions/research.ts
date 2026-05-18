@@ -230,8 +230,9 @@ export const researchPipeline: PipelineDefinition = {
           'CRITICAL: If the topic mentions multiple items to compare (e.g., "A vs B vs C"), generate at least one dedicated query for EACH item. Do not rely on a single comparison query to cover all items.',
           'Target PRIMARY sources: official specs, benchmarks, industry reports, not just news.',
           'Include the current year in at least 2 queries for freshness.',
-          'Output format: ["query 1", "query 2", "query 3"]',
-          'Return ONLY the JSON array, nothing else.',
+          'Output format: ["first search query here", "second search query here", "third search query here"]',
+          'Replace the placeholder text with REAL, specific search queries about the topic.',
+          'Return ONLY the JSON array, nothing else. /no_think',
         ].join('\n'),
         user: `Topic: ${ctx.params.topic}\nCurrent year: ${new Date().getFullYear()}`,
       }),
@@ -242,7 +243,7 @@ export const researchPipeline: PipelineDefinition = {
       name: 'parse_queries',
       type: 'code',
       execute: (ctx) => {
-        const raw = ctx.stageResults.plan as string;
+        const raw = (ctx.stageResults.plan as string).replace(/<think>[\s\S]*?<\/think>/g, '').trim();
         try {
           const match = raw.match(/\[[\s\S]*\]/);
           if (match) {
