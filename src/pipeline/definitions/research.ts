@@ -221,6 +221,7 @@ export const researchPipeline: PipelineDefinition = {
     {
       name: 'plan',
       type: 'llm',
+      model: 'qwen3-coder:30b', // Structured output — coder model, not reasoning
       temperature: 0.3,
       maxTokens: 1024,
       buildPrompt: (ctx) => ({
@@ -481,9 +482,9 @@ export const researchPipeline: PipelineDefinition = {
             const sessionResult = await ctx.executor('code_session', { action: 'start', session: 'research', runtime: 'python' }, ctx.toolContext);
             console.log(`[Research] Charts: session started — ${sessionResult.slice(0, 100)}`);
 
-            // Generate chart code via LLM
+            // Generate chart code via LLM — coder model for structured Python output
             const response = await ctx.client.chat({
-              model: ctx.model,
+              model: 'qwen3-coder:30b',
               messages: [
                 {
                   role: 'system',
