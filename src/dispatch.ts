@@ -335,7 +335,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   // If classified as non-chat but session has prior turns and message has no task intent, stay on chat
   if (effectiveCategory !== 'chat' && !params.cronMode && !params._reRouted && !params.overrideCategory) {
     if (sessionState && sessionState.turnCount > 0) {
-      const hasTaskIntent = /\b(create|make|build|run|execute|search for|generate|produce|write me|send|schedule|research|analyze|give me a|find me a)\b/i.test(message);
+      const hasTaskIntent = /\b(create|make|build|run|execute|search\b.*?\bfor|search the web|look up|generate|produce|write me|send|schedule|research|analyze|give me a|find me a|find me|find the)\b/i.test(message);
       if (!hasTaskIntent) {
         console.log(`[Dispatch] Conversational guard: ${effectiveCategory} → chat (no task intent, turn ${sessionState.turnCount})`);
         effectiveCategory = 'chat';
