@@ -42,6 +42,7 @@ import { createDocumentTool } from './document.js';
 import { createGmailSearchTool, createGmailReadTool } from './gmail-read.js';
 import { createCalendarListTool, createCalendarSearchTool } from './calendar-read.js';
 import { createImageGenerateTool } from './image-generate.js';
+import { createDiagramGenerateTool } from './diagram-generate.js';
 import { createOpenCodeBuildTool, createOpenCodeStatusTool } from './opencode-build.js';
 
 export interface RegisterToolsOptions {
@@ -173,7 +174,9 @@ export async function registerAllTools(
   // Image generation (requires separate Ollama instance with Flux model)
   if (config.imageGen?.enabled) {
     registry.register(createImageGenerateTool(config.imageGen));
+    registry.register(createDiagramGenerateTool(config.imageGen));
     console.log(`[Tools] Image generation registered (${config.imageGen.model})`);
+    console.log(`[Tools] Diagram generation registered`);
   }
 
   // OpenCode (AI coding agent)
