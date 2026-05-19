@@ -6,6 +6,14 @@ A log of significant decisions, failed experiments, and why things are the way t
 
 ## Model Evaluations
 
+### Gemma4:26b for chat (May 2026)
+**Context:** Chat was on qwen3.5:9b (thinking model). Analysis of conversation transcripts revealed the model self-prompting — asking follow-up questions then answering them in the same turn via `<think>` blocks. The orphaned `</think>` tags were also leaking into continuation context previews.
+**Decision:** Switched chat to gemma4:26b (MoE, 3.8B active / 25.2B total). Kept qwen3-coder:30b for tool-calling specialists.
+**Why gemma4 for chat:** MoE architecture means only 3.8B active params → faster tok/s than the dense 9B qwen, while being a smarter model overall. DGX Spark hardware gives better throughput. No self-prompting artifacts. Cleaner conversational output.
+**Sampling:** Per Gemma 4 best practices: temperature=1.0, top_p=0.95, top_k=64.
+**Note:** Gemma 4 docs explicitly say "No Thinking Content in History" for multi-turn conversations. The thinking preservation in transcripts still benefits qwen3 specialists (tool-loop reasoning chains), but gemma4 chat sessions should have thinking stripped from history.
+**Status:** Active for chat. qwen3-coder:30b remains for all tool-calling specialists.
+
 ### Gemma4:26b as specialist replacement (April 2026)
 **Tried:** Swapped qwen3-coder:30b for gemma4:26b as the specialist model. Benchmarks showed 85% on agentic tasks vs qwen3-coder's 65%.
 **Result:** Tool calling worked, but tool **sequencing** was worse. Model answered before using tools, wandered to irrelevant sites, didn't complete multi-step chains. Reverted after testing.
@@ -40,6 +48,14 @@ A log of significant decisions, failed experiments, and why things are the way t
 ---
 
 ## Architecture Decisions
+
+### Thinking preservation in transcripts (May 2026)
+**Problem:** Models that emit `<think>` blocks had their reasoning stripped before storing in session transcripts. On subsequent turns, the model only saw its own terse answers — not the reasoning chain that produced them. Quality degraded over multi-turn conversations as the model lost context about _why_ it said what it said. Session state (known facts, open questions) was a poor substitute for the model's actual internal reasoning.
+**Decision:** Store raw model output (with thinking blocks) in the transcript. Strip thinking only at display boundaries: channel delivery, graph memory turns, session state updates, continuation context previews, handoff summarization, and when feeding transcript content to other LLMs (compactor summarizer, semantic extractor, fact extraction).
+**Why not strip everywhere:** The model benefits from seeing its own reasoning on subsequent turns — it maintains coherence and builds on prior analysis. But other LLMs that consume transcript content (summarizers, extractors) shouldn't see nested thinking blocks.
+**Also fixed:** Orphaned `</think>` regex was unlimited (`[\s\S]*?`) — tightened to `{0,500}` to prevent eating half the response if a stray `</think>` appears deep in the text. Added Gemma 4 thinking format (`<|channel>thought\n...<channel|>`) to all strip functions.
+**Also added:** `num_ctx` passthrough from `config.session.contextSize` to Ollama via `buildOllamaOptions()` and bare chat options — ensures Ollama allocates enough context for the larger history.
+**Status:** Active.
 
 ### Exec pipeline vs ReAct loop (April 2026)
 **Tried:** Removed the exec pipeline to let the model reason freely about 6 exec tools in a ReAct loop.
@@ -204,6 +220,21 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Suspected cause:** Race condition between stream message edit and the channelRegistry.send fallback path. May also relate to silent re-route or capability gap detection triggering a second dispatch.
 **Impact:** Cosmetic — the response content is correct, just duplicated.
 **Status:** Logged for investigation. Not blocking daily use.
+
+---
+
+## Future Ideas (Stashed)
+
+### MFLUX + Pillow programmatic diagram generation
+**Idea:** Use MFLUX (Apple MLX port of FLUX) to generate cyberpunk/stylized backgrounds locally, then composite text blocks, neon borders, and connection lines with Pillow. Produces architecture diagrams, system maps, status dashboards — all locally, no API.
+**Why it fits:** Already have Flux on the infrastructure for image_generate. This extends it from "generate a picture" to "generate a technical visual." Could become a LocalClaw tool or pipeline stage.
+**Inspiration:** Seen in another local AI setup that generated cyberpunk architecture diagrams this way.
+**Status:** Stashed. Circle back when image pipeline is more mature.
+
+### DevMesh integration into LocalClaw
+**Idea:** LocalClaw becomes the control plane for DevMesh outreach platform. Phase 1: status/control tools (manage from Discord). Phase 2: pipeline convergence (shared search, LLM routing, cron, CRM tools).
+**Why it fits:** Both systems share Ollama, cron, web search. LocalClaw's memory + calendar awareness can drive smarter outreach decisions.
+**Status:** Stashed. Plan light integration first. See `memory/project_devmesh.md`.
 
 ---
 

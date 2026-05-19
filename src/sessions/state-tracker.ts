@@ -2,6 +2,17 @@ import type { OllamaClient } from '../ollama/client.js';
 import type { SessionState, ConversationTurn } from './types.js';
 import { createEmptySessionState } from './types.js';
 
+/** Strip thinking blocks from text. */
+function stripThinkingTags(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/^[\s\S]{0,500}?<\/think>/g, '')
+    .replace(/<\/?think>/g, '')
+    .replace(/<\|channel>thought\n[\s\S]*?<channel\|>/g, '')
+    .replace(/<\|channel>thought[\s\S]*$/g, '')
+    .trim();
+}
+
 /** Max session-scoped facts to keep before dropping oldest */
 const MAX_KNOWN_FACTS = 20;
 
@@ -101,8 +112,11 @@ export async function extractSemanticDelta(
   const newTurns = recentTurns.slice(-(currentState.turnCount - currentState.lastSemanticUpdate + 2));
   if (newTurns.length === 0) return {};
 
+  // Strip thinking from transcript content before sending to the extraction model —
+  // <think> blocks are preserved in transcripts for model continuity but shouldn't
+  // be fed to the lightweight semantic extractor.
   const turnText = newTurns
-    .map(t => `${t.role}: ${t.content.slice(0, 500)}`)
+    .map(t => `${t.role}: ${stripThinkingTags(t.content).slice(0, 500)}`)
     .join('\n\n');
 
   try {

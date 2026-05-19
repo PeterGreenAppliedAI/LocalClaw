@@ -6,6 +6,17 @@ import type { FactStore } from '../memory/fact-store.js';
 import { estimateMessagesTokens } from './tokens.js';
 import { appendFileSync, mkdirSync } from 'node:fs';
 
+/** Strip thinking blocks from text. Used when feeding transcript content to LLMs that shouldn't see nested thinking. */
+function stripThinkingTags(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/^[\s\S]{0,500}?<\/think>/g, '')
+    .replace(/<\/?think>/g, '')
+    .replace(/<\|channel>thought\n[\s\S]*?<channel\|>/g, '')
+    .replace(/<\|channel>thought[\s\S]*$/g, '')
+    .trim();
+}
+
 export interface CompactedHistory {
   messages: OllamaMessage[];  // [summary_msg?, ...recent_turns]
   compacted: boolean;         // whether compaction happened
@@ -95,8 +106,10 @@ export async function buildCompactedHistory(params: BuildCompactedHistoryParams)
     return { messages: result, compacted: true };
   }
 
+  // Strip thinking from archive text before sending to summarizer LLM —
+  // nested <think> blocks from prior turns would confuse the summarizer.
   const archiveText = archiveMessages
-    .map(m => `${m.role}: ${m.content}`)
+    .map(m => `${m.role}: ${stripThinkingTags(m.content ?? '')}`)
     .join('\n\n');
 
   // Extract router training pairs from archive zone before it's summarized away

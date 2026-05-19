@@ -89,6 +89,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 - Required models pulled:
   ```bash
   ollama pull phi4:14b              # router (classification)
+  ollama pull gemma4:26b            # chat (conversational, MoE)
   ollama pull qwen3-coder:30b       # specialist (tool calling)
   ollama pull qwen3.6:35b           # briefing (synthesis/reasoning)
   ollama pull qwen3-embedding:8b    # vector embeddings
@@ -184,7 +185,7 @@ localclaw/
 │   ├── src/pages/            # Dashboard, Chat, Sessions, Tasks, Cron, Memory, Channels, Tools, Config
 │   ├── src/api/              # API client + React Query hooks
 │   └── dist/                 # Built static files (served by web adapter)
-├── test/                     # 258 tests across 21 suites
+├── test/                     # 266 tests across 21 suites
 ├── CLAUDE.md                 # AI code generation guidelines (for Claude Code)
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens
@@ -323,7 +324,7 @@ LocalClaw includes a terminal interface (`npm run cli`) for direct interaction w
   /compress  Trigger context compression
 
 ❯ hey whats up
-  [chat (model) | 1 step | model:qwen3.5:9b]
+  [chat (model) | 1 step | model:gemma4:26b]
   Hey there! How can I help you today?
 ```
 
@@ -671,14 +672,14 @@ LocalClaw assigns different models to different roles based on their strengths. 
 | Router | phi4:14b | Fast classification (~50ms), few-shot prompted, 200 tokens per decision |
 | Specialists (tool calling) | qwen3-coder:30b | Reliable tool sequencing, native Ollama tool call format |
 | Briefing (synthesis) | qwen3.6:35b | Better reasoning quality, respects pre-labeled data, cleaner output |
-| Chat | qwen3.5:9b | Natural conversational tone, fast for interactive use |
+| Chat | gemma4:26b | MoE (3.8B active / 25.2B total) — fast tok/s, clean conversational output, no self-prompting artifacts |
 | Reasoning | nemotron-3-nano:30b | Deep analysis and content synthesis (optional) |
 | Embedding | qwen3-embedding:8b | Vector search for knowledge import |
 | Vision | qwen3-vl:8b | Image analysis via multimodal model |
 | Image Generation | flux2-klein:4b-fp8 | Text-to-image on dedicated hardware |
 | Voice Chat | qwen2.5:7b | Low-latency responses for voice interactions |
 
-**Design principle:** Code handles deterministic work (time reasoning, urgency scoring, conflict detection, auto-actions). Models handle what requires judgment (synthesis, connection-finding, natural language). Each model is tested pipeline-by-pipeline before being promoted. Models under evaluation (gemma4:26b for tool calling, qwen3.6 for broader specialist use) are phased in one role at a time to isolate regressions.
+**Design principle:** Code handles deterministic work (time reasoning, urgency scoring, conflict detection, auto-actions). Models handle what requires judgment (synthesis, connection-finding, natural language). Each model is tested pipeline-by-pipeline before being promoted. Models are phased in one role at a time to isolate regressions (e.g., gemma4:26b promoted to chat after qwen3.5:9b showed self-prompting artifacts).
 
 ### Router Training Data
 
@@ -781,7 +782,8 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Language | TypeScript 5.7 (strict) |
 | AI Backend | Ollama |
 | Router Model | phi4:14b |
-| Specialist Model | qwen3-coder:30b (gemma4:26b under evaluation) |
+| Chat Model | gemma4:26b (MoE, 3.8B active) |
+| Specialist Model | qwen3-coder:30b |
 | Briefing Model | qwen3.6:35b |
 | Embedding Model | qwen3-embedding:8b |
 | Reasoning Model | nemotron-3-nano:30b (optional) |

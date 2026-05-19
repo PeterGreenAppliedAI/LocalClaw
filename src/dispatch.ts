@@ -127,6 +127,25 @@ export interface DispatchResult {
   attachments?: Array<{ data: Buffer; mimeType: string; filename: string }>;
 }
 
+/**
+ * Strip thinking blocks from model output for display/channel delivery.
+ * Handles:
+ *   - Qwen-style: <think>...</think>
+ *   - Gemma 4-style: <|channel>thought\n...<channel|>
+ *   - Orphaned close tags, stray unclosed tags
+ */
+function stripThinking(text: string): string {
+  return text
+    // Qwen-style thinking
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/^[\s\S]{0,500}?<\/think>/g, '')
+    .replace(/<\/?think>/g, '')
+    // Gemma 4-style thinking
+    .replace(/<\|channel>thought\n[\s\S]*?<channel\|>/g, '')
+    .replace(/<\|channel>thought[\s\S]*$/g, '') // unclosed gemma think block
+    .trim();
+}
+
 function resolveChannelSecurity(
   config: LocalClawConfig,
   channel?: string,
@@ -403,9 +422,10 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   ) {
     const lastAssistant = [...history].reverse().find(h => h.role === 'assistant');
     if (lastAssistant?.content) {
-      const preview = lastAssistant.content.length > 300
-        ? lastAssistant.content.slice(-300) + '...'
-        : lastAssistant.content;
+      const cleanContent = stripThinking(lastAssistant.content);
+      const preview = cleanContent.length > 300
+        ? cleanContent.slice(-300) + '...'
+        : cleanContent;
       effectiveMessage = `[Continuation — the user is responding to your previous message: "${preview}"]\n\n${message}`;
       console.log(`[Dispatch] Injected continuation context (${preview.slice(0, 60)}...)`);
     }
@@ -437,7 +457,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   const summarizeForHandoff = async (): Promise<string> => {
     if (!history || history.length === 0) return message;
     try {
-      const recentHistory = history.slice(-6).map(h => `${h.role}: ${h.content.slice(0, 300)}`).join('\n');
+      const recentHistory = history.slice(-6).map(h => `${h.role}: ${stripThinking(h.content ?? '').slice(0, 300)}`).join('\n');
       const response = await client.chat({
         model: config.router.model,
         messages: [{
@@ -470,6 +490,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   }
 
   // Silent re-route: if chat couldn't fulfill the request, re-classify and re-dispatch
+  // Strip thinking first to avoid false positives from reasoning like "I don't have access to..."
   if (effectiveCategory === 'chat' && !params.overrideCategory && !params._reRouted) {
     const CAPABILITY_GAP_PATTERNS = [
       /\bI (?:don't|do not|can't|cannot|am unable to) (?:have access|access|search|browse|check|look up|execute|run|send|schedule)/i,
@@ -480,7 +501,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       // Narrated tool calls — model writes tool syntax as text without actually calling tools
       /\[\w+\s*\(.*\)\]/i,
     ];
-    if (CAPABILITY_GAP_PATTERNS.some(p => p.test(result.answer))) {
+    if (CAPABILITY_GAP_PATTERNS.some(p => p.test(stripThinking(result.answer)))) {
       const handoffMessage = await summarizeForHandoff();
       const reClassification = await classifyMessage(client, config.router, handoffMessage);
       if (reClassification.category !== 'chat') {
@@ -495,18 +516,14 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     }
   }
 
-  // Strip thinking tags from models that emit <think>...</think> blocks
-  // Also strip orphaned </think> tags and content before them (unclosed think blocks)
-  result.answer = result.answer
-    .replace(/<think>[\s\S]*?<\/think>/g, '')
-    .replace(/^[\s\S]*?<\/think>/g, '')
-    .replace(/<\/?think>/g, '')
-    .trim();
+  // Strip thinking tags for display/channel delivery — but preserve raw answer in transcript
+  // so the model can see its own reasoning on subsequent turns.
+  const displayAnswer = stripThinking(result.answer);
 
   // Post-task self-review (Feature 4): lightweight quality check for tool-heavy responses
   // Corrections are logged for learning but NOT appended to user-facing answer
   if (!params.cronMode) {
-    const correction = await runPostTaskReview(client, config, message, result.answer, result.steps, effectiveCategory);
+    const correction = await runPostTaskReview(client, config, message, displayAnswer, result.steps, effectiveCategory);
     if (correction) {
       console.log(`[Dispatch] Post-task review: ${correction.slice(0, 150)}`);
     }
@@ -521,21 +538,21 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     toolCalls: result.steps?.map(s => s.tool).filter(Boolean) as string[] | undefined,
   });
 
-  // Store conversation turns in graph for cross-session search
+  // Store conversation turns in graph for cross-session search (stripped — graph is for search, not reasoning)
   if (params.graphMemory && senderId && !params.cronMode && !params._reRouted) {
     const sk = params.sessionKey ?? 'default';
     params.graphMemory.addTurn(message, 'user', senderId, sk).catch(() => {});
-    params.graphMemory.addTurn(result.answer.slice(0, 500), 'assistant', senderId, sk).catch(() => {});
+    params.graphMemory.addTurn(displayAnswer.slice(0, 500), 'assistant', senderId, sk).catch(() => {});
   }
 
-  // 5. Update session state
+  // 5. Update session state (use stripped answer — mechanical state doesn't need reasoning)
   if (sessionStore) {
     const toolNames = (result.steps?.map(s => s.tool).filter(Boolean) as string[]) ?? [];
     sessionState = updateMechanicalState(
       sessionState ?? createEmptySessionState(effectiveCategory),
       effectiveCategory,
       toolNames,
-      result.answer,
+      displayAnswer,
     );
 
     // Periodic semantic extraction (skip for cron — no human in the loop)
@@ -558,7 +575,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     sessionStore.saveState(agentId, sessionKey, sessionState);
   }
 
-  // 6. Persist turns if session store available
+  // 6. Persist turns if session store available — store RAW answer with thinking preserved
   if (sessionStore) {
     const now = new Date().toISOString();
     sessionStore.appendTurn(agentId, sessionKey, {
@@ -577,7 +594,8 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     });
   }
 
-  return result;
+  // Return with display-safe answer (thinking stripped for channel delivery)
+  return { ...result, answer: displayAnswer };
 }
 
 async function runSpecialist(
@@ -825,7 +843,7 @@ async function runPipelineDispatch(
     } else if (history && history.length > 0) {
       // Topic not yet computed — summarize conversation for the pipeline
       try {
-        const recentHistory = history.slice(-6).map(h => `${h.role}: ${h.content.slice(0, 300)}`).join('\n');
+        const recentHistory = history.slice(-6).map(h => `${h.role}: ${stripThinking(h.content ?? '').slice(0, 300)}`).join('\n');
         const response = await client.chat({
           model: config.router.model,
           messages: [{
@@ -1096,6 +1114,7 @@ async function runAsBareChat(
   ];
 
   const options: Record<string, unknown> = { temperature, num_predict: maxTokens };
+  if (config.session.contextSize) options.num_ctx = config.session.contextSize;
   if (specialist?.topK !== undefined) options.top_k = specialist.topK;
   if (specialist?.topP !== undefined) options.top_p = specialist.topP;
   if (specialist?.repeatPenalty !== undefined) options.repeat_penalty = specialist.repeatPenalty;

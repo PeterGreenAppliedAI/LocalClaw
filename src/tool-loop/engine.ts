@@ -15,6 +15,7 @@ function buildOllamaOptions(config: ReActConfig, effectiveTemperature: number): 
     temperature: effectiveTemperature,
     num_predict: config.maxTokens,
   };
+  if (config.contextSize) opts.num_ctx = config.contextSize;
   if (config.topK !== undefined) opts.top_k = config.topK;
   if (config.topP !== undefined) opts.top_p = config.topP;
   if (config.repeatPenalty !== undefined) opts.repeat_penalty = config.repeatPenalty;

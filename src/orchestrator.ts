@@ -93,6 +93,17 @@ function extractMediaAttachments(text: string): {
   return { cleanText, attachments };
 }
 
+/** Strip thinking blocks from text. */
+function stripThinkingTags(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/^[\s\S]{0,500}?<\/think>/g, '')
+    .replace(/<\/?think>/g, '')
+    .replace(/<\|channel>thought\n[\s\S]*?<channel\|>/g, '')
+    .replace(/<\|channel>thought[\s\S]*$/g, '')
+    .trim();
+}
+
 /** Append (message, category) training pairs from a transcript before it's cleared. */
 function extractTrainingPairs(transcript: Array<{ role: string; content: string; category?: string }>): void {
   const TRAINING_FILE = 'data/training/router-pairs.jsonl';
@@ -920,9 +931,14 @@ Write a useful ${timeOfDay} update:
     }
 
     // Build a condensed version of the conversation
+    // Strip thinking from assistant turns — <think> blocks are preserved in transcripts
+    // for model continuity but shouldn't be fed to the fact extraction model.
     const condensed = transcript
       .filter(t => t.role === 'user' || t.role === 'assistant')
-      .map(t => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content.slice(0, 1000)}`)
+      .map(t => {
+        const content = t.role === 'assistant' ? stripThinkingTags(t.content) : t.content;
+        return `${t.role === 'user' ? 'User' : 'Assistant'}: ${content.slice(0, 1000)}`;
+      })
       .join('\n');
 
     // Guard against prompt injection — skip turns with suspiciously long content

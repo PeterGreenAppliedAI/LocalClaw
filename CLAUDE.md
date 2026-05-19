@@ -20,11 +20,13 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage)
 - **Research pipeline** — `src/pipeline/definitions/research.ts`. Parallel search + fetch + synthesis + charts. Branches to reveal.js deck or styled PDF report with quality review.
 - **Tool-loop engine** — `runToolLoop()` in `src/tool-loop/engine.ts`. ReAct-style loop with native Ollama tool calls + regex fallback parser. Includes hallucination detection, drift detection, error learning hints.
 - **Dispatch pipeline** — `src/dispatch.ts` routes classified messages to specialists/pipelines. Handles 6-layer security enforcement, tool stripping, context isolation.
-- **Briefing system** — `src/orchestrator.ts`. Separate from heartbeat. Runs at 8am/1:15pm/5pm. Gathers calendar + tasks + memory, runs CoT reasoning via qwen3-coder:30b, delivers contextual insights.
+- **Briefing system** — `src/orchestrator.ts`. Separate from heartbeat. Runs at 8am/1:15pm/5pm. Gathers calendar + tasks + memory, runs CoT reasoning via qwen3.6:35b, delivers contextual insights.
 - **OllamaClient** — `src/ollama/client.ts`, REST API wrapper with single retry on connection failure.
 - **DockerBackend** — `src/exec/docker-backend.ts`, sandboxed command execution.
 
-**Data flow:** Channel message -> session resolution -> Router classification (pre-model overrides → model → keyword fallback) -> Security filtering (6 layers) -> Pipeline or Specialist dispatch -> tool-loop execution -> [FILE:] token extraction -> response to channel -> transcript persistence.
+**Data flow:** Channel message -> session resolution -> Router classification (pre-model overrides → model → keyword fallback) -> Security filtering (6 layers) -> Pipeline or Specialist dispatch -> tool-loop execution -> [FILE:] token extraction -> response to channel (thinking stripped) -> transcript persistence (thinking preserved).
+
+**Thinking tag handling:** Models that emit thinking blocks (`<think>...</think>` for Qwen, `<|channel>thought\n...<channel|>` for Gemma 4) have their thinking preserved in the session transcript so the model can see its own reasoning on subsequent turns. Thinking is stripped via `stripThinking()` in `src/dispatch.ts` only for: channel delivery, graph memory turns, session state updates, continuation context previews, handoff summarization. The `num_ctx` Ollama option is passed through from `config.session.contextSize` to ensure models have enough context window for the larger history.
 
 ### Memory System
 
@@ -324,6 +326,14 @@ JSON5 -> env interpolation -> Zod validation -> TypeScript types. Never hand-wri
 ### Security enforcement in dispatch (`src/dispatch.ts`)
 6-layer filtering: allowedCategories → ownerOnlyTools (code gate) → restrictedCategories (untrusted) → blockedTools → restrictedTools (untrusted) → confirmTools (preview). Each layer narrows what a message can do.
 
+### Thinking tag preservation pattern (`src/dispatch.ts`)
+Thinking blocks are preserved in session transcripts for model continuity across turns. Stripped only at display boundaries:
+- `stripThinking()` in dispatch.ts — strips for channel delivery, graph memory, session state, continuation context, handoff summaries
+- `stripThinkingTags()` in compactor.ts — strips from archive text before feeding to summarizer LLM
+- `stripThinkingTags()` in state-tracker.ts — strips before feeding transcript turns to semantic extraction model
+- `stripThinkingTags()` in orchestrator.ts — strips from assistant turns before fact extraction
+- Handles both Qwen (`<think>...</think>`) and Gemma 4 (`<|channel>thought\n...<channel|>`) formats
+
 ### [FILE:] token pattern
 Document/media tools return `[FILE:path]` tokens. These are:
 1. **Stripped** from tool observations before the model sees them (engine.ts)
@@ -400,7 +410,7 @@ System operations (heartbeat, cron) should never match or save user-facing skill
 - **Framework:** Vitest (`npm test` / `vitest run`)
 - **Type checking:** `npx tsc --noEmit`
 - **CI:** GitHub Actions runs type check + tests + build on every push/PR to main
-- **Current:** 226 tests across 20 files
+- **Current:** 266 tests across 21 files
 - **What needs tests** (Tier 2+ per code_rubric):
   - Auth/authz logic (owner-only tier, security filtering)
   - Networking (Ollama client, web fetch, SSRF checks)
