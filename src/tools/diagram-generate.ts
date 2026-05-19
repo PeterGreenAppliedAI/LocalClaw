@@ -79,7 +79,7 @@ const THEMES: Record<string, ThemeConfig> = {
 // Placeholders: __DIAGRAM_SPEC__, __THEME_CONFIG__, __BACKGROUND_PATH__, __OUTPUT_PATH__
 
 const PYTHON_TEMPLATE = `
-import json, os, sys
+import json, os, sys, math
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 with open('__SPEC_PATH__') as f: SPEC = json.load(f)
@@ -101,27 +101,36 @@ def load_font(name, size):
         if os.path.exists(p):
             try: return ImageFont.truetype(p, size)
             except: continue
-    # Try loading by name (works on some systems)
     try: return ImageFont.truetype(name, size)
     except: pass
     return ImageFont.load_default(size=size)
 
 font_name = THEME.get('fontFamily', 'DejaVuSans-Bold')
 font_plain = font_name.replace('-Bold', '')
-title_font = load_font(font_name, 44)
-subtitle_font = load_font(font_plain, 26)
-section_font = load_font(font_name, 24)
-item_font = load_font(font_plain, 18)
-tagline_font = load_font(font_plain, 16)
-conn_font = load_font(font_plain, 14)
+title_font = load_font(font_name, 56)
+subtitle_font = load_font(font_plain, 28)
+section_font = load_font(font_name, 22)
+item_font = load_font(font_plain, 17)
+tagline_font = load_font(font_plain, 18)
+conn_font = load_font(font_plain, 15)
 
 # --- Load and resize background ---
 bg = Image.open(BG_PATH).resize((WIDTH, HEIGHT), Image.LANCZOS)
 canvas = bg.convert('RGBA')
+
+# Darken background for better text contrast
+dark = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 120))
+canvas = Image.alpha_composite(canvas, dark)
+
 overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
 draw = ImageDraw.Draw(overlay)
 
-# --- Layout engine ---
+# --- Measure text width helper ---
+def text_width(text, font):
+    bbox = font.getbbox(text)
+    return bbox[2] - bbox[0]
+
+# --- Layout engine: content-fit sizing ---
 def compute_layout(sections):
     rows = {'top': [], 'middle': [], 'bottom': [], 'left': [], 'right': []}
     for s in sections:
@@ -129,13 +138,23 @@ def compute_layout(sections):
         rows[pos].append(s)
 
     positions = {}
-    margin = 40
-    title_space = 100
-    tagline_space = 50
-    usable_h = HEIGHT - title_space - tagline_space - margin * 2
+    margin = 50
+    gap = 24
+    title_space = 120 if SPEC.get('subtitle') else 90
+    tagline_space = 50 if SPEC.get('tagline') else 20
+    usable_h = HEIGHT - title_space - tagline_space
     usable_w = WIDTH - margin * 2
 
-    # Vertical rows
+    # Measure each section's natural width based on content
+    def measure_section(s):
+        label_w = text_width(s.get('label', ''), section_font) + 32
+        max_item_w = max((text_width(str(it), item_font) for it in s.get('items', [''])), default=100) + 40
+        w = max(label_w, max_item_w, 180)
+        item_count = len(s.get('items', []))
+        h = 52 + item_count * 36 + 16
+        return w, h
+
+    # Layout vertical rows
     row_keys = ['top', 'middle', 'bottom']
     active_rows = [k for k in row_keys if rows[k]]
     if not active_rows:
@@ -146,143 +165,171 @@ def compute_layout(sections):
     for ri, rk in enumerate(active_rows):
         sects = rows[rk]
         if not sects: continue
-        y_start = title_space + margin + ri * row_height
-        sect_w = (usable_w - (len(sects) - 1) * 20) // max(len(sects), 1)
 
-        for si, s in enumerate(sects):
-            item_count = len(s.get('items', []))
-            h = 48 + item_count * 34 + 16
-            h = min(h, row_height - 20)
-            x = margin + si * (sect_w + 20)
-            positions[s['id']] = (x, y_start, sect_w, h)
+        # Measure all sections in this row
+        measurements = [(s, *measure_section(s)) for s in sects]
+        total_natural_w = sum(m[1] for m in measurements) + gap * (len(sects) - 1)
+
+        # Scale to fit if needed, but don't exceed natural width
+        if total_natural_w > usable_w:
+            scale = usable_w / total_natural_w
+        else:
+            scale = 1.0
+
+        # Center the row
+        actual_total_w = min(total_natural_w, usable_w)
+        x_offset = margin + (usable_w - actual_total_w) // 2
+        y_start = title_space + ri * row_height + (row_height - max(m[2] for m in measurements)) // 2
+
+        x = x_offset
+        for s, nat_w, nat_h in measurements:
+            w = int(nat_w * scale)
+            h = min(nat_h, row_height - 20)
+            positions[s['id']] = (x, y_start, w, h)
+            x += w + gap
 
     # Left/right columns
-    for pos, x_base in [('left', margin), ('right', WIDTH - margin - 300)]:
+    for pos, align in [('left', 'left'), ('right', 'right')]:
         sects = rows[pos]
-        if not sects:
-            continue
-        col_h = (usable_h - (len(sects) - 1) * 20) // max(len(sects), 1)
+        if not sects: continue
+        col_h = (usable_h - (len(sects) - 1) * gap) // max(len(sects), 1)
         for si, s in enumerate(sects):
-            y = title_space + margin + si * (col_h + 20)
-            item_count = len(s.get('items', []))
-            h = 48 + item_count * 34 + 16
-            h = min(h, col_h)
-            positions[s['id']] = (x_base, y, 300, h)
+            nat_w, nat_h = measure_section(s)
+            w = min(nat_w, 380)
+            h = min(nat_h, col_h)
+            y = title_space + si * (col_h + gap)
+            x = margin if align == 'left' else (WIDTH - margin - w)
+            positions[s['id']] = (x, y, w, h)
 
     return positions
 
 positions = compute_layout(SPEC.get('sections', []))
 
-# --- Draw sections ---
-for section in SPEC.get('sections', []):
-    sid = section['id']
-    if sid not in positions: continue
-    x, y, w, h = positions[sid]
+# --- Draw connections FIRST (behind boxes) then draw glow layer ---
+conn_overlay = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
+conn_draw = ImageDraw.Draw(conn_overlay)
 
-    # Section container
-    draw.rounded_rectangle([x, y, x + w, y + h], radius=12,
-        fill=tuple(THEME['boxBg']), outline=tuple(THEME['boxBorder']), width=2)
-
-    # Section header bar
-    draw.rounded_rectangle([x, y, x + w, y + 40], radius=12,
-        fill=tuple(THEME['sectionHeaderBg']))
-    # Fix bottom corners of header (overlap with rounded rect)
-    draw.rectangle([x, y + 24, x + w, y + 40], fill=tuple(THEME['sectionHeaderBg']))
-    draw.text((x + 14, y + 8), section.get('label', ''), fill=tuple(THEME['titleColor']), font=section_font)
-
-    # Items
-    iy = y + 48
-    for item in section.get('items', []):
-        if iy + 30 > y + h - 8: break  # Don't overflow section box
-        draw.rounded_rectangle([x + 10, iy, x + w - 10, iy + 28], radius=6,
-            fill=tuple(THEME['boxBg']), outline=tuple(THEME['boxBorder']), width=1)
-        draw.text((x + 18, iy + 4), str(item), fill=tuple(THEME['textColor']), font=item_font)
-        iy += 34
-
-# --- Draw connections ---
 for conn in SPEC.get('connections', []):
     fid, tid = conn.get('from'), conn.get('to')
     if fid not in positions or tid not in positions: continue
     fx, fy, fw, fh = positions[fid]
     tx, ty, tw, th = positions[tid]
 
-    # Determine connection points based on relative positions
     f_cx, f_cy = fx + fw // 2, fy + fh // 2
     t_cx, t_cy = tx + tw // 2, ty + th // 2
 
-    # Connect from closest edges
     if abs(f_cy - t_cy) > abs(f_cx - t_cx):
-        # Vertical connection
         start = (f_cx, fy + fh if t_cy > f_cy else fy)
         end = (t_cx, ty if t_cy > f_cy else ty + th)
     else:
-        # Horizontal connection
         start = (fx + fw if t_cx > f_cx else fx, f_cy)
         end = (tx if t_cx > f_cx else tx + tw, t_cy)
 
     color = tuple(THEME['connectionColor'])
     style = conn.get('style', 'solid')
 
-    if style == 'dashed':
-        # Draw dashed line
-        dx = end[0] - start[0]
-        dy = end[1] - start[1]
-        length = max((dx**2 + dy**2)**0.5, 1)
-        segments = int(length / 12)
-        for i in range(0, segments, 2):
-            t1 = i / segments
-            t2 = min((i + 1) / segments, 1.0)
-            p1 = (int(start[0] + dx * t1), int(start[1] + dy * t1))
-            p2 = (int(start[0] + dx * t2), int(start[1] + dy * t2))
-            draw.line([p1, p2], fill=color, width=2)
-    else:
-        draw.line([start, end], fill=color, width=2)
+    # Draw thicker line with glow
+    for width, alpha in [(8, 40), (4, 120), (2, 255)]:
+        c = color[:3] + (alpha,) if len(color) == 3 else (*color[:3], alpha)
+        if style == 'dashed':
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            length = max((dx**2 + dy**2)**0.5, 1)
+            segments = int(length / 16)
+            for i in range(0, segments, 2):
+                t1, t2 = i / segments, min((i + 1) / segments, 1.0)
+                p1 = (int(start[0] + dx * t1), int(start[1] + dy * t1))
+                p2 = (int(start[0] + dx * t2), int(start[1] + dy * t2))
+                conn_draw.line([p1, p2], fill=c, width=width)
+        else:
+            conn_draw.line([start, end], fill=c, width=width)
 
     # Arrow head
-    if style == 'arrow':
-        import math
-        dx = end[0] - start[0]
-        dy = end[1] - start[1]
+    if style in ('arrow', 'solid'):
+        dx, dy = end[0] - start[0], end[1] - start[1]
         angle = math.atan2(dy, dx)
-        arrow_len = 14
-        a1 = (int(end[0] - arrow_len * math.cos(angle - 0.4)),
-              int(end[1] - arrow_len * math.sin(angle - 0.4)))
-        a2 = (int(end[0] - arrow_len * math.cos(angle + 0.4)),
-              int(end[1] - arrow_len * math.sin(angle + 0.4)))
-        draw.polygon([end, a1, a2], fill=color)
+        arrow_len = 18
+        a1 = (int(end[0] - arrow_len * math.cos(angle - 0.35)),
+              int(end[1] - arrow_len * math.sin(angle - 0.35)))
+        a2 = (int(end[0] - arrow_len * math.cos(angle + 0.35)),
+              int(end[1] - arrow_len * math.sin(angle + 0.35)))
+        conn_draw.polygon([end, a1, a2], fill=color + (255,) if len(color) == 3 else color)
 
     # Connection label
     if conn.get('label'):
         mid = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
-        # Label background for readability
         bbox = conn_font.getbbox(conn['label'])
-        lw = bbox[2] - bbox[0] + 12
-        lh = bbox[3] - bbox[1] + 6
-        draw.rounded_rectangle([mid[0] - lw // 2, mid[1] - lh // 2,
-                                mid[0] + lw // 2, mid[1] + lh // 2],
-                               radius=4, fill=tuple(THEME['boxBg']))
-        draw.text(mid, conn['label'], fill=tuple(THEME['accentColor']),
-                  font=conn_font, anchor='mm')
+        lw, lh = bbox[2] - bbox[0] + 16, bbox[3] - bbox[1] + 10
+        conn_draw.rounded_rectangle(
+            [mid[0] - lw // 2, mid[1] - lh // 2, mid[0] + lw // 2, mid[1] + lh // 2],
+            radius=6, fill=(0, 0, 0, 180))
+        conn_draw.text(mid, conn['label'], fill=tuple(THEME['accentColor']),
+                       font=conn_font, anchor='mm')
 
-# --- Title ---
-draw.text((WIDTH // 2, 30), SPEC.get('title', ''), fill=tuple(THEME['titleColor']),
-          font=title_font, anchor='mt')
+# Composite connections with glow
+glow_color = THEME.get('glowColor')
+if glow_color and glow_color != 'none':
+    conn_glow = conn_overlay.filter(ImageFilter.GaussianBlur(radius=8))
+    canvas = Image.alpha_composite(canvas, conn_glow)
+canvas = Image.alpha_composite(canvas, conn_overlay)
+
+# --- Draw sections on top of connections ---
+for section in SPEC.get('sections', []):
+    sid = section['id']
+    if sid not in positions: continue
+    x, y, w, h = positions[sid]
+
+    # Section container with stronger background
+    box_bg = tuple(THEME['boxBg'])
+    # Make box background more opaque for readability
+    if len(box_bg) == 4:
+        box_bg = (box_bg[0], box_bg[1], box_bg[2], min(box_bg[3] + 60, 240))
+    draw.rounded_rectangle([x, y, x + w, y + h], radius=14,
+        fill=box_bg, outline=tuple(THEME['boxBorder']), width=2)
+
+    # Section header bar — solid, high contrast
+    header_h = 38
+    header_bg = tuple(THEME['boxBorder'])[:3] + (180,)
+    draw.rounded_rectangle([x, y, x + w, y + header_h], radius=14, fill=header_bg)
+    draw.rectangle([x, y + 14, x + w, y + header_h], fill=header_bg)  # square off bottom corners
+    draw.text((x + w // 2, y + header_h // 2), section.get('label', '').upper(),
+              fill=(255, 255, 255, 255), font=section_font, anchor='mm')
+
+    # Items
+    iy = y + header_h + 10
+    for item in section.get('items', []):
+        if iy + 32 > y + h - 6: break
+        # Item pill
+        iw = text_width(str(item), item_font) + 24
+        ix = x + (w - iw) // 2  # Center items
+        draw.rounded_rectangle([ix, iy, ix + iw, iy + 28], radius=8,
+            fill=tuple(THEME['boxBg']), outline=tuple(THEME['boxBorder']), width=1)
+        draw.text((ix + iw // 2, iy + 14), str(item), fill=tuple(THEME['textColor']),
+                  font=item_font, anchor='mm')
+        iy += 36
+
+# --- Title with shadow ---
+title = SPEC.get('title', '')
+# Shadow
+draw.text((WIDTH // 2 + 2, 34), title, fill=(0, 0, 0, 150), font=title_font, anchor='mt')
+# Main
+draw.text((WIDTH // 2, 32), title, fill=tuple(THEME['titleColor']), font=title_font, anchor='mt')
 
 # --- Subtitle ---
 if SPEC.get('subtitle'):
-    draw.text((WIDTH // 2, 78), SPEC['subtitle'], fill=tuple(THEME['textColor']),
+    draw.text((WIDTH // 2, 88), SPEC['subtitle'], fill=tuple(THEME['textColor']),
               font=subtitle_font, anchor='mt')
 
 # --- Tagline ---
 if SPEC.get('tagline'):
-    draw.text((WIDTH // 2, HEIGHT - 28), SPEC['tagline'], fill=tuple(THEME['accentColor']),
-              font=tagline_font, anchor='mb')
+    draw.text((WIDTH // 2 + 1, HEIGHT - 27), SPEC['tagline'],
+              fill=(0, 0, 0, 120), font=tagline_font, anchor='mb')
+    draw.text((WIDTH // 2, HEIGHT - 28), SPEC['tagline'],
+              fill=tuple(THEME['accentColor']), font=tagline_font, anchor='mb')
 
-# --- Glow effect ---
-glow = THEME.get('glowColor')
-if glow and glow != 'none':
-    glow_layer = overlay.filter(ImageFilter.GaussianBlur(radius=6))
-    canvas = Image.alpha_composite(canvas, glow_layer)
+# --- Glow on sections ---
+if glow_color and glow_color != 'none':
+    section_glow = overlay.filter(ImageFilter.GaussianBlur(radius=4))
+    canvas = Image.alpha_composite(canvas, section_glow)
 
 # --- Final composite ---
 canvas = Image.alpha_composite(canvas, overlay)
