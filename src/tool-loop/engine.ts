@@ -284,6 +284,7 @@ const ACTION_CLAIM_PATTERNS = [
 /** Map tool names to action verbs they legitimately produce */
 const TOOL_ACTION_VERBS: Record<string, string[]> = {
   image_generate: ['created', 'generated'],
+  diagram_generate: ['created', 'generated'],
   write_file: ['created', 'written', 'saved'],
   document: ['created', 'generated', 'saved'],
   exec: ['executed', 'ran'],
