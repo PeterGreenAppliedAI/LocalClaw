@@ -147,9 +147,9 @@ def compute_layout(sections):
 
     # Measure each section's natural width based on content
     def measure_section(s):
-        label_w = text_width(s.get('label', ''), section_font) + 32
-        max_item_w = max((text_width(str(it), item_font) for it in s.get('items', [''])), default=100) + 40
-        w = max(label_w, max_item_w, 180)
+        label_w = text_width(s.get('label', '').upper(), section_font) + 40
+        max_item_w = max((text_width(str(it), item_font) for it in s.get('items', [''])), default=100) + 48
+        w = max(label_w, max_item_w, 200)
         item_count = len(s.get('items', []))
         h = 52 + item_count * 36 + 16
         return w, h
@@ -399,7 +399,11 @@ export function createDiagramGenerateTool(config: ImageGenConfig): LocalClawTool
 WHEN TO USE: User asks for an architecture diagram, system diagram, infrastructure visualization, or tech stack diagram.
 DO NOT use for: simple data charts (use code_session with matplotlib), or general images (use image_generate).
 
+IMPORTANT: Before calling this tool, use read_file to read relevant documentation (e.g., CLAUDE.md for LocalClaw architecture) so your diagram spec contains REAL component names, models, and connections — not generic placeholders.
+
 You provide a structured JSON layout spec with sections, connections, and a theme. Available themes: cyberpunk, corporate, blueprint, minimal, or a custom Flux prompt string.
+Always provide a readable filename (e.g., "localclaw_architecture"), not a timestamp.
+Each section should have 3-6 items max for readability. Use multiple sections to show more detail.
 Returns a [FILE:path] token for the generated diagram PNG.`,
     parameterDescription: 'spec (required): JSON string with: title, subtitle (optional), tagline (optional), theme ("cyberpunk"|"corporate"|"blueprint"|"minimal"|custom prompt), sections (array of {id, label, items[], position: "top"|"middle"|"bottom"|"left"|"right"}), connections (array of {from, to, label?, style?: "solid"|"dashed"|"arrow"}). filename (optional): Output filename without extension.',
     parameters: {
