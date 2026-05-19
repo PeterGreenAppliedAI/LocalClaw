@@ -399,7 +399,7 @@ export function createDiagramGenerateTool(config: ImageGenConfig): LocalClawTool
 WHEN TO USE: User asks for an architecture diagram, system diagram, infrastructure visualization, or tech stack diagram.
 DO NOT use for: simple data charts (use code_session with matplotlib), or general images (use image_generate).
 
-IMPORTANT: Before calling this tool, use read_file to read relevant documentation (e.g., CLAUDE.md for LocalClaw architecture) so your diagram spec contains REAL component names, models, and connections — not generic placeholders.
+IMPORTANT: Before calling this tool, gather accurate details about the system being diagrammed. Use available tools (read_file, memory_search, etc.) to get real component names, models, and connections. Never use generic placeholders — if you don't have enough information, ask the user.
 
 You provide a structured JSON layout spec with sections, connections, and a theme. Available themes: cyberpunk, corporate, blueprint, minimal, or a custom Flux prompt string.
 Always provide a readable filename (e.g., "localclaw_architecture"), not a timestamp.
