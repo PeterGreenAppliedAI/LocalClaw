@@ -1794,10 +1794,19 @@ Write a useful ${timeOfDay} update:
           }
         } else {
           const media = extractMediaAttachments(result.answer);
-          await this.channelRegistry.send(
-            { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId, replyToId: msg.id },
-            { text: media.cleanText || result.answer, attachments: media.attachments.length > 0 ? media.attachments : undefined },
-          );
+          const text = media.cleanText || result.answer;
+          const chunks = splitFinalMessage(text, 2000);
+          const target = { channel: msg.channel, channelId: msg.channelId!, guildId: msg.guildId, replyToId: msg.id };
+          await this.channelRegistry.send(target, {
+            text: chunks[0],
+            attachments: media.attachments.length > 0 ? media.attachments : undefined,
+          });
+          for (let i = 1; i < chunks.length; i++) {
+            await this.channelRegistry.send(
+              { channel: msg.channel, channelId: msg.channelId! },
+              { text: chunks[i] },
+            );
+          }
         }
       }
 
