@@ -208,7 +208,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       const transcript = sessionStore.loadTranscript(agentId, sessionKey, config.session.maxHistoryTurns);
       history = transcript.map(t => ({
         role: t.role as 'user' | 'assistant',
-        content: t.content,
+        content: t.role === 'assistant' ? stripThinking(t.content) : t.content,
       }));
     }
   }
@@ -1107,9 +1107,16 @@ async function runAsBareChat(
     systemContent += '\n\n' + userPriming;
   }
 
+  // Strip thinking from history for chat — Gemma 4 docs: "No Thinking Content in History"
+  // and old qwen3 thinking tags in history confuse other models into generating massive output.
+  const cleanHistory = (history ?? []).map(h => h.role === 'assistant' && h.content
+    ? { ...h, content: stripThinking(h.content) }
+    : h,
+  );
+
   const messages: OllamaMessage[] = [
     { role: 'system', content: systemContent },
-    ...(history ?? []),
+    ...cleanHistory,
     { role: 'user', content: message },
   ];
 

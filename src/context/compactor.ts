@@ -65,9 +65,12 @@ export async function buildCompactedHistory(params: BuildCompactedHistoryParams)
     return { messages: [], compacted: false };
   }
 
+  // Strip thinking from assistant messages — models shouldn't see prior turns' thinking blocks.
+  // Gemma 4 docs: "No Thinking Content in History". Also prevents old qwen3 <think> tags
+  // from confusing models into generating massive output.
   const allMessages: OllamaMessage[] = transcript.map(t => ({
     role: t.role as 'user' | 'assistant',
-    content: t.content,
+    content: t.role === 'assistant' ? stripThinkingTags(t.content) : t.content,
   }));
 
   // Proactive threshold: compress at 50% of budget, not when full
