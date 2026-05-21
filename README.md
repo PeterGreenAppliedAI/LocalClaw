@@ -455,7 +455,7 @@ Memory uses a **FalkorDB graph database** with native vector search for semantic
 FalkorDB (Docker, localhost:6379)
   Graph: localclaw_memory
     (:Fact {text, importance, category, confidence, embedding, createdAt, senderId})
-    (:Entity {name, type})
+    (:Entity {name, canonical, type})  # canonical = normalized for dedup
     (:Tag {name})
     (Fact)-[:ABOUT]->(Entity)       # fact links to entities it mentions
     (Fact)-[:TAGGED]->(Tag)         # fact categorization
@@ -471,10 +471,12 @@ FalkorDB (Docker, localhost:6379)
 - **Multi-hop reasoning** — Traverse shared entities: DevMesh → AI → career fair. Finds connections the model can't
 - **Community detection** — Clusters of related facts by entity co-occurrence (work cluster, health cluster, hobby cluster)
 - **Extraction awareness** — Existing facts shown to extraction LLM to prevent re-extraction
+- **Typed entities** — NER extracts entities with types (person, organization, hardware, technology, etc.) from a closed taxonomy. Entities with type `unknown` are upgraded when re-encountered
+- **Entity normalization** — Canonical form computation (lowercase, collapse whitespace, singular) prevents duplicates like "open-source model" vs "open-source models"
 
 **Fact lifecycle:**
-1. **Extraction** — `!reset` (user-approved) or heartbeat (autonomous) extracts facts from conversation transcripts via LLM. LLM assigns importance level (1-5)
-2. **Storage** — GraphMemoryStore handles dedup (embedding similarity), creates entity/tag nodes and edges
+1. **Extraction** — `!reset` (user-approved) or heartbeat (autonomous) extracts facts from conversation transcripts via LLM. LLM assigns importance level (1-5) using few-shot examples
+2. **Storage** — GraphMemoryStore handles dedup (embedding similarity), creates typed entity/tag nodes and edges. `!save` writes to both flat FactStore and FalkorDB graph
 3. **Review** — Heartbeat surfaces candidates per cycle. User replies `!heartbeat yes/no` to confirm or remove
 4. **Removal** — `memory_forget` tool or `!heartbeat no`
 5. **Evolution** — Facts update via SUPERSEDES edges, preserving history
