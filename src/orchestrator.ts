@@ -947,9 +947,10 @@ Write a useful ${timeOfDay} update:
       return [];
     }
 
-    console.log(`[Facts] Calling ${this.config.router.model} for extraction (${condensed.length} chars)`);
+    const extractionModel = this.config.memory?.extractionModel ?? this.config.router.model;
+    console.log(`[Facts] Calling ${extractionModel} for extraction (${condensed.length} chars)`);
     const response = await this.client.chat({
-      model: this.config.router.model,
+      model: extractionModel,
       messages: [
         {
           role: 'system',

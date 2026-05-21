@@ -143,6 +143,8 @@ export const MemoryConsolidationSchema = z.object({
 export const MemoryConfigSchema = z.object({
   backend: z.enum(['markdown']).default('markdown'),
   consolidation: MemoryConsolidationSchema.optional(),
+  /** Model for fact extraction from transcripts. Defaults to router model. */
+  extractionModel: z.string().optional(),
 });
 
 export const CronConfigSchema = z.object({
