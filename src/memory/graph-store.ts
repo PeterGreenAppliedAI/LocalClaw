@@ -28,6 +28,21 @@ const DEFAULT_CONFIG: GraphMemoryConfig = {
   embeddingDims: 4096,
 };
 
+/**
+ * Normalize entity name to a canonical form for dedup.
+ * Preserves display name separately — canonical is for MERGE matching only.
+ */
+function normalizeEntityName(name: string): string {
+  let n = name.trim().toLowerCase();
+  // Collapse whitespace, hyphens, underscores
+  n = n.replace(/[\s\-_]+/g, ' ').trim();
+  // Simple English plural → singular (skip words ending in 'ss' like 'business')
+  if (n.endsWith('s') && n.length > 3 && !n.endsWith('ss') && !n.endsWith('us')) {
+    n = n.slice(0, -1);
+  }
+  return n;
+}
+
 export class GraphMemoryStore {
   private db: FalkorDB | null = null;
   private graph: Graph | null = null;
@@ -64,6 +79,26 @@ export class GraphMemoryStore {
       if (!e.message?.includes('already')) {
         console.warn('[GraphMemory] Vector index error:', e.message);
       }
+    }
+
+    // Migration: backfill canonical property on existing Entity nodes
+    try {
+      const result = await this.graph.query(
+        `MATCH (e:Entity) WHERE e.canonical IS NULL RETURN e.name AS name, e.senderId AS senderId`
+      );
+      const rows = (result.data ?? []) as Array<{ name: string; senderId: string }>;
+      if (rows.length > 0) {
+        for (const row of rows) {
+          const canonical = normalizeEntityName(row.name);
+          await this.graph.query(
+            `MATCH (e:Entity {name: $name, senderId: $senderId}) WHERE e.canonical IS NULL SET e.canonical = $canonical`,
+            { params: { name: row.name, senderId: row.senderId, canonical } }
+          );
+        }
+        console.log(`[GraphMemory] Migrated ${rows.length} entities with canonical names`);
+      }
+    } catch (e: any) {
+      console.warn('[GraphMemory] Entity canonical migration failed:', e.message);
     }
   }
 
@@ -119,37 +154,56 @@ export class GraphMemoryStore {
     );
 
     // Extract entities via LLM NER when none provided
-    let entities = input.entities ?? [];
-    if (entities.length === 0) {
+    let entities: Array<{ name: string; type: string }> = [];
+    const rawEntities = input.entities ?? [];
+    if (rawEntities.length === 0) {
       try {
         const nerResponse = await this.client.chat({
           model: 'phi4-mini:latest',
           messages: [{
             role: 'user',
-            content: `Extract named entities from this text. Return ONLY a JSON array of strings. Include: people, companies, products, technologies, places, events. Exclude generic words.\n\nText: "${text}"\n\nReturn: ["entity1", "entity2"]`,
+            content: `Extract named entities from this text. Return ONLY a JSON array of objects.
+Types: person, organization, technology, hardware, software, place, event, concept.
+Use singular forms. Use the most common/official name (e.g., "Polymarket" not "Poly Markets").
+
+Text: "${text}"
+
+Return: [{"name":"entity","type":"person|organization|technology|..."}]`,
           }],
-          options: { temperature: 0, num_predict: 128 },
+          options: { temperature: 0, num_predict: 256 },
         });
         const nerRaw = (nerResponse.message?.content ?? '').trim();
         const nerMatch = nerRaw.match(/\[[\s\S]*\]/);
         if (nerMatch) {
           const parsed = JSON.parse(nerMatch[0]);
           if (Array.isArray(parsed)) {
-            entities = parsed.filter((e: unknown): e is string => typeof e === 'string' && e.length > 1).slice(0, 5);
+            entities = parsed
+              .filter((e: unknown): e is Record<string, unknown> => !!e && typeof e === 'object' && 'name' in e)
+              .map((e: Record<string, unknown>) => ({
+                name: String(e.name),
+                type: typeof e.type === 'string' ? e.type : 'unknown',
+              }))
+              .filter(e => e.name.length > 1)
+              .slice(0, 5);
           }
         }
       } catch {
         // NER failed — proceed without entities
       }
+    } else {
+      // Backward compat: input.entities is string[] from the extraction prompt
+      entities = rawEntities.map(name => ({ name, type: 'unknown' }));
     }
-    for (const entityName of entities) {
+    for (const entity of entities) {
+      const canonical = normalizeEntityName(entity.name);
       await this.graph!.query(
-        `MERGE (e:Entity {name: $name, senderId: $senderId})
-         ON CREATE SET e.type = 'unknown', e.createdAt = $now
+        `MERGE (e:Entity {canonical: $canonical, senderId: $senderId})
+         ON CREATE SET e.name = $name, e.type = $type, e.createdAt = $now
+         ON MATCH SET e.type = CASE WHEN e.type = 'unknown' THEN $type ELSE e.type END
          WITH e
          MATCH (f:Fact {id: $factId})
          CREATE (f)-[:ABOUT]->(e)`,
-        { params: { name: entityName, senderId, now, factId: id } }
+        { params: { canonical, name: entity.name, type: entity.type, senderId, now, factId: id } }
       );
     }
 
@@ -394,10 +448,12 @@ export class GraphMemoryStore {
         for (const row of (existingEntities.data ?? []) as any[]) {
           const entityName = row['e.name'];
           if (entityName && stored.toLowerCase().includes(entityName.toLowerCase())) {
+            const canonical = normalizeEntityName(entityName);
             await this.graph!.query(
-              `MATCH (t:Turn {id: $turnId}), (e:Entity {name: $name, senderId: $senderId})
+              `MATCH (t:Turn {id: $turnId}), (e:Entity {senderId: $senderId})
+               WHERE e.canonical = $canonical OR e.name = $name
                CREATE (t)-[:MENTIONS]->(e)`,
-              { params: { turnId, name: entityName, senderId } }
+              { params: { turnId, name: entityName, canonical, senderId } }
             );
           }
         }

@@ -962,9 +962,25 @@ Write a useful ${timeOfDay} update:
             'Do NOT extract things the assistant TOLD the user — only things the user TOLD the assistant or that reveal who the user IS.',
             'CONSOLIDATE related info into ONE fact. If a task has a due date, priority, and description — that is ONE fact, not three.',
             'Aim for the FEWEST facts that capture ALL the information. Fewer is better.',
+            '',
             'Return a JSON array: [{"text":"fact","cat":"stable|context|decision|question","conf":0.0-1.0,"tags":["keyword"],"entities":["ProperNoun"],"imp":1-5}]',
-            'Categories: stable = permanent facts (name, location, job, preferences), context = temporary/situational, decision = choices the user made, question = open questions.',
-            'Importance (imp): 5=critical (health conditions, family, safety), 4=identity (job title, employer, key projects), 3=preference (tool choices, food preferences, style), 2=context (current tasks, upcoming events), 1=ephemeral (one-off mentions, passing comments).',
+            '',
+            'Categories: stable = permanent facts, context = temporary/situational, decision = choices made, question = open questions.',
+            '',
+            'IMPORTANCE (imp) — you MUST assign this accurately:',
+            '  5 = critical: health conditions, family members, safety issues',
+            '  4 = identity: job title, employer, key projects, certifications',
+            '  3 = preference: tool choices, food preferences, communication style',
+            '  2 = context: current tasks, upcoming events, temporary situations',
+            '  1 = ephemeral: one-off mentions, passing comments',
+            '',
+            'Examples:',
+            '  User: "My wife Nicole has been dealing with back pain" → imp:5 (family + health)',
+            '  User: "I work at DevMesh as an ML engineer" → imp:4 (identity)',
+            '  User: "I prefer dark mode in all my editors" → imp:3 (preference)',
+            '  User: "I have a meeting with the team tomorrow" → imp:2 (context)',
+            '  User: "Yeah I saw that article too" → imp:1 or skip entirely',
+            '',
             'If nothing worth remembering, return [].',
             ...((() => {
               // Show existing facts so the LLM avoids re-extracting them
@@ -1022,7 +1038,9 @@ Write a useful ${timeOfDay} update:
               ? obj.cat as FactInput['category']
               : 'stable'),
             confidence: typeof obj.conf === 'number' ? Math.min(1, Math.max(0, obj.conf)) : 0.8,
-            importance: typeof obj.imp === 'number' ? Math.min(5, Math.max(1, Math.round(obj.imp))) : 2,
+            importance: typeof obj.imp === 'number'
+              ? Math.min(5, Math.max(1, Math.round(obj.imp)))
+              : (console.warn(`[Facts] Missing imp for "${String(obj.text).slice(0, 50)}" — defaulting to 2`), 2),
             tags,
             entities,
           };
