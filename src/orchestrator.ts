@@ -1309,10 +1309,19 @@ Write a useful ${timeOfDay} update:
         const pending = JSON.parse(raw) as { facts: FactInput[]; senderId?: string };
         const senderId = pending.senderId ?? msg.senderId;
 
-        // Write through FactStore
+        // Write through FactStore (flat) + GraphMemory (graph)
         if (this.factStore) {
           await this.factStore.writeFactsBatch(pending.facts, senderId, 'user/approved');
           this.factStore.rebuildFacts(senderId);
+        }
+        if (this.graphMemory) {
+          for (const fact of pending.facts) {
+            try {
+              await this.graphMemory.addFact(fact, senderId);
+            } catch (err) {
+              console.warn(`[Facts] Graph write failed for "${fact.text.slice(0, 50)}":`, err instanceof Error ? err.message : err);
+            }
+          }
         }
 
         // Clean up pending
