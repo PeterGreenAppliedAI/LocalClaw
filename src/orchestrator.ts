@@ -1205,10 +1205,19 @@ Write a useful ${timeOfDay} update:
           allFacts.push(...facts);
           console.log(`[Heartbeat] Extracted ${facts.length} facts from ${file} (user: ${senderId})`);
 
-          // Write through FactStore
+          // Write through FactStore (flat) + GraphMemory (graph)
           if (this.factStore) {
             await this.factStore.writeFactsBatch(facts, senderId, `session/${file}`);
             this.factStore.rebuildFacts(senderId);
+          }
+          if (this.graphMemory) {
+            for (const fact of facts) {
+              try {
+                await this.graphMemory.addFact(fact, senderId);
+              } catch (err) {
+                console.warn(`[Heartbeat] Graph write failed for "${fact.text.slice(0, 50)}":`, err instanceof Error ? err.message : err);
+              }
+            }
           }
         }
       } catch {
