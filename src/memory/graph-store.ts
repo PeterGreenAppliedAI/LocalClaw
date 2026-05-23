@@ -158,6 +158,27 @@ export class GraphMemoryStore {
     const rawEntities = input.entities ?? [];
     if (rawEntities.length === 0) {
       try {
+        // Bootstrap: pull known entities from graph so the model classifies consistently
+        let knownEntitiesBlock = '';
+        try {
+          const known = await this.graph!.query(
+            `MATCH (e:Entity {senderId: $senderId}) WHERE e.type <> 'unknown' RETURN e.name, e.type ORDER BY e.name LIMIT 30`,
+            { params: { senderId } }
+          );
+          const rows = (known.data ?? []) as Array<{ 'e.name': string; 'e.type': string }>;
+          if (rows.length > 0) {
+            const grouped: Record<string, string[]> = {};
+            for (const r of rows) {
+              const t = r['e.type'];
+              if (!grouped[t]) grouped[t] = [];
+              grouped[t].push(`"${r['e.name']}"`);
+            }
+            knownEntitiesBlock = '\nKnown entities (classify consistently with these):\n'
+              + Object.entries(grouped).map(([t, names]) => `- ${names.join(', ')} → ${t}`).join('\n')
+              + '\n';
+          }
+        } catch { /* best-effort */ }
+
         const nerResponse = await this.client.chat({
           model: 'phi4-mini:latest',
           messages: [{
@@ -165,17 +186,7 @@ export class GraphMemoryStore {
             content: `Extract named entities from this text. Return ONLY a JSON array of objects.
 Types: person, organization, technology, hardware, software, place, event, concept.
 Use singular forms. Use the most common/official name (e.g., "Polymarket" not "Poly Markets").
-
-Examples:
-- "DGX Spark", "A5000", "Mac Mini" → hardware
-- "LocalClaw", "FalkorDB", "Ollama" → software
-- "DevMesh", "OpenAI", "Google" → organization
-- "Peter Green", "Nicole" → person
-- "Solutions Architect", "AI native" → concept
-- "System Prompt" (podcast) → concept
-- "Clearpath" (product/brand) → organization
-- "FieldRoutes API", "Gmail API" → software
-
+${knownEntitiesBlock}
 Text: "${text}"
 
 Return: [{"name":"entity","type":"person|organization|technology|..."}]`,
