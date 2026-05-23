@@ -166,6 +166,16 @@ export class GraphMemoryStore {
 Types: person, organization, technology, hardware, software, place, event, concept.
 Use singular forms. Use the most common/official name (e.g., "Polymarket" not "Poly Markets").
 
+Examples:
+- "DGX Spark", "A5000", "Mac Mini" → hardware
+- "LocalClaw", "FalkorDB", "Ollama" → software
+- "DevMesh", "OpenAI", "Google" → organization
+- "Peter Green", "Nicole" → person
+- "Solutions Architect", "AI native" → concept
+- "System Prompt" (podcast) → concept
+- "Clearpath" (product/brand) → organization
+- "FieldRoutes API", "Gmail API" → software
+
 Text: "${text}"
 
 Return: [{"name":"entity","type":"person|organization|technology|..."}]`,
