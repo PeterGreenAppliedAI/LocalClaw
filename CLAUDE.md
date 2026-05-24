@@ -65,11 +65,11 @@ Memory uses a **dual-backend** architecture: **FalkorDB graph database** (primar
 **Known limitation:** Multi-signal scoring uses fixed linear weights. A reranker (cross-encoder or LLM-based) may be needed if wrong facts consistently surface over correct ones. Monitor auto-injection quality before adding complexity.
 
 **Fact extraction paths:**
-1. **`!reset` (user-approved)** — On session clear, facts extracted via router model with few-shot importance examples (imp 1-5), candidates shown. On `!save`, facts written to both flat FactStore AND GraphMemory (entity linking, NER, vector embedding).
-2. **Heartbeat (autonomous)** — Every 2 hours, `reviewTranscripts()` scans sessions, extracts facts with existing facts shown to prevent re-extraction.
+1. **`!reset` (user-approved)** — On session clear, facts extracted via configurable model (`memory.extractionModel`, defaults to router model) with few-shot importance examples (imp 1-5), candidates shown. On `!save`, facts written to both flat FactStore AND GraphMemory (entity linking, NER, vector embedding).
+2. **Heartbeat (autonomous)** — Every 2 hours, `reviewTranscripts()` scans sessions, extracts facts with existing facts shown to prevent re-extraction. Writes to both flat FactStore and GraphMemory.
 3. **`memory_forget`** — Removes from both graph and flat store. Records removal to prevent re-extraction.
 
-**Entity extraction:** NER prompt in `graph-store.ts` requests typed entities `[{name, type}]` with closed taxonomy (person, organization, technology, hardware, software, place, event, concept). Entity names are normalized to canonical form (lowercase, collapsed whitespace, singular) before MERGE to prevent duplicates. Entity type upgrades from `unknown` to real type on subsequent encounters via `ON MATCH SET`.
+**Entity extraction:** NER prompt in `graph-store.ts` requests typed entities `[{name, type}]` with closed taxonomy (person, organization, technology, hardware, software, place, event, concept). Entity names are normalized to canonical form (lowercase, collapsed whitespace, singular) before MERGE to prevent duplicates. Entity type upgrades from `unknown` to real type on subsequent encounters via `ON MATCH SET`. NER prompt is **bootstrapped** from the graph — existing typed entities are queried and injected as reference context so the model classifies consistently with prior decisions (self-improving loop).
 
 **Search:** `memory_search` uses graph vector KNN (primary) or flat store keyword scoring (fallback). `source="knowledge"` for vector search over imported documents. `source="conversations"` for cross-session search via entity traversal + keyword matching.
 

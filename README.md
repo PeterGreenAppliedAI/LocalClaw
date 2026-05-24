@@ -471,8 +471,9 @@ FalkorDB (Docker, localhost:6379)
 - **Multi-hop reasoning** — Traverse shared entities: DevMesh → AI → career fair. Finds connections the model can't
 - **Community detection** — Clusters of related facts by entity co-occurrence (work cluster, health cluster, hobby cluster)
 - **Extraction awareness** — Existing facts shown to extraction LLM to prevent re-extraction
-- **Typed entities** — NER extracts entities with types (person, organization, hardware, technology, etc.) from a closed taxonomy. Entities with type `unknown` are upgraded when re-encountered
+- **Typed entities** — NER extracts entities with types (person, organization, hardware, technology, etc.) from a closed taxonomy. Entities with type `unknown` are upgraded when re-encountered. NER is **bootstrapped** from the graph — existing typed entities are injected as reference context for consistent classification (self-improving loop)
 - **Entity normalization** — Canonical form computation (lowercase, collapse whitespace, singular) prevents duplicates like "open-source model" vs "open-source models"
+- **Configurable extraction model** — `memory.extractionModel` in config overrides the default router model for fact extraction. Allows using a faster/larger model for transcript processing
 
 **Fact lifecycle:**
 1. **Extraction** — `!reset` (user-approved) or heartbeat (autonomous) extracts facts from conversation transcripts via LLM. LLM assigns importance level (1-5) using few-shot examples
