@@ -51,6 +51,9 @@ export interface ClassifyResult {
  * These patterns must be very specific to avoid false positives.
  */
 const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
+  // Bare URL or "check/read/look at this URL" → website (fetch + summarize, not search)
+  { pattern: /^https?:\/\/\S+$/i, category: 'website' },
+  { pattern: /\b(check|read|look at|summarize|what'?s|fetch)\b.*https?:\/\/\S+/i, category: 'website' },
   // Email/Calendar queries → personal (direct tool-loop, no plan decomposition)
   { pattern: /\b(email|gmail|inbox|unread)\b/i, category: 'personal' },
   { pattern: /\b(calendar|schedule|meeting|appointment)\b.*\b(today|tomorrow|this week|next week|upcoming)\b/i, category: 'personal' },
