@@ -55,6 +55,17 @@ async function main() {
     `${workspacePath}/TASKS.md`,
   );
 
+  // Initialize graph memory (non-blocking, optional)
+  let graphMemory: import('../memory/graph-store.js').GraphMemoryStore | undefined;
+  try {
+    const { GraphMemoryStore } = await import('../memory/graph-store.js');
+    graphMemory = new GraphMemoryStore(client);
+    await graphMemory.connect();
+    console.log(dim('  Graph memory connected'));
+  } catch {
+    console.log(dim('  Graph memory unavailable — using flat store only'));
+  }
+
   const { embeddingStore } = await registerAllTools(registry, config, {
     ollamaClient: client,
     taskStore,
@@ -145,6 +156,7 @@ async function main() {
           overrideCategory: 'research',
           sourceContext: { channel: 'cli', channelId: 'cli', senderId: 'cli-user' },
           factStore,
+          graphMemory,
           pipelineRegistry,
         });
 
@@ -192,6 +204,7 @@ async function main() {
         onStream,
         modelOverride: modelOverride ?? undefined,
         factStore,
+        graphMemory,
         pipelineRegistry,
       });
 
