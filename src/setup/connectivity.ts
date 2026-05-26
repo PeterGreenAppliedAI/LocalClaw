@@ -1,6 +1,66 @@
+import { execSync } from 'node:child_process';
+import { platform } from 'node:os';
 import { OllamaClient } from '../ollama/client.js';
 import type { OllamaModel } from '../ollama/types.js';
 import { DockerBackend } from '../exec/docker-backend.js';
+
+/** Detect OS for install commands. */
+export function detectPlatform(): 'mac' | 'linux' | 'windows' {
+  const p = platform();
+  if (p === 'darwin') return 'mac';
+  if (p === 'win32') return 'windows';
+  return 'linux';
+}
+
+/** Check if a command exists on PATH. */
+export function commandExists(cmd: string): boolean {
+  try {
+    execSync(`which ${cmd}`, { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Run a shell command with visible output. Returns true on success. */
+export function runInstall(cmd: string): boolean {
+  try {
+    execSync(cmd, { stdio: 'inherit' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Check if a Docker container is running by name. */
+export function isContainerRunning(name: string): boolean {
+  try {
+    const out = execSync(`docker ps --filter name=${name} --format "{{.Names}}"`, { encoding: 'utf-8' });
+    return out.trim().includes(name);
+  } catch {
+    return false;
+  }
+}
+
+/** Start FalkorDB via Docker. */
+export function installFalkorDB(): boolean {
+  return runInstall('docker run -d --name falkordb -p 6379:6379 -v falkordb_data:/var/lib/falkordb/data falkordb/falkordb:latest');
+}
+
+/** Install OpenCode based on detected platform. */
+export function installOpenCode(): boolean {
+  const p = detectPlatform();
+  if (p === 'mac') {
+    if (commandExists('brew')) return runInstall('brew install opencode');
+    return runInstall('curl -fsSL https://opencode.ai/install | bash');
+  }
+  if (p === 'linux') {
+    if (commandExists('brew')) return runInstall('brew install opencode');
+    return runInstall('curl -fsSL https://opencode.ai/install | bash');
+  }
+  // Windows — try npm as most reliable cross-platform fallback
+  return runInstall('npm i -g opencode-ai@latest');
+}
 
 export interface OllamaTestResult {
   available: boolean;

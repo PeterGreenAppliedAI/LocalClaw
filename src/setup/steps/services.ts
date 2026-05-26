@@ -1,5 +1,5 @@
-import { askText, askYesNo, askChoice, printStep, printSuccess, printWarning, printInfo } from '../prompts.js';
-import { testHttpEndpoint, testDocker } from '../connectivity.js';
+import { askText, askYesNo, askChoice, printStep, printSuccess, printWarning, printInfo, printError } from '../prompts.js';
+import { testHttpEndpoint, testDocker, isContainerRunning, installFalkorDB, installOpenCode, commandExists } from '../connectivity.js';
 import { findVisionModels, findReasoningModels } from '../defaults.js';
 import type { OllamaModel } from '../../ollama/types.js';
 
@@ -168,15 +168,30 @@ export async function runServicesStep(models: OllamaModel[], enabledChannels: st
 
   // Graph Memory (FalkorDB)
   if (await askYesNo('Enable Graph Memory (FalkorDB)? Requires Docker.', false)) {
-    printInfo('Testing Docker for FalkorDB...');
     const dockerOk = await testDocker();
-    if (dockerOk) {
+    if (!dockerOk) {
+      printError('Docker is required for FalkorDB but not available.');
+      printInfo('Install Docker: https://docs.docker.com/get-docker/');
+      printWarning('Graph memory disabled — using flat file store');
+    } else if (isContainerRunning('falkordb')) {
       result.graphMemory.enabled = true;
-      printSuccess('Graph memory enabled');
-      printInfo('If FalkorDB is not running, start it with:');
-      printInfo('  docker run -d --name falkordb -p 6379:6379 falkordb/falkordb:latest');
+      printSuccess('FalkorDB is already running');
     } else {
-      printWarning('Docker not available — graph memory disabled, using flat file store');
+      printInfo('FalkorDB is not running.');
+      if (await askYesNo('Install and start FalkorDB now?', true)) {
+        printInfo('Pulling and starting FalkorDB...');
+        if (installFalkorDB()) {
+          result.graphMemory.enabled = true;
+          printSuccess('FalkorDB installed and running on port 6379');
+        } else {
+          printError('FalkorDB install failed. You can start it manually:');
+          printInfo('  docker run -d --name falkordb -p 6379:6379 -v falkordb_data:/var/lib/falkordb/data falkordb/falkordb:latest');
+        }
+      } else {
+        printInfo('Start FalkorDB manually when ready:');
+        printInfo('  docker run -d --name falkordb -p 6379:6379 -v falkordb_data:/var/lib/falkordb/data falkordb/falkordb:latest');
+        result.graphMemory.enabled = true; // config enables it, they just need to start the container
+      }
     }
   }
 
@@ -224,6 +239,22 @@ export async function runServicesStep(models: OllamaModel[], enabledChannels: st
 
   // OpenCode
   if (await askYesNo('Enable OpenCode (AI coding agent)?', false)) {
+    if (commandExists('opencode')) {
+      printSuccess('OpenCode is already installed');
+    } else {
+      printInfo('OpenCode is not installed.');
+      if (await askYesNo('Install OpenCode now?', true)) {
+        printInfo('Installing OpenCode...');
+        if (installOpenCode()) {
+          printSuccess('OpenCode installed');
+        } else {
+          printError('OpenCode install failed. Install manually:');
+          printInfo('  macOS/Linux: brew install opencode');
+          printInfo('  Windows: npm i -g opencode-ai@latest');
+          printInfo('  Or: curl -fsSL https://opencode.ai/install | bash');
+        }
+      }
+    }
     result.openCode.enabled = true;
     result.openCode.port = parseInt(await askText('OpenCode server port', '3500'), 10);
     printSuccess(`OpenCode: port ${result.openCode.port}`);
