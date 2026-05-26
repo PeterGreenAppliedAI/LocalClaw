@@ -111,13 +111,26 @@ cd console && npm install && npm run build && cd ..
 
 ### Setup Wizard (Recommended)
 
-The interactive setup wizard walks you through Ollama connectivity, model selection, channel configuration, workspace bootstrap, and config generation:
+The interactive setup wizard checks prerequisites, walks you through every feature, and generates a complete production-ready config:
 
 ```bash
 npm run setup
 ```
 
-This creates `localclaw.config.json5` and `.env` with your settings. You can re-run it anytime to reconfigure.
+**What the wizard covers:**
+- Prerequisites check (Docker, Ollama connectivity)
+- Ollama URL + model detection and selection (router, specialist, chat, per-category overrides)
+- Channel setup (Discord, Telegram, Slack, WhatsApp, Web) with token validation
+- Owner ID + per-channel trusted users for security gating
+- Web search, TTS/STT, Vision, Browser configuration
+- FalkorDB graph memory (auto-install via Docker if not running)
+- OpenCode AI coding agent (auto-install via brew/npm/curl)
+- Heartbeat scheduling with delivery channel selection
+- Reasoning model, image generation, and advanced features
+- Workspace bootstrap (SOUL.md, USER.md, IDENTITY.md, etc.)
+- Preflight verification with completeness warnings
+
+Creates `localclaw.config.json5` and `.env` with your settings. Won't overwrite existing files unless you confirm. Re-run anytime to reconfigure.
 
 ### Manual Configuration
 

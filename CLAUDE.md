@@ -14,7 +14,7 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage)
 ```
 
 **Key components:**
-- **Router** — phi4:14b, single-word classification into categories: `chat`, `web_search`, `memory`, `exec`, `cron`, `message`, `website`, `multi`, `config`, `task`, `research`, `personal`. Pre-model overrides for high-confidence patterns (PDF reports, calendar queries). Fallback to `defaultCategory` on timeout/parse failure. Implemented in `src/router/classifier.ts`.
+- **Router** — phi4:14b, single-word classification into categories: `chat`, `web_search`, `memory`, `exec`, `cron`, `message`, `website`, `multi`, `config`, `task`, `research`, `personal`. Pre-model overrides for high-confidence patterns (PDF reports, calendar queries, bare URLs → website). Fallback to `defaultCategory` on timeout/parse failure. Implemented in `src/router/classifier.ts`.
 - **Pipeline engine** — `src/pipeline/executor.ts`. Deterministic stage-based workflows: extract, tool, parallel_tool, llm, code, branch, llm_branch, loop. Most categories use pipelines instead of letting the model decide the workflow.
 - **Plan pipeline** — `src/pipeline/definitions/plan.ts`. LLM decomposes goals into specialist sub-tasks, self-reflects, executes via foreman handoffs with write-through artifacts. Used by `multi` category.
 - **Research pipeline** — `src/pipeline/definitions/research.ts`. Parallel search + fetch + synthesis + charts. Branches to reveal.js deck or styled PDF report with quality review.
