@@ -1,6 +1,6 @@
 import { askText, askYesNo, askChoice, printStep, printSuccess, printWarning, printInfo } from '../prompts.js';
 import { testHttpEndpoint, testDocker } from '../connectivity.js';
-import { findVisionModels } from '../defaults.js';
+import { findVisionModels, findReasoningModels } from '../defaults.js';
 import type { OllamaModel } from '../../ollama/types.js';
 
 export interface WebSearchResult {
@@ -33,6 +33,32 @@ export interface ExecResult {
   security: 'allowlist' | 'docker';
 }
 
+export interface GraphMemoryResult {
+  enabled: boolean;
+}
+
+export interface HeartbeatResult {
+  enabled: boolean;
+  channel?: string;
+  target?: string;
+}
+
+export interface ReasoningResult {
+  enabled: boolean;
+  model?: string;
+}
+
+export interface ImageGenResult {
+  enabled: boolean;
+  url?: string;
+  model?: string;
+}
+
+export interface OpenCodeResult {
+  enabled: boolean;
+  port?: number;
+}
+
 export interface ServicesStepResult {
   webSearch: WebSearchResult;
   tts: TTSResult;
@@ -40,10 +66,15 @@ export interface ServicesStepResult {
   vision: VisionResult;
   browser: BrowserResult;
   exec: ExecResult;
+  graphMemory: GraphMemoryResult;
+  heartbeat: HeartbeatResult;
+  reasoning: ReasoningResult;
+  imageGen: ImageGenResult;
+  openCode: OpenCodeResult;
 }
 
-export async function runServicesStep(models: OllamaModel[]): Promise<ServicesStepResult> {
-  printStep(4, 7, 'Optional Services');
+export async function runServicesStep(models: OllamaModel[], enabledChannels: string[]): Promise<ServicesStepResult> {
+  printStep(4, 7, 'Services & Features');
 
   const result: ServicesStepResult = {
     webSearch: { enabled: false },
@@ -52,6 +83,11 @@ export async function runServicesStep(models: OllamaModel[]): Promise<ServicesSt
     vision: { enabled: false },
     browser: { enabled: false, headless: true },
     exec: { security: 'allowlist' },
+    graphMemory: { enabled: false },
+    heartbeat: { enabled: false },
+    reasoning: { enabled: false },
+    imageGen: { enabled: false },
+    openCode: { enabled: false },
   };
 
   // Web Search
@@ -129,6 +165,69 @@ export async function runServicesStep(models: OllamaModel[]): Promise<ServicesSt
     result.exec.security = 'allowlist';
   }
   printSuccess(`Exec security: ${result.exec.security}`);
+
+  // Graph Memory (FalkorDB)
+  if (await askYesNo('Enable Graph Memory (FalkorDB)? Requires Docker.', false)) {
+    printInfo('Testing Docker for FalkorDB...');
+    const dockerOk = await testDocker();
+    if (dockerOk) {
+      result.graphMemory.enabled = true;
+      printSuccess('Graph memory enabled');
+      printInfo('If FalkorDB is not running, start it with:');
+      printInfo('  docker run -d --name falkordb -p 6379:6379 falkordb/falkordb:latest');
+    } else {
+      printWarning('Docker not available — graph memory disabled, using flat file store');
+    }
+  }
+
+  // Heartbeat
+  if (await askYesNo('Enable autonomous heartbeat? (memory review, task management every 2 hours)', true)) {
+    result.heartbeat.enabled = true;
+    if (enabledChannels.length > 0) {
+      if (enabledChannels.length === 1) {
+        result.heartbeat.channel = enabledChannels[0];
+      } else {
+        result.heartbeat.channel = await askChoice('Deliver heartbeat reports to:', enabledChannels);
+      }
+      result.heartbeat.target = await askText('Channel/user ID for heartbeat delivery');
+      printSuccess(`Heartbeat → ${result.heartbeat.channel} (${result.heartbeat.target})`);
+    } else {
+      printWarning('No channels enabled — heartbeat will run but cannot deliver reports');
+    }
+  }
+
+  // Reasoning model
+  const reasoningModels = findReasoningModels(models);
+  if (reasoningModels.length > 0) {
+    printInfo('Reasoning-capable models found:');
+    for (const m of reasoningModels) {
+      printInfo(`  - ${m.name}`);
+    }
+    if (await askYesNo('Enable reasoning model for deep analysis?', true)) {
+      result.reasoning.enabled = true;
+      result.reasoning.model = await askText('Reasoning model', reasoningModels[0].name);
+      printSuccess(`Reasoning model: ${result.reasoning.model}`);
+    }
+  } else if (await askYesNo('Enable reasoning model? (none auto-detected)', false)) {
+    result.reasoning.enabled = true;
+    result.reasoning.model = await askText('Reasoning model name');
+    printSuccess(`Reasoning model: ${result.reasoning.model}`);
+  }
+
+  // Image generation
+  if (await askYesNo('Enable image generation?', false)) {
+    result.imageGen.enabled = true;
+    result.imageGen.url = await askText('Image generation server URL');
+    result.imageGen.model = await askText('Image generation model', 'flux2-klein:4b-fp8');
+    printSuccess(`Image gen: ${result.imageGen.model} at ${result.imageGen.url}`);
+  }
+
+  // OpenCode
+  if (await askYesNo('Enable OpenCode (AI coding agent)?', false)) {
+    result.openCode.enabled = true;
+    result.openCode.port = parseInt(await askText('OpenCode server port', '3500'), 10);
+    printSuccess(`OpenCode: port ${result.openCode.port}`);
+  }
 
   return result;
 }

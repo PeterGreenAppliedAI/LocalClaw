@@ -15,6 +15,8 @@ export interface ChannelsStepResult {
   slack: ChannelResult;
   whatsapp: ChannelResult;
   web: ChannelResult;
+  ownerId?: string;
+  trustedUsers: Record<string, string[]>;
 }
 
 export async function runChannelsStep(): Promise<ChannelsStepResult> {
@@ -26,6 +28,7 @@ export async function runChannelsStep(): Promise<ChannelsStepResult> {
     slack: { enabled: false },
     whatsapp: { enabled: false },
     web: { enabled: false },
+    trustedUsers: {},
   };
 
   // Discord
@@ -86,12 +89,40 @@ export async function runChannelsStep(): Promise<ChannelsStepResult> {
 
   // Summary
   const enabled = Object.entries(result)
-    .filter(([, v]) => v.enabled)
+    .filter(([k, v]) => k !== 'ownerId' && k !== 'trustedUsers' && typeof v === 'object' && (v as ChannelResult).enabled)
     .map(([k]) => k);
   if (enabled.length) {
     printInfo(`\nEnabled channels: ${enabled.join(', ')}`);
   } else {
     printWarning('No channels enabled — you can enable them in the config later.');
+  }
+
+  // Owner ID (optional but recommended)
+  result.trustedUsers = {};
+  if (enabled.length > 0) {
+    printInfo('\n--- Security ---');
+    printInfo('Your owner ID gates access to sensitive tools (gmail, calendar).');
+    printInfo('This is your user ID on your primary channel (e.g., Discord user ID, Telegram user ID).');
+    const ownerId = await askText('Owner user ID (leave empty to skip)', '');
+    if (ownerId) {
+      result.ownerId = ownerId;
+      printSuccess(`Owner ID: ${ownerId}`);
+    } else {
+      printWarning('No owner ID set — owner-only tools (gmail, calendar) will not be gated');
+    }
+
+    // Trusted users per channel
+    for (const ch of enabled) {
+      if (ch === 'web') continue; // web doesn't have user IDs in the same way
+      const addTrusted = await askYesNo(`Add trusted user IDs for ${ch}?`, false);
+      if (addTrusted) {
+        const ids = await askText(`Trusted user IDs for ${ch} (comma-separated)`);
+        if (ids) {
+          result.trustedUsers[ch] = ids.split(',').map(s => s.trim()).filter(Boolean);
+          printSuccess(`${ch} trusted users: ${result.trustedUsers[ch].join(', ')}`);
+        }
+      }
+    }
   }
 
   return result;

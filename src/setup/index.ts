@@ -23,7 +23,10 @@ async function main(): Promise<void> {
     const channels = await runChannelsStep();
 
     // Step 4: Services
-    const services = await runServicesStep(ollama.models);
+    const enabledChannels = Object.entries(channels)
+      .filter(([k, v]) => k !== 'ownerId' && k !== 'trustedUsers' && typeof v === 'object' && 'enabled' in v && v.enabled)
+      .map(([k]) => k);
+    const services = await runServicesStep(ollama.models, enabledChannels);
 
     // Step 5: Workspace files (SOUL.md, USER.md, etc.)
     const workspace = await runWorkspaceStep();

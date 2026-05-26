@@ -71,18 +71,26 @@ function buildEnv(state: WizardState): string {
     lines.push('');
   }
 
+  // Image generation
+  if (state.services.imageGen.enabled && state.services.imageGen.url) {
+    lines.push('# Image Generation');
+    lines.push(`IMAGE_GEN_URL=${state.services.imageGen.url}`);
+    lines.push('');
+  }
+
   return lines.join('\n');
 }
 
 /**
  * Determine which specialist categories to include based on enabled services.
- * Core categories are always included; others depend on what the user enabled.
  */
 function getEnabledCategories(state: WizardState): Set<string> {
-  const enabled = new Set(['chat', 'memory', 'exec', 'task', 'multi']);
+  const enabled = new Set(['chat', 'memory', 'exec', 'task', 'multi', 'cron', 'config']);
 
   if (state.services.webSearch.enabled || state.services.browser.enabled) {
     enabled.add('web_search');
+    enabled.add('website');
+    enabled.add('research');
   }
 
   const hasChannels = state.channels.discord.enabled
@@ -93,9 +101,16 @@ function getEnabledCategories(state: WizardState): Set<string> {
     enabled.add('message');
   }
 
-  // cron, config, website — always useful if exec is available
-  enabled.add('cron');
-  enabled.add('config');
+  if (state.services.imageGen.enabled) {
+    enabled.add('image');
+  }
+
+  if (state.services.openCode.enabled) {
+    enabled.add('code_gen');
+  }
+
+  // personal always available (tools gate on ownerId at runtime)
+  enabled.add('personal');
 
   return enabled;
 }
@@ -105,7 +120,12 @@ function buildConfig(state: WizardState): string {
   const defaultModel = state.models.specialistModel;
   const enabledCategories = getEnabledCategories(state);
 
-  // Build specialists block — only for enabled categories
+  // Owner ID
+  const ownerIdLine = state.channels.ownerId
+    ? `  ownerId: "${state.channels.ownerId}",`
+    : `  // ownerId: "your-user-id",  // Set this to gate owner-only tools (gmail, calendar)`;
+
+  // Build specialists block
   const specialistLines: string[] = [];
   for (const [category, template] of Object.entries(SPECIALIST_TEMPLATES)) {
     if (!enabledCategories.has(category)) continue;
@@ -116,78 +136,69 @@ function buildConfig(state: WizardState): string {
     const toolsStr = template.tools.length
       ? `[${template.tools.map(t => `"${t}"`).join(', ')}]`
       : '[]';
+    const pipelineLine = template.pipeline
+      ? `\n      pipeline: "${template.pipeline}",`
+      : '';
 
     specialistLines.push(`    ${category}: {
       model: "${model}",${sp}
       maxTokens: ${template.maxTokens},
       temperature: ${template.temperature},
       maxIterations: ${template.maxIterations},
-      tools: ${toolsStr},
+      tools: ${toolsStr},${pipelineLine}
     },`);
   }
 
-  // Build router categories block — only for enabled categories
+  // Build router categories block
   const categoryLines: string[] = [];
   for (const [name, cat] of Object.entries(ROUTER_CATEGORIES)) {
     if (!enabledCategories.has(name)) continue;
     categoryLines.push(`      ${name}: { description: "${cat.description}" },`);
   }
 
-  // Build channels block
+  // Build channels block with security
   const channelLines: string[] = [];
+  const channelEntries: Array<{ name: string; result: { enabled: boolean; token?: string; appToken?: string; port?: number } }> = [
+    { name: 'discord', result: state.channels.discord },
+    { name: 'telegram', result: state.channels.telegram },
+    { name: 'slack', result: state.channels.slack },
+    { name: 'whatsapp', result: state.channels.whatsapp },
+    { name: 'web', result: state.channels.web },
+  ];
 
-  // Discord
-  if (state.channels.discord.enabled) {
-    channelLines.push(`    discord: {
-      enabled: true,
-      token: "\${DISCORD_BOT_TOKEN}",
-    },`);
-  } else {
-    channelLines.push(`    discord: { enabled: false },`);
+  for (const ch of channelEntries) {
+    if (!ch.result.enabled) {
+      channelLines.push(`    ${ch.name}: { enabled: false },`);
+      continue;
+    }
+
+    const parts: string[] = [`      enabled: true,`];
+
+    // Token
+    if (ch.name === 'discord' && ch.result.token) parts.push(`      token: "\${DISCORD_BOT_TOKEN}",`);
+    if (ch.name === 'telegram' && ch.result.token) parts.push(`      token: "\${TELEGRAM_BOT_TOKEN}",`);
+    if (ch.name === 'slack') {
+      if (ch.result.token) parts.push(`      token: "\${SLACK_BOT_TOKEN}",`);
+      if (ch.result.appToken) parts.push(`      appToken: "\${SLACK_APP_TOKEN}",`);
+    }
+    if (ch.name === 'web' && ch.result.port) parts.push(`      port: ${ch.result.port},`);
+
+    // Security block
+    const trusted = state.channels.trustedUsers[ch.name];
+    if (trusted && trusted.length > 0) {
+      parts.push(`      security: {`);
+      parts.push(`        trustedUsers: [${trusted.map(id => `"${id}"`).join(', ')}],`);
+      parts.push(`        restrictedCategories: ["exec", "config", "personal"],`);
+      if (state.channels.ownerId) {
+        parts.push(`        ownerOnlyTools: ["gmail_search", "gmail_read", "calendar_list", "calendar_search"],`);
+      }
+      parts.push(`      },`);
+    }
+
+    channelLines.push(`    ${ch.name}: {\n${parts.join('\n')}\n    },`);
   }
 
-  // Telegram
-  if (state.channels.telegram.enabled) {
-    channelLines.push(`    telegram: {
-      enabled: true,
-      token: "\${TELEGRAM_BOT_TOKEN}",
-    },`);
-  } else {
-    channelLines.push(`    telegram: { enabled: false },`);
-  }
-
-  // Slack
-  if (state.channels.slack.enabled) {
-    channelLines.push(`    slack: {
-      enabled: true,
-      token: "\${SLACK_BOT_TOKEN}",
-      appToken: "\${SLACK_APP_TOKEN}",
-    },`);
-  } else {
-    channelLines.push(`    slack: { enabled: false },`);
-  }
-
-  // WhatsApp
-  if (state.channels.whatsapp.enabled) {
-    channelLines.push(`    whatsapp: {
-      enabled: true,
-    },`);
-  } else {
-    channelLines.push(`    whatsapp: { enabled: false },`);
-  }
-
-  // Web
-  if (state.channels.web.enabled) {
-    const port = state.channels.web.port ?? 3100;
-    channelLines.push(`    web: {
-      enabled: true,
-      port: ${port},
-    },`);
-  } else {
-    channelLines.push(`    web: { enabled: false },`);
-  }
-
-  // Build web search config
+  // Web search config
   let webSearchBlock = '';
   if (state.services.webSearch.enabled) {
     const provider = state.services.webSearch.provider ?? 'brave';
@@ -199,7 +210,7 @@ function buildConfig(state: WizardState): string {
       },`;
   }
 
-  // Build exec block
+  // Exec block
   const execSecurity = state.services.exec.security;
   const execBlock = `    exec: {
       security: "${execSecurity}",
@@ -207,7 +218,7 @@ function buildConfig(state: WizardState): string {
       timeout: 30000,
     },`;
 
-  // Build TTS block
+  // TTS block
   let ttsBlock = `  tts: { enabled: false },`;
   if (state.services.tts.enabled) {
     ttsBlock = `  tts: {
@@ -218,7 +229,7 @@ function buildConfig(state: WizardState): string {
   },`;
   }
 
-  // Build STT block
+  // STT block
   let sttBlock = `  stt: { enabled: false },`;
   if (state.services.stt.enabled) {
     sttBlock = `  stt: {
@@ -229,19 +240,19 @@ function buildConfig(state: WizardState): string {
   },`;
   }
 
-  // Build vision block
+  // Vision block
   let visionBlock = `  vision: { enabled: false },`;
   if (state.services.vision.enabled) {
     const vModel = state.services.vision.model ?? 'qwen3-vl:8b';
     visionBlock = `  vision: {
     enabled: true,
     model: "${vModel}",
-    prompt: "Describe this image in detail. Include text content, visual elements, layout, and any relevant context.",
+    prompt: "Describe this image in detail. Include text content, visual elements, layout, and any relevant context. /no_think",
     maxTokens: 1024,
   },`;
   }
 
-  // Build browser block
+  // Browser block
   let browserBlock = `  browser: { enabled: false },`;
   if (state.services.browser.enabled) {
     browserBlock = `  browser: {
@@ -250,10 +261,77 @@ function buildConfig(state: WizardState): string {
   },`;
   }
 
+  // Heartbeat block
+  let heartbeatBlock = `  heartbeat: { enabled: false },`;
+  if (state.services.heartbeat.enabled && state.services.heartbeat.channel) {
+    heartbeatBlock = `  heartbeat: {
+    enabled: true,
+    schedule: "0 */2 * * *",
+    delivery: {
+      channel: "${state.services.heartbeat.channel}",
+      target: "${state.services.heartbeat.target ?? ''}",
+    },
+  },`;
+  }
+
+  // Reasoning block
+  let reasoningBlock = '';
+  if (state.services.reasoning.enabled && state.services.reasoning.model) {
+    reasoningBlock = `
+  reasoning: {
+    model: "${state.services.reasoning.model}",
+    maxTokens: 8192,
+    temperature: 0.6,
+  },`;
+  }
+
+  // Image gen block
+  let imageGenBlock = '';
+  if (state.services.imageGen.enabled) {
+    imageGenBlock = `
+  imageGen: {
+    enabled: true,
+    url: "\${IMAGE_GEN_URL}",
+    model: "${state.services.imageGen.model ?? 'flux2-klein:4b-fp8'}",
+  },`;
+  }
+
+  // OpenCode block
+  let openCodeBlock = '';
+  if (state.services.openCode.enabled) {
+    openCodeBlock = `
+  openCode: {
+    enabled: true,
+    port: ${state.services.openCode.port ?? 3500},
+    defaultModel: "ollama/${defaultModel}",
+  },`;
+  }
+
+  // Voice block
+  let voiceBlock = '';
+  if (state.services.tts.enabled) {
+    voiceBlock = `
+  voice: {
+    model: "${state.models.routerModel}",  // fast model for voice-originated messages
+  },`;
+  }
+
+  // Memory block
+  const memoryBlock = `  memory: {
+    backend: "markdown",
+    extractionModel: "${defaultModel}",
+    consolidation: {
+      enabled: true,
+      model: "${state.models.routerModel}",
+      similarityThreshold: 0.85,
+    },
+  },`;
+
   return `{
   // LocalClaw Configuration
   // Generated by setup wizard
 
+${ownerIdLine}
   timezone: "${tz}",
 
   ollama: {
@@ -286,17 +364,16 @@ ${channelLines.join('\n')}
     bindings: [],
   },
 
-  memory: {
-    backend: "markdown",
-  },
+${memoryBlock}
 
-  cron: { enabled: false },
+  cron: { enabled: true, store: "data/cron.json" },
 
   session: {
     transcriptDir: "data/sessions",
     maxHistoryTurns: 100,
     contextSize: 32768,
     recentTurnsToKeep: 6,
+    summarizeToolObservations: true,
   },
 
   tools: {
@@ -306,13 +383,15 @@ ${channelLines.join('\n')}
 ${execBlock}
   },
 
+  ${heartbeatBlock}
+
   ${browserBlock}
 
   ${ttsBlock}
 
   ${sttBlock}
 
-  ${visionBlock}
+  ${visionBlock}${reasoningBlock}${imageGenBlock}${openCodeBlock}${voiceBlock}
 }
 `;
 }

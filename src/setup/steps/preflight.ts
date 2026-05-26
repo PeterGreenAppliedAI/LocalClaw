@@ -127,7 +127,34 @@ export async function runPreflightStep(state: WizardState): Promise<void> {
     });
   }
 
-  // 8. Config validation
+  // 8. Completeness checks
+  if (!state.channels.ownerId) {
+    checks.push({ name: 'Owner ID', status: 'WARN', detail: 'Not set — owner-only tools (gmail, calendar) will not be gated' });
+  } else {
+    checks.push({ name: 'Owner ID', status: 'PASS', detail: state.channels.ownerId });
+  }
+
+  const hasTrustedUsers = Object.values(state.channels.trustedUsers).some(ids => ids.length > 0);
+  if (!hasTrustedUsers) {
+    checks.push({ name: 'Trusted users', status: 'WARN', detail: 'No trusted users configured — all users will have full access on all channels' });
+  }
+
+  if (!state.services.heartbeat.enabled) {
+    checks.push({ name: 'Heartbeat', status: 'WARN', detail: 'Disabled — no autonomous memory review or task management' });
+  }
+
+  if (state.services.graphMemory.enabled) {
+    const dockerOk = await testDocker();
+    if (dockerOk) {
+      checks.push({ name: 'FalkorDB (Docker)', status: 'PASS', detail: 'Docker available for graph memory' });
+    } else {
+      checks.push({ name: 'FalkorDB (Docker)', status: 'WARN', detail: 'Docker not available — graph memory will fall back to flat store' });
+    }
+  } else {
+    checks.push({ name: 'Graph memory', status: 'WARN', detail: 'Disabled — using flat file store (no entity traversal or vector search)' });
+  }
+
+  // 9. Config validation
   try {
     // Load the generated config to validate it
     const { loadConfig } = await import('../../config/loader.js');
