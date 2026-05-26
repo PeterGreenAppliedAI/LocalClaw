@@ -1,4 +1,5 @@
-import { printHeader, closeRL, printInfo } from './prompts.js';
+import { printHeader, closeRL, printInfo, printPass, printWarning } from './prompts.js';
+import { testDocker } from './connectivity.js';
 import { runOllamaStep } from './steps/ollama.js';
 import { runModelsStep } from './steps/models.js';
 import { runChannelsStep } from './steps/channels.js';
@@ -13,6 +14,16 @@ async function main(): Promise<void> {
   printInfo('Press Enter to accept defaults shown in [brackets].\n');
 
   try {
+    // Prerequisites check
+    printInfo('--- Prerequisites ---');
+    const dockerAvailable = await testDocker();
+    if (dockerAvailable) {
+      printPass('Docker is available');
+    } else {
+      printWarning('Docker not found — FalkorDB (graph memory) and Docker exec will be unavailable');
+      printInfo('Install Docker: https://docs.docker.com/get-docker/\n');
+    }
+
     // Step 1: Ollama
     const ollama = await runOllamaStep();
 
