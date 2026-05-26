@@ -143,13 +143,13 @@ export const ROUTER_CATEGORIES: Record<string, { description: string }> = {
 export function pickRouterModel(models: OllamaModel[]): string | undefined {
   if (!models.length) return undefined;
 
-  // Prefer phi4-mini
+  // Prefer phi4:14b (phi4-mini is unreliable for routing)
+  const phi4 = models.find(m => m.name.includes('phi4') && !m.name.includes('mini'));
+  if (phi4) return phi4.name;
+
+  // Fall back to phi4-mini if no full phi4
   const phi4Mini = models.find(m => m.name.includes('phi4-mini'));
   if (phi4Mini) return phi4Mini.name;
-
-  // Prefer phi4
-  const phi4 = models.find(m => m.name.includes('phi4'));
-  if (phi4) return phi4.name;
 
   // Fall back to smallest model
   const sorted = [...models].sort((a, b) => a.size - b.size);
