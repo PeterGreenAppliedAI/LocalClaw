@@ -117,6 +117,14 @@ export const SPECIALIST_TEMPLATES: Record<string, SpecialistTemplate> = {
     tools: ['opencode_build', 'opencode_status'],
     pipeline: 'code_gen',
   },
+  analytics: {
+    systemPrompt: 'You are a data analytics specialist. Analyze uploaded data files (CSV, Excel, JSON) using pandas, generate visualizations with matplotlib/seaborn, and summarize findings.',
+    maxTokens: 4096,
+    temperature: 0.3,
+    maxIterations: 8,
+    tools: ['code_session', 'read_file', 'reason'],
+    pipeline: 'analytics',
+  },
 };
 
 export const ROUTER_CATEGORIES: Record<string, { description: string }> = {
@@ -134,6 +142,7 @@ export const ROUTER_CATEGORIES: Record<string, { description: string }> = {
   personal: { description: 'Email, calendar, and personal schedule queries (owner only)' },
   image: { description: 'Generate images, diagrams, or architecture visuals' },
   code_gen: { description: 'Generate code, build projects, scaffold applications' },
+  analytics: { description: 'Analyze uploaded data files (CSV, Excel, JSON) — charts, statistics, insights' },
 };
 
 /**

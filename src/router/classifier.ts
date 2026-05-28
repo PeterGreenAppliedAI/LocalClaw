@@ -37,7 +37,7 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
 ];
 
 const VALID_CATEGORIES = new Set([
-  'chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi', 'config', 'task', 'research', 'personal', 'image', 'code_gen',
+  'chat', 'web_search', 'memory', 'exec', 'cron', 'message', 'website', 'multi', 'config', 'task', 'research', 'personal', 'image', 'code_gen', 'analytics',
 ]);
 
 export interface ClassifyResult {

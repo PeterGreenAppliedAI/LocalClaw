@@ -1385,6 +1385,53 @@ Write a useful ${timeOfDay} update:
       return;
     }
 
+    // Handle pending file choice (user replies "1" or "2" after text file upload)
+    if (trimmed === '1' || trimmed === '2') {
+      const route = resolveRoute(
+        { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
+        this.config,
+      );
+      const workspacePath = resolveWorkspacePath(route.agentId, this.config);
+      const pendingFilePath = join(workspacePath, 'memory', msg.senderId, 'pending-file.json');
+      try {
+        const raw = readFileSync(pendingFilePath, 'utf-8');
+        const pending = JSON.parse(raw) as { filePath: string; filename: string; mimeType: string };
+        unlinkSync(pendingFilePath);
+
+        if (trimmed === '1') {
+          // Import to knowledge base
+          const importTool = this.toolRegistry.get('knowledge_import');
+          if (importTool) {
+            const result = await importTool.execute({ path: pending.filePath }, {
+              agentId: route.agentId,
+              sessionKey: route.sessionKey,
+              workspacePath,
+              senderId: msg.senderId,
+            });
+            await this.channelRegistry.send(
+              { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+              { text: `Imported **${pending.filename}** to knowledge base. ${result}` },
+            );
+          } else {
+            await this.channelRegistry.send(
+              { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+              { text: 'Knowledge import tool not available.' },
+            );
+          }
+        } else {
+          // Read as text and inject into next message context
+          const { readFileSync: readFs } = await import('node:fs');
+          const content = readFs(pending.filePath, 'utf-8');
+          const preview = content.length > 5000 ? content.slice(0, 5000) + '\n... [truncated]' : content;
+          msg.content = `[File content: ${pending.filename}]\n\n${preview}\n\nUser message: ${msg.content}`;
+          // Fall through to normal dispatch below
+        }
+        if (trimmed === '1') return;
+      } catch {
+        // No pending file — treat as normal message, fall through
+      }
+    }
+
     if (trimmed === '!cleanup') {
       const route = resolveRoute(
         { channel: msg.channel, senderId: msg.senderId, guildId: msg.guildId, channelId: msg.channelId },
@@ -1640,8 +1687,12 @@ Write a useful ${timeOfDay} update:
       }
     }
 
-    // Attachment pre-processing: save files, run vision on images
+    // Attachment pre-processing: save files, route by file type
     let hasImageAttachment = false;
+    let fileOverrideCategory: string | undefined;
+    const DATA_EXTENSIONS = new Set(['csv', 'xlsx', 'xls', 'json', 'tsv']);
+    const TEXT_EXTENSIONS = new Set(['md', 'txt', 'html', 'htm', 'log', 'xml', 'yaml', 'yml']);
+
     if (msg.attachments?.length) {
       const prefixes: string[] = [];
       const suffixes: string[] = [];
@@ -1649,6 +1700,8 @@ Write a useful ${timeOfDay} update:
       for (const att of msg.attachments) {
         const saved = saveAttachment(att, msg.channel, msg.id);
         if (!saved) continue;
+
+        const ext = saved.filename.split('.').pop()?.toLowerCase() ?? '';
 
         if (saved.isImage) {
           hasImageAttachment = true;
@@ -1681,6 +1734,32 @@ Write a useful ${timeOfDay} update:
             console.warn(`[Orchestrator] PDF extraction failed for ${saved.filename}: ${wrapped.message}`);
             suffixes.push(`[Attached file: ${saved.localPath}] (${saved.filename}, ${saved.mimeType})`);
           }
+        } else if (DATA_EXTENSIONS.has(ext)) {
+          // Data files → analytics pipeline
+          console.log(`[Orchestrator] Data file detected: ${saved.filename} → analytics`);
+          fileOverrideCategory = 'analytics';
+          prefixes.push(`[The user uploaded a data file for analysis: ${saved.localPath}] (${saved.filename})`);
+          // Store file path for the analytics pipeline to pick up
+          msg.content = msg.content || `Analyze this ${ext.toUpperCase()} file`;
+          msg.content += `\n[DATA_FILE:${saved.localPath}]`;
+        } else if (TEXT_EXTENSIONS.has(ext) || ext === 'docx') {
+          // Text-based files → ask user what to do
+          console.log(`[Orchestrator] Text file detected: ${saved.filename} — asking user`);
+          await this.channelRegistry.send(
+            { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
+            { text: `I received **${saved.filename}**. Would you like me to:\n1. **Import** it to the knowledge base (searchable across sessions)\n2. **Read** it as text for this conversation\n\nReply **1** or **2**.` },
+          );
+          // Store pending file choice (similar to !save pending)
+          const pendingDir = join(resolveWorkspacePath(this.config.agents.default, this.config), 'memory', msg.senderId);
+          mkdirSync(pendingDir, { recursive: true });
+          writeFileSync(join(pendingDir, 'pending-file.json'), JSON.stringify({
+            filePath: saved.localPath,
+            filename: saved.filename,
+            mimeType: saved.mimeType,
+            channel: msg.channel,
+            channelId: msg.channelId,
+          }));
+          return; // Wait for user's reply
         } else {
           suffixes.push(`[Attached file: ${saved.localPath}] (${saved.filename}, ${saved.mimeType})`);
         }
@@ -1724,7 +1803,9 @@ Write a useful ${timeOfDay} update:
         sessionStore: this.sessionStore,
         pipelineRegistry: this.pipelineRegistry,
             executionMetrics: this.executionMetrics,
-        ...(hasImageAttachment ? { overrideCategory: 'chat' as const } : {}),
+        ...(hasImageAttachment ? { overrideCategory: 'chat' as const }
+          : fileOverrideCategory ? { overrideCategory: fileOverrideCategory }
+          : {}),
         ...(isConfirmation ? { confirmed: true } : {}),
         sourceContext: {
           channel: msg.channel,
