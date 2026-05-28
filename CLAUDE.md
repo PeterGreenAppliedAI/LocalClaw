@@ -18,6 +18,7 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage)
 - **Pipeline engine** — `src/pipeline/executor.ts`. Deterministic stage-based workflows: extract, tool, parallel_tool, llm, code, branch, llm_branch, loop. Most categories use pipelines instead of letting the model decide the workflow.
 - **Plan pipeline** — `src/pipeline/definitions/plan.ts`. LLM decomposes goals into specialist sub-tasks, self-reflects, executes via foreman handoffs with write-through artifacts. Used by `multi` category.
 - **Research pipeline** — `src/pipeline/definitions/research.ts`. Parallel search + fetch + synthesis + charts. Branches to reveal.js deck or styled PDF report with quality review.
+- **Analytics pipeline** — `src/pipeline/definitions/analytics.ts`. File upload → pandas report (code) → matplotlib charts (code) → LLM executive interpretation. Code computes all numbers; model only interprets. Auto-routed when data files (.csv, .xlsx, .json) are uploaded.
 - **Tool-loop engine** — `runToolLoop()` in `src/tool-loop/engine.ts`. ReAct-style loop with native Ollama tool calls + regex fallback parser. Includes hallucination detection, drift detection, error learning hints.
 - **Dispatch pipeline** — `src/dispatch.ts` routes classified messages to specialists/pipelines. Handles 6-layer security enforcement, tool stripping, context isolation.
 - **Briefing system** — `src/orchestrator.ts`. Separate from heartbeat. Runs at 8am/1:15pm/5pm. Gathers calendar + tasks + memory, runs CoT reasoning via qwen3.6:35b, delivers contextual insights.
@@ -197,6 +198,7 @@ src/
     definitions/            #   Pipeline definitions per category
       plan.ts               #     Plan pipeline (foreman handoffs, skill check, reflection)
       research.ts           #     Research pipeline (parallel search, charts, deck/report branch)
+      analytics.ts          #     Analytics pipeline (file upload → pandas → charts → LLM interpretation)
       heartbeat.ts          #     Deterministic heartbeat (task board + memory, no LLM date reasoning)
       cron.ts, task.ts, memory.ts, web-search.ts, exec.ts, message.ts, website.ts
 

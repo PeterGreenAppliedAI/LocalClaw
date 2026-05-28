@@ -72,6 +72,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Skills | *(automatic)* | Self-improving procedural memory — successful plan executions are saved and reused for similar future tasks |
 | Heartbeat | *(autonomous)* | Deterministic fact diff + LLM reasoning, auto-expire stale facts, interactive memory review via `!heartbeat` |
 | Briefing | *(scheduled)* | 3x daily (8am, 1:15pm, 5pm) CoT reasoning about calendar + tasks + memory — contextual insights, not status dumps |
+| Data Analytics | `code_session`, `read_file`, `reason` | Upload CSV/Excel/JSON → auto-route to analytics pipeline → pandas computes totals, breakdowns, top items → matplotlib charts → LLM executive analysis with insights and recommendations |
 | Knowledge Import | `knowledge_import` | Import PDFs, CSVs, markdown into vector-searchable knowledge base |
 | Context Compaction | *(automatic)* | Structured compression (Goal/Progress/Next Steps), proactive at 50% budget, tool-pair sanitization |
 | Document Gen | `document` | Create and convert documents via LibreOffice headless — HTML/CSV → PDF/DOCX/XLSX/PPTX |
@@ -240,9 +241,10 @@ Most categories run through **deterministic pipelines** instead of letting the m
 | `research` | Complex | plan queries → parallel search → parallel fetch → synthesize → charts → branch (deck OR report PDF) |
 | `exec` | Linear | extract → tool → format |
 | `message` | Linear | extract → tool → confirm |
-| `website` | Linear | extract → tool → format |
+| `website` | Linear | web_fetch → browser fallback → summarize |
+| `analytics` | Data-driven | extract file → pandas report (code) → charts (code) → LLM interpretation only |
 
-**ReAct fallback** categories (`config`, `chat`, `personal`) still use the model-decides-everything loop. `personal` handles Gmail/Calendar queries with owner-only tools.
+**ReAct fallback** categories (`config`, `chat`, `personal`, `image`) still use the model-decides-everything loop. `personal` handles Gmail/Calendar queries with owner-only tools.
 
 ### Research Flow
 
