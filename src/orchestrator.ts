@@ -1793,6 +1793,12 @@ Write a useful ${timeOfDay} update:
       // Detect confirmation follow-up (user confirming a pending destructive tool action)
       const isConfirmation = /^(confirm|yes,?\s*do it|approved?|go ahead|proceed)\s*[.!]?$/i.test(trimmed);
 
+      // Browser extension injects [PAGE:] context — route to chat, content is already in the message
+      const fromExtension = msg.content.includes('[PAGE:');
+      if (fromExtension) {
+        console.log('[Orchestrator] Browser extension context detected → chat');
+      }
+
       const dispatchBase = {
         client: this.client,
         registry: this.toolRegistry,
@@ -1803,7 +1809,8 @@ Write a useful ${timeOfDay} update:
         sessionStore: this.sessionStore,
         pipelineRegistry: this.pipelineRegistry,
             executionMetrics: this.executionMetrics,
-        ...(hasImageAttachment ? { overrideCategory: 'chat' as const }
+        ...(fromExtension ? { overrideCategory: 'chat' as const }
+          : hasImageAttachment ? { overrideCategory: 'chat' as const }
           : fileOverrideCategory ? { overrideCategory: fileOverrideCategory }
           : {}),
         ...(isConfirmation ? { confirmed: true } : {}),

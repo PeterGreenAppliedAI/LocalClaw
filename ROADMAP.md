@@ -16,6 +16,7 @@ LocalClaw is a local-model-first AI agent framework running on personal infrastr
 - **Observation Summarization** — LLM-based summarization for old tool observations instead of hard truncation
 - **Non-streaming Message Splitting** — Long responses split correctly on all code paths
 - **Conversational Guard** — Prevents pipeline misroutes mid-conversation
+- **Chrome Extension** — Browser companion side panel (WXT + React + Manifest V3). Content script extracts page context, streams to LocalClaw via existing Web API. Right-click context menus. Works cross-network (extension on Windows, LocalClaw on Mac Mini)
 
 ---
 

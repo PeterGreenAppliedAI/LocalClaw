@@ -229,6 +229,9 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
       }
     }
 
+    // Browser extension injects [PAGE: ...] context — route to chat, content already in message
+    const fromExtension = message.includes('[PAGE:');
+
     const result = await deps.dispatch({
       message,
       agentId: route.agentId,
@@ -239,7 +242,7 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
         channelId: 'console',
         senderId,
       },
-      ...(hasImage ? { overrideCategory: 'chat' } : {}),
+      ...(fromExtension || hasImage ? { overrideCategory: 'chat' } : {}),
       factStore: deps.factStore,
     });
 

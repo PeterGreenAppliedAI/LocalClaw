@@ -4,7 +4,7 @@
 
 LocalClaw is a local-model-first AI agent framework running entirely on personal hardware via Ollama. It uses a **Router + Specialist** architecture with **deterministic pipelines** — code controls the workflow, models only extract parameters and synthesize text.
 
-9 models, 39 tools, 12 pipelines, 15 categories, 7 channel adapters, FalkorDB graph memory with 800+ nodes.
+9 models, 39 tools, 12 pipelines, 15 categories, 8 channel adapters (including Chrome extension), FalkorDB graph memory with 800+ nodes.
 
 ## Design Principles
 
@@ -17,7 +17,7 @@ LocalClaw is a local-model-first AI agent framework running entirely on personal
 ## System Flow
 
 ```
-Channel (Discord / Telegram / WhatsApp / Web / Gmail / Slack / iMessage)
+Channel (Discord / Telegram / WhatsApp / Web / Gmail / Slack / iMessage / Chrome Extension)
   ↓
 Orchestrator
   - Rate limiting (10/min/user)
@@ -126,6 +126,18 @@ Models that emit thinking blocks (`<think>` for Qwen, `<|channel>thought` for Ge
 5. `restrictedTools` — stripped for untrusted users
 6. `confirmTools` — preview before execution, requires confirmation
 
+## Chrome Extension (Browser Companion)
+
+```
+Chrome Side Panel (React) → HTTP fetch (SSE streaming) → LocalClaw Web API (localhost:3100)
+  ├── Content script extracts: URL, title, selected text, page content (~10K chars)
+  ├── [PAGE:] token injected → console/api/chat detects → overrideCategory: chat
+  ├── Context menus: "Ask LocalClaw about '%s'" (selection), "Summarize this page" (page)
+  └── No fetching needed — model reads injected page content directly
+```
+
+Built with WXT (Manifest V3), React, TypeScript. Connects to existing Web channel API — no new backend. Works cross-network (extension on Windows, LocalClaw on Mac Mini).
+
 ## File Type Routing (Orchestrator)
 
 ```
@@ -154,4 +166,5 @@ attachment → check extension
 | Document Gen | LibreOffice (headless) |
 | Scheduling | croner |
 | Config | JSON5 + Zod |
+| Chrome Extension | WXT + React + TypeScript (Manifest V3) |
 | Testing | Vitest (266 tests, 21 files) |

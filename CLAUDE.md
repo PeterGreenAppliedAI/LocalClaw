@@ -5,7 +5,7 @@
 LocalClaw uses a **Router + Specialist** pattern with a **tool-loop (ReAct) engine** and **deterministic pipelines**.
 
 ```
-Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage)
+Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage/Chrome Extension)
   -> Router (phi4:14b, classifies intent into one category)
     -> Pipeline (deterministic stages — most categories)
     -> OR Specialist (config-assigned model + ReAct tool-loop — chat, config, personal)
@@ -26,6 +26,8 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage)
 - **DockerBackend** — `src/exec/docker-backend.ts`, sandboxed command execution.
 
 **Data flow:** Channel message -> session resolution -> Router classification (pre-model overrides → model → keyword fallback) -> Security filtering (6 layers) -> Pipeline or Specialist dispatch -> tool-loop execution -> [FILE:] token extraction -> response to channel (thinking stripped) -> transcript persistence (thinking preserved).
+
+**Chrome Extension:** Browser companion side panel (WXT + React + Manifest V3) in `chrome-extension/`. Content script extracts page context (URL, title, selected text, page content). Connects to existing Web channel API via SSE streaming (`/console/api/chat`). When `[PAGE:]` token detected in message, `src/console/handlers/chat.ts` forces `overrideCategory: 'chat'` — model reads injected content directly, no fetching. Two dispatch paths exist: orchestrator (Discord/Telegram/etc.) and console API (Web/Extension) — routing overrides must be applied in the correct path.
 
 **Thinking tag handling:** Models that emit thinking blocks (`<think>...</think>` for Qwen, `<|channel>thought\n...<channel|>` for Gemma 4) have their thinking preserved in the session transcript so the model can see its own reasoning on subsequent turns. Thinking is stripped via `stripThinking()` in `src/dispatch.ts` only for: channel delivery, graph memory turns, session state updates, continuation context previews, handoff summarization. The `num_ctx` Ollama option is passed through from `config.session.contextSize` to ensure models have enough context window for the larger history.
 
@@ -294,6 +296,16 @@ src/
   setup/                    # Interactive setup wizard
     index.ts                #   Entry point
     steps/                  #   Individual setup steps
+
+chrome-extension/             # Browser companion (separate npm project)
+  entrypoints/
+    background.ts             #   Service worker: context menus, message relay
+    content.ts                #   Content script: page context extraction
+    sidepanel/                #   React side panel (chat UI, settings)
+  lib/
+    api.ts                    #   LocalClaw API client (SSE streaming)
+    storage.ts                #   chrome.storage.local wrappers
+    types.ts                  #   Shared types
 ```
 
 ---
@@ -344,6 +356,11 @@ Document/media tools return `[FILE:path]` tokens. These are:
 2. **Stripped** from plan pipeline results before summarization LLM (plan.ts)
 3. **Re-appended** to the final answer after all LLM processing
 4. **Extracted** by `extractMediaAttachments()` in orchestrator.ts for channel delivery
+
+### [PAGE:] token pattern (Chrome Extension)
+Chrome extension injects `[PAGE: url | title]`, `[SELECTED: text]`, and `[PAGE_CONTENT]...[/PAGE_CONTENT]` tokens into messages. Detection in `src/console/handlers/chat.ts` forces `overrideCategory: 'chat'` — the model reads injected content, never fetches. The `[DATA_FILE:]` pattern in the orchestrator follows the same approach but routes to `analytics`.
+
+**Important:** The console API (`/console/api/chat`) dispatches directly — NOT through the orchestrator's `handleMessage()`. Routing overrides for Web/Extension must go in `chat.ts`, not `orchestrator.ts`.
 
 ### Foreman handoff pattern (`src/pipeline/definitions/plan.ts`)
 Plan pipeline sub-dispatches use structured briefings (not raw result dumps):

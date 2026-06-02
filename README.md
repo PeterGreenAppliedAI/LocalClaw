@@ -2,7 +2,7 @@
 
 **A local-model-first AI agent framework that actually works with Ollama.**
 
-LocalClaw runs entirely on your own hardware. No cloud APIs, no per-token costs, no data leaving your machine. It connects to Discord, Telegram, WhatsApp, and more via pluggable adapters — and handles complex multi-tool tasks using local models through a **Router + Specialist** architecture.
+LocalClaw runs entirely on your own hardware. No cloud APIs, no per-token costs, no data leaving your machine. It connects to Discord, Telegram, WhatsApp, Chrome (browser extension), and more via pluggable adapters — and handles complex multi-tool tasks using local models through a **Router + Specialist** architecture.
 
 ## The Problem
 
@@ -78,6 +78,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Document Gen | `document` | Create and convert documents via LibreOffice headless — HTML/CSV → PDF/DOCX/XLSX/PPTX |
 | Image Gen | `image_generate` | Text-to-image and img2img via Flux model on dedicated hardware (Ollama) |
 | Code Generation | `opencode_build`, `opencode_status` | Delegate coding tasks to [OpenCode](https://opencode.ai) agent — scaffold projects, write tests, iterate. Isolated workspace. |
+| Browser Companion | Chrome Extension | Side panel rides shotgun while you browse — summarize pages, ask about selected text, right-click context menus. Page content injected directly, no fetching needed |
 | Self-Improvement | *(automatic)* | Error learning store, tool-specific recovery guidance, drift detection, observation summarization, learning promotion via heartbeat |
 | CLI | `npm run cli` | Terminal interface with streaming, slash commands, markdown rendering, session persistence |
 
@@ -183,7 +184,7 @@ localclaw/
 │   ├── skills/               # Self-improving procedural memory (store + keyword matcher)
 │   ├── cli/                  # Terminal interface (streaming, commands, markdown rendering)
 │   ├── ollama/               # Ollama HTTP client (chat, stream, embed)
-│   ├── channels/             # Pluggable adapters (Discord, Telegram, Web, Slack, Gmail, Microsoft Graph, WhatsApp)
+│   ├── channels/             # Pluggable adapters (Discord, Telegram, Web, Slack, Gmail, Microsoft Graph, WhatsApp, Chrome Extension)
 │   ├── console/              # Management console API (handlers, helpers, file serving)
 │   ├── services/             # TTS (Kokoro), STT (Whisper), Vision
 │   ├── tasks/                # Task board (types + JSON/Markdown store)
