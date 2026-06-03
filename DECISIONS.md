@@ -139,7 +139,7 @@ A log of significant decisions, failed experiments, and why things are the way t
 Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph database with native HNSW vector search.
 
 **Why FalkorDB over alternatives:**
-- vs Neo4j: Free (MIT-adjacent), 20MB vs 2.6GB memory, sub-ms lookups, native vector search. Neo4j Community can't cluster.
+- vs Neo4j: Free (MIT-adjacent), ~85MB vs 2.6GB memory, sub-ms lookups, native vector search. Neo4j Community can't cluster.
 - vs SQLite (existing EmbeddingStore): No graph traversal, no relationship modeling, brute-force vector search.
 - vs Memgraph: No native vector search.
 
@@ -150,7 +150,7 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 - Community detection: clusters of related facts by entity co-occurrence (work cluster, health cluster, hobby cluster)
 - Native vector KNN: O(log n) via HNSW index, not O(n) brute-force
 
-**Infrastructure:** FalkorDB runs in Docker on the Mac Mini alongside LocalClaw. ~20MB for the graph at current scale.
+**Infrastructure:** FalkorDB runs in Docker on the Mac Mini alongside LocalClaw. ~85MB for the graph at current scale (~1,067 nodes).
 
 **Status:** Fully integrated. Auto-injection, memory tools, and migration complete.
 

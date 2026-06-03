@@ -43,6 +43,18 @@ function normalizeEntityName(name: string): string {
   return n;
 }
 
+/** Reject entities that are generic pronouns, pure numbers, or too vague to be useful. */
+function isGarbageEntity(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  // Generic pronouns / references
+  if (/^(user|user's|the user|they|them|he|she|it|we|i|me|my)$/.test(n)) return true;
+  // Pure numbers or number + suffix (230s, 260s)
+  if (/^\d+[a-z]?$/.test(n)) return true;
+  // Single character
+  if (n.length <= 1) return true;
+  return false;
+}
+
 export class GraphMemoryStore {
   private db: FalkorDB | null = null;
   private graph: Graph | null = null;
@@ -205,6 +217,7 @@ Return: [{"name":"entity","type":"person|organization|technology|..."}]`,
                 type: typeof e.type === 'string' ? e.type : 'unknown',
               }))
               .filter(e => e.name.length > 1)
+              .filter(e => !isGarbageEntity(e.name))
               .slice(0, 5);
           }
         }
@@ -397,6 +410,21 @@ Return: [{"name":"entity","type":"person|organization|technology|..."}]`,
 
     if (deleted > 0) {
       console.log(`[GraphMemory] Removed ${deleted} fact(s) matching "${textMatch.slice(0, 40)}"`);
+      // Clean up orphaned entities (no facts reference them, no turns mention them)
+      try {
+        const orphans = await this.graph!.query(
+          `MATCH (e:Entity {senderId: $senderId})
+           OPTIONAL MATCH (e)<-[:ABOUT]-(f:Fact)
+           OPTIONAL MATCH (e)<-[:MENTIONS]-(t:Turn)
+           WITH e, count(f) AS facts, count(t) AS turns
+           WHERE facts = 0 AND turns = 0
+           DELETE e
+           RETURN count(e) AS cleaned`,
+          { params: { senderId } }
+        );
+        const cleaned = ((orphans.data ?? [])[0] as any)?.cleaned ?? 0;
+        if (cleaned > 0) console.log(`[GraphMemory] Cleaned ${cleaned} orphaned entity/entities`);
+      } catch { /* best-effort */ }
     }
     return deleted;
   }

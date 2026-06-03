@@ -4,7 +4,7 @@
 
 LocalClaw is a local-model-first AI agent framework running entirely on personal hardware via Ollama. It uses a **Router + Specialist** architecture with **deterministic pipelines** — code controls the workflow, models only extract parameters and synthesize text.
 
-9 models, 39 tools, 12 pipelines, 15 categories, 8 channel adapters (including Chrome extension), FalkorDB graph memory with 800+ nodes.
+9 models, 39 tools, 12 pipelines, 15 categories, 8 channel adapters (including Chrome extension), FalkorDB graph memory with 1,000+ nodes.
 
 ## Design Principles
 
