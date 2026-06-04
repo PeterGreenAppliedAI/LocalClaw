@@ -3,12 +3,18 @@ export interface Settings {
   token: string;
 }
 
+export interface FileAttachment {
+  path: string;
+  name: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
   images?: string[];
+  files?: FileAttachment[];
 }
 
 export interface PageContext {
@@ -24,6 +30,7 @@ export interface ChatEvent {
   answer?: string;
   category?: string;
   images?: string[];
+  files?: FileAttachment[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {

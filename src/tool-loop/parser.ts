@@ -18,34 +18,44 @@ export function parseReActResponse(text: string): ParsedReActResponse {
     return { type: 'fallback', content: '' };
   }
 
-  const thought = extractThought(text);
+  // Strip model thinking blocks before parsing — Gemma 4 and Qwen emit these
+  // and they can be misinterpreted as final answers
+  let cleanText = text
+    .replace(/<\|channel>thought\n[\s\S]*?<channel\|>/g, '')
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/^[\s\S]{0,500}?<\/think>/g, '')
+    .trim();
+  // If stripping left nothing, the model only produced thinking — treat as empty
+  if (!cleanText) return { type: 'fallback', content: '' };
+
+  const thought = extractThought(cleanText);
 
   // Check for Action: tool_name[{...}]
-  const actionMatch = text.match(/Action:\s*(\w+)\s*\[/);
+  const actionMatch = cleanText.match(/Action:\s*(\w+)\s*\[/);
   if (actionMatch) {
     const tool = actionMatch[1];
-    const afterBracket = text.slice(text.indexOf(actionMatch[0]) + actionMatch[0].length);
+    const afterBracket = cleanText.slice(cleanText.indexOf(actionMatch[0]) + actionMatch[0].length);
     const params = extractJsonParams(afterBracket);
-    return { type: 'action', thought, tool, params, raw: text };
+    return { type: 'action', thought, tool, params, raw: cleanText };
   }
 
   // Also support Action: tool_name({...}) format from react-loop.js
-  const parenMatch = text.match(/Action:\s*(\w+)\s*\(/);
+  const parenMatch = cleanText.match(/Action:\s*(\w+)\s*\(/);
   if (parenMatch) {
     const tool = parenMatch[1];
-    const afterParen = text.slice(text.indexOf(parenMatch[0]) + parenMatch[0].length);
+    const afterParen = cleanText.slice(cleanText.indexOf(parenMatch[0]) + parenMatch[0].length);
     const params = extractJsonParams(afterParen);
-    return { type: 'action', thought, tool, params, raw: text };
+    return { type: 'action', thought, tool, params, raw: cleanText };
   }
 
   // Check for Final Answer
-  const finalMatch = text.match(/Final Answer:\s*([\s\S]+)/i);
+  const finalMatch = cleanText.match(/Final Answer:\s*([\s\S]+)/i);
   if (finalMatch) {
     return { type: 'final_answer', thought, answer: finalMatch[1].trim() };
   }
 
   // Fallback: strip "Thought:" prefix, treat as answer
-  let content = text.trim();
+  let content = cleanText.trim();
   const thoughtOnly = content.match(/^Thought:\s*([\s\S]+)/i);
   if (thoughtOnly) {
     content = thoughtOnly[1].trim();

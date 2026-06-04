@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ChatMessage, Settings } from '../../../lib/types.js';
+import type { ChatMessage, Settings, FileAttachment } from '../../../lib/types.js';
 import { fileUrl } from '../../../lib/api.js';
 
 interface MessageProps {
@@ -37,6 +37,29 @@ export function Message({ message, settings }: MessageProps) {
                 style={{ maxWidth: '100%', borderRadius: 4 }}
                 loading="lazy"
               />
+            ))}
+          </div>
+        )}
+
+        {/* Render downloadable files */}
+        {message.files && message.files.length > 0 && (
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {message.files.map((file, i) => (
+              <a
+                key={i}
+                href={`${settings.host}${file.path}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                download={file.name}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '6px 10px', background: 'var(--bg)', borderRadius: 4,
+                  color: 'var(--accent)', textDecoration: 'none', fontSize: 12,
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                {file.name}
+              </a>
             ))}
           </div>
         )}

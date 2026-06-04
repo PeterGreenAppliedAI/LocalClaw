@@ -414,7 +414,9 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
   const fileTokens: string[] = []; // Collect [FILE:] paths stripped from observations
 
   // Temperature lock: ≤0.3 for tool-calling specialists (ChatGPT feedback §6)
-  const effectiveTemperature = ollamaTools.length > 0
+  // Exception: gemma4 needs higher temp for reasoning (best practices: 1.0, top_p=0.95)
+  const isGemma4 = config.model.startsWith('gemma4');
+  const effectiveTemperature = ollamaTools.length > 0 && !isGemma4
     ? Math.min(config.temperature, 0.3)
     : config.temperature;
 

@@ -133,6 +133,7 @@ export default function App() {
         if (event.type === 'done') {
           assistantMsg.content = event.answer ?? assistantMsg.content;
           assistantMsg.images = event.images;
+          assistantMsg.files = event.files;
         }
       }
     } catch (err) {

@@ -63,6 +63,7 @@ export async function* streamChat(
             answer: data.answer ?? '',
             category: data.category,
             images: data.images,
+            files: data.files,
           };
         }
       } catch {

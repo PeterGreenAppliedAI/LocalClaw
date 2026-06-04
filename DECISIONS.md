@@ -236,7 +236,40 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Fix:** Added `[PAGE:]` detection in `src/console/handlers/chat.ts` with `overrideCategory: 'chat'`. When the extension injects page context, the model reads the injected content directly — no tools, no fetching.
 **Also fixed:** Extension manifest had `host_permissions: ['http://localhost:*/*']` only — content script injection silently failed on HTTPS pages (all of them). Added `https://*/*`. Changed from programmatic `executeScript` injection to declarative content script with active message listener for reliability.
 **Lesson:** When adding routing overrides, check ALL dispatch paths — not just the main orchestrator flow. The console API is a separate entry point.
-**Status:** Active.
+**Revision (June 2026):** Removed the forced `overrideCategory: 'chat'` for extension messages. Let the router classify naturally — it correctly sends "summarize this page" to chat and "click the search bar" to website. Keyword-based intent detection was tried and abandoned (too fragile, false positives on "search for").
+**Status:** Active. Router classifies, no overrides.
+
+### Browser control via Chrome extension — evolution (June 2026)
+**Problem:** The extension reads page content but can't interact with it. User wants browser control (click, type, navigate) through the extension on their Windows PC, controlled by LocalClaw on the Mac Mini.
+
+**Approach 1 (rejected): CDP over network.** Playwright on Mac Mini connects to Chrome on Windows via `--remote-debugging-port`. Works but exposes Chrome's debug port across the network — real security concern. Built and removed.
+
+**Approach 2 (rejected): Extension parses LLM action tokens.** LocalClaw responds with `[ACTION: click | ref=3]` tokens, extension parses and executes. Same antipattern as letting models decide tool ordering — fragile, retry-prone.
+
+**Approach 3 (active): Remote browser bridge.** Model calls the browser tool normally. If extension is connected (`remoteBridge.isConnected()` + `channel === 'console'`), the tool forwards the structured command to the extension via a poll/POST queue instead of Playwright. Extension content script executes DOM actions. The extension is a dumb executor — same pattern as Docker for exec.
+
+**Architecture:** `model → browser tool → remote bridge queue → extension polls GET /browser/action → background relays to content script → content script executes → POST result → tool promise resolves → model sees result`
+
+**Bugs hit during implementation:**
+1. **Content script dies on navigate.** `window.location.href` kills the content script. Fix: navigate delegated to background via `chrome.tabs.update()`.
+2. **Content script not loaded on tab.** After navigation or tab switch, content script doesn't exist. Fix: background pings content script, injects on-demand via `chrome.scripting.executeScript()` if missing.
+3. **Navigate timing.** Navigate returns instantly but new page hasn't loaded. Next action (snapshot) fails. Fix: 3-second delay after navigate actions.
+4. **"Illegal invocation" on type.** Native setter used wrong prototype for `<textarea>` vs `<input>`. Fix: check element tag, try/catch fallback.
+5. **Conversational guard blocking website.** Guard downgraded `website` → `chat` on follow-up messages (no task intent detected for "go to reddit.com"). Fix: skip guard for console channel.
+6. **qwen3-coder repeated snapshots.** Model called snapshot 8x in a row without acting on results. Can't self-regulate multi-step browser interactions.
+7. **gemma4:26b froze on browser control.** Switched from qwen3-coder hoping better reasoning would help. Instead: (a) thinking tags parsed as final answer — parser didn't strip `<|channel>thought` blocks, ending loop at step 4, (b) temperature clamp to 0.3 killed MoE performance (needs 1.0), (c) even with both fixes, model froze generating massive thinking blocks with 16K token headroom instead of acting. gemma4 reasons too much and acts too slowly for rapid browser interaction.
+8. **qwen3.6:35b works.** Better reasoning than qwen3-coder, faster than gemma4. Uses direct URLs (google.com/search?q=...) instead of multi-step UI interaction. Searches across multiple vendors (Google, eBay, Amazon). Only issue: retried 404 URLs instead of skipping them.
+9. **web_fetch competing with browser tool.** Model had web_fetch, browser, and web_search available. Defaulted to web_fetch (simpler) instead of using the browser to navigate pages the user can see. Fix: strip web_fetch from tool list in browser control mode — forces the model to use browser for navigation.
+10. **Page content bloated compaction.** 10K chars of page content repeated in session history broke compaction. Fix: strip `[PAGE_CONTENT]` from archive after fact extraction but before summary generation.
+11. **Drift detector fighting completion.** Model has enough data and tries to synthesize final answer, but drift detector flags "growing text" and re-anchors, forcing more unnecessary actions. Browser control needs different drift thresholds.
+
+**Model evaluation for browser control:**
+- qwen3-coder:30b — fast tool calls but can't reason about multi-step sequences. Loops on snapshots.
+- gemma4:26b — good reasoning but freezes generating thinking blocks. Too slow for interactive browser actions.
+- qwen3.6:35b — best balance. Plans well (direct URLs), acts quickly, recovers from errors. Active choice.
+
+**Lesson:** Browser control is fundamentally different from browser fetching. The website specialist ("fetch and summarize") can't do multi-step automation. Needed: a dedicated prompt (plan before acting, never repeat actions, prefer direct URLs, recovery strategies), a reasoning model (qwen3.6 over qwen3-coder/gemma4), more iterations (25), higher output tokens (16K), and web_fetch stripped from tool list to force browser usage.
+**Status:** Active. Working end-to-end: navigate, snapshot, click, type, pressKey, text_content. qwen3.6:35b for reasoning, content script for execution, remote bridge for transport.
 
 ### !save writing to both FactStore and GraphMemory (May 2026)
 **Problem:** The `!save` command (user-approved fact storage after `!reset`) only wrote to the flat JSONL FactStore, never to FalkorDB. Facts only reached the graph via heartbeat transcript review — a separate extraction pass that could produce different results.

@@ -11,6 +11,18 @@ import { join } from 'node:path';
 
 const IMAGE_EXT_RE = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
 
+/** Extract [FILE:path] tokens from the answer for download links */
+function extractFilePaths(answer: string): string[] {
+  const paths: string[] = [];
+  const re = /\[FILE:([^\]]+)\]/g;
+  let m;
+  while ((m = re.exec(answer)) !== null) {
+    const p = m[1].trim();
+    if (!IMAGE_EXT_RE.test(p)) paths.push(p); // non-images only (images handled separately)
+  }
+  return paths;
+}
+
 /** Extract image paths from the dispatch result for inline display */
 function extractImagePaths(result: DispatchResult): string[] {
   const paths: string[] = [];
@@ -254,12 +266,14 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
     });
 
     const images = extractImagePaths(result);
+    const files = extractFilePaths(result.answer);
     res.write(`data: ${JSON.stringify({
       type: 'done',
       answer: result.answer,
       category: result.category,
       iterations: result.iterations,
       ...(images.length > 0 ? { images: images.map(p => `/console/api/files/${encodeURIComponent(p)}`) } : {}),
+      ...(files.length > 0 ? { files: files.map(p => ({ path: `/console/api/files/${encodeURIComponent(p)}`, name: p.split('/').pop() })) } : {}),
     })}\n\n`);
   } catch (err) {
     res.write(`data: ${JSON.stringify({
