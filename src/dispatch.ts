@@ -668,7 +668,10 @@ async function runSpecialist(
     client,
     config: {
       model: specialist.model,
-      maxIterations: specialist.maxIterations,
+      // Browser control via extension needs more iterations (snapshot + action + verify per step)
+      maxIterations: (params.sourceContext?.channel === 'console' && specialist.maxIterations <= 8)
+        ? Math.max(specialist.maxIterations, 15)
+        : specialist.maxIterations,
       temperature: specialist.temperature,
       maxTokens: specialist.maxTokens,
       topK: specialist.topK,

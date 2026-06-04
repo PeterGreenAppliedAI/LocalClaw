@@ -138,6 +138,23 @@ function executeBrowserAction(
     case 'snapshot':
       return snapshot();
 
+    case 'pressKey': {
+      const key = params.text ?? 'Enter';
+      const target = params.ref ? resolveElement(params.ref) : document.activeElement;
+      const el = (target ?? document.body) as HTMLElement;
+      const keyMap: Record<string, number> = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8 };
+      const keyCode = keyMap[key] ?? 0;
+      el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, keyCode, bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keypress', { key, code: key, keyCode, bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, keyCode, bubbles: true }));
+      // For Enter on forms, also try submitting the form
+      if (key === 'Enter') {
+        const form = el.closest('form');
+        if (form) form.requestSubmit();
+      }
+      return `Pressed ${key}`;
+    }
+
     case 'text_content':
       return `Page: ${document.title}\nURL: ${window.location.href}\n\n${document.body?.innerText?.slice(0, 10_000) ?? ''}`;
 

@@ -29,14 +29,15 @@ export function createBrowserTool(config?: BrowserConfig, ollamaUrl?: string): L
 
 Use "snapshot" to see the page with numbered interactive elements.
 Use "text_content" to read rendered text from the page (better for SPAs).
-Then use "click", "type", or "select" with the element number to interact.
+Then use "click", "type", "select", or "pressKey" with the element number to interact.
+After typing into a search field, use "pressKey" with text="Enter" to submit.
 If DOM interaction fails, the browser automatically escalates to visual mode (vision model + coordinate clicking).
 
-Workflow: open → navigate → snapshot/text_content → click/type by number → verify → repeat.`,
-    parameterDescription: `action (required): "open" | "navigate" | "snapshot" | "text_content" | "screenshot" | "click" | "type" | "select" | "wait" | "tabs" | "close".
+Workflow: open → navigate → snapshot → click/type by number → pressKey Enter to submit → snapshot to verify → repeat.`,
+    parameterDescription: `action (required): "open" | "navigate" | "snapshot" | "text_content" | "screenshot" | "click" | "type" | "select" | "pressKey" | "wait" | "tabs" | "close".
 url (optional): URL for navigate/open.
-ref (optional): Element reference number from snapshot, CSS selector, or text description of element. Used by click/type/select. If DOM lookup fails, text descriptions trigger automatic visual fallback.
-text (optional): Text to type (for "type" action) or option to select (for "select" action).
+ref (optional): Element reference number from snapshot, CSS selector, or text description of element. Used by click/type/select/pressKey.
+text (optional): Text to type (for "type"), option to select (for "select"), or key name (for "pressKey" — e.g., "Enter", "Tab", "Escape").
 tab (optional): Tab ID.`,
     example: 'browser[{"action": "click", "ref": "3"}]',
     parameters: {
@@ -47,7 +48,7 @@ tab (optional): Tab ID.`,
           description: 'Browser action to perform',
           enum: [
             'open', 'navigate', 'snapshot', 'text_content', 'screenshot',
-            'click', 'type', 'select', 'wait',
+            'click', 'type', 'select', 'wait', 'pressKey',
             'visual_snapshot',
             'tabs', 'console', 'pdf', 'close',
           ],
