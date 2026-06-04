@@ -610,7 +610,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
         // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5)
         // Browser snapshots get a higher limit to preserve element ref numbers
-        const effectiveLimit = (toolName === 'browser' || toolName === 'opencode_build') ? MAX_TOOL_RESULT_CHARS * 4 : MAX_TOOL_RESULT_CHARS;
+        const effectiveLimit = (toolName === 'browser' || toolName === 'opencode_build') ? 16_000 : MAX_TOOL_RESULT_CHARS;
         if (observation.length > effectiveLimit) {
           const original = observation.length;
           observation = observation.slice(0, effectiveLimit) + `\n... [truncated from ${original} chars]`;
