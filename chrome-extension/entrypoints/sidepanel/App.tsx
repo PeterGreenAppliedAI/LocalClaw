@@ -15,6 +15,7 @@ export default function App() {
   const [streaming, setStreaming] = useState(false);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [senderId, setSenderId] = useState('');
+  const [lastPageUrl, setLastPageUrl] = useState('');
 
   // Load persisted state
   useEffect(() => {
@@ -57,13 +58,17 @@ export default function App() {
     } catch { /* may fail on restricted pages */ }
 
     // Build message with page context injected
+    // Only inject full page content on first message or when URL changes — follow-ups use session history
     let fullMessage = text;
     if (context) {
+      const urlChanged = context.url !== lastPageUrl;
       const parts: string[] = [];
       if (context.url) parts.push(`[PAGE: ${context.url} | ${context.title}]`);
       if (context.selectedText) parts.push(`[SELECTED: ${context.selectedText}]`);
-      if (context.pageContent) parts.push(`[PAGE_CONTENT]\n${context.pageContent}\n[/PAGE_CONTENT]`);
-      // Strip any existing [PAGE:] prefix from context menu actions
+      if (urlChanged && context.pageContent) {
+        parts.push(`[PAGE_CONTENT]\n${context.pageContent}\n[/PAGE_CONTENT]`);
+        setLastPageUrl(context.url);
+      }
       const cleanText = text.replace(/^\[PAGE:[^\]]*\]\n*/g, '').trim();
       if (parts.length > 0) fullMessage = parts.join('\n') + '\n\n' + cleanText;
     }

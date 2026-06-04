@@ -105,7 +105,16 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
       deps.config,
     );
 
-    const trimmed = (body.message || '').trim();
+    // Strip extension page context tokens to find the actual user message
+    const rawMessage = (body.message || '').trim();
+    const hasPageContent = rawMessage.includes('[PAGE_CONTENT]');
+    const hasPageRef = rawMessage.includes('[PAGE:');
+    if (hasPageRef) console.log(`[Console] Extension message: PAGE=${hasPageRef} CONTENT=${hasPageContent} len=${rawMessage.length}`);
+    const trimmed = rawMessage
+      .replace(/\[PAGE:[^\]]*\]/g, '')
+      .replace(/\[SELECTED:[^\]]*\]/g, '')
+      .replace(/\[PAGE_CONTENT\][\s\S]*?\[\/PAGE_CONTENT\]/g, '')
+      .trim();
 
     // Handle !reset / !new — clear session before it hits the router
     if (trimmed.toLowerCase() === '!reset' || trimmed.toLowerCase() === '!new') {

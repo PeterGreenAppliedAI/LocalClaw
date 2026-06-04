@@ -121,17 +121,22 @@ export async function buildCompactedHistory(params: BuildCompactedHistoryParams)
     extractCompactionTrainingPairs(archiveTranscript);
   } catch { /* best-effort */ }
 
-  // Phase 3: Flush key facts to FactStore
+  // Phase 3: Flush key facts to FactStore (includes page content for full context)
   try {
     await flushToMemory(client, model, archiveText, workspacePath, factStore, senderId);
   } catch (err) {
     console.warn('[Compactor] Memory flush failed, continuing with summary only:', err);
   }
 
+  // Strip page content from archive before summarization — raw page text served its
+  // purpose (fact extraction above), but bloats the summary and confuses the model on
+  // subsequent turns. The conversation about the page stays; the raw page doesn't.
+  const archiveForSummary = archiveText.replace(/\[PAGE_CONTENT\][\s\S]*?\[\/PAGE_CONTENT\]/g, '[page content stripped — facts extracted to memory]');
+
   // Phase 4: Generate structured summary (or update existing)
   let newSummaryText: string;
   try {
-    newSummaryText = await generateStructuredSummary(client, model, archiveText, existingSummary?.text);
+    newSummaryText = await generateStructuredSummary(client, model, archiveForSummary, existingSummary?.text);
   } catch (err) {
     console.warn('[Compactor] Summary generation failed, falling back to recent turns only:', err);
     return { messages: recentMessages, compacted: true };
