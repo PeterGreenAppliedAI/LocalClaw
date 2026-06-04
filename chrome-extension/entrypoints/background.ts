@@ -72,6 +72,16 @@ export default defineBackground(() => {
       return true; // Keep channel open for async response
     }
 
+    // Navigate active tab (called by content script — can't navigate itself without dying)
+    if (message.type === 'NAVIGATE_TAB') {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.tabs.update(tabs[0].id, { url: message.url });
+        }
+      });
+      return;
+    }
+
     // Relay browser actions from side panel → content script on active tab
     if (message.type === 'RELAY_BROWSER_ACTION') {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

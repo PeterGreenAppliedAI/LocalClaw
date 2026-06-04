@@ -170,12 +170,18 @@ function executeBrowserAction(
       if (!el) return `Element "${params.ref}" not found`;
       if (!params.text) return 'Error: text parameter required';
       el.focus();
-      // React-compatible value setting
-      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-        || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-      if (nativeSetter) {
-        nativeSetter.call(el, params.text);
-      } else {
+      // React-compatible value setting — use the right prototype for the element type
+      try {
+        const isTextarea = el.tagName?.toLowerCase() === 'textarea';
+        const proto = isTextarea ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(el, params.text);
+        } else {
+          el.value = params.text;
+        }
+      } catch {
+        // Fallback for non-standard inputs (contenteditable, custom elements)
         el.value = params.text;
       }
       el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -218,7 +224,8 @@ function executeBrowserAction(
 
     case 'navigate': {
       if (!params.url) return 'Error: url parameter required';
-      window.location.href = params.url;
+      // Navigation handled by background service worker (content script dies on page unload)
+      chrome.runtime.sendMessage({ type: 'NAVIGATE_TAB', url: params.url });
       return `Navigating to ${params.url}`;
     }
 
