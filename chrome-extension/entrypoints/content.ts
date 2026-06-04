@@ -4,6 +4,11 @@ export default defineContentScript({
   main() {
     // Respond to page context requests from the side panel / background
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message.type === 'PING') {
+        sendResponse({ pong: true });
+        return;
+      }
+
       if (message.type === 'EXTRACT_PAGE_CONTEXT') {
         const selectedText = window.getSelection()?.toString() ?? '';
 

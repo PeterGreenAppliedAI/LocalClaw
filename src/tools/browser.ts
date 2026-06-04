@@ -69,12 +69,22 @@ tab (optional): Tab ID.`,
       // Remote extension bridge — only for extension (console channel), never for Discord/Telegram/etc.
       if (remoteBridge.isConnected() && ctx?.channel === 'console') {
         // Actions that don't need forwarding
-        if (action === 'open') return 'Connected to Chrome extension. Take a snapshot to see page elements.';
+        if (action === 'open' && !params.url) return 'Connected to Chrome extension. Take a snapshot to see page elements.';
+        // open with URL = navigate
+        if (action === 'open' && params.url) {
+          try {
+            const result = await remoteBridge.sendAction({ action: 'navigate', url: params.url as string });
+            await new Promise(r => setTimeout(r, 3000));
+            return result;
+          } catch (err) {
+            return `Extension browser action failed: ${err instanceof Error ? err.message : err}`;
+          }
+        }
         if (action === 'close') return 'Browser controlled by extension — cannot close.';
         if (action === 'tabs') return 'Tab management not available in extension mode.';
 
         try {
-          return await remoteBridge.sendAction({
+          const result = await remoteBridge.sendAction({
             action,
             ref: params.ref as string | undefined,
             text: params.text as string | undefined,
@@ -82,6 +92,11 @@ tab (optional): Tab ID.`,
             direction: params.direction as string | undefined,
             selector: params.ref as string | undefined,
           });
+          // Navigate changes the page — wait for new content script to load
+          if (action === 'navigate') {
+            await new Promise(r => setTimeout(r, 3000));
+          }
+          return result;
         } catch (err) {
           return `Extension browser action failed: ${err instanceof Error ? err.message : err}`;
         }

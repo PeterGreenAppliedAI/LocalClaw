@@ -83,27 +83,48 @@ export default defineBackground(() => {
     }
 
     // Relay browser actions from side panel → content script on active tab
+    // Injects content script on-demand if not already present
     if (message.type === 'RELAY_BROWSER_ACTION') {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         const tab = tabs[0];
         if (!tab?.id) {
           sendResponse({ success: false, result: 'No active tab' });
           return;
         }
 
-        chrome.tabs.sendMessage(tab.id, {
-          type: 'BROWSER_ACTION',
-          action: message.action,
-          ref: message.ref,
-          text: message.text,
-          url: message.url,
-          direction: message.direction,
-          selector: message.selector,
-        }, (response) => {
-          if (chrome.runtime.lastError || !response) {
-            sendResponse({ success: false, result: chrome.runtime.lastError?.message ?? 'Content script unavailable' });
+        const sendAction = () => {
+          chrome.tabs.sendMessage(tab.id!, {
+            type: 'BROWSER_ACTION',
+            action: message.action,
+            ref: message.ref,
+            text: message.text,
+            url: message.url,
+            direction: message.direction,
+            selector: message.selector,
+          }, (response) => {
+            if (chrome.runtime.lastError || !response) {
+              sendResponse({ success: false, result: chrome.runtime.lastError?.message ?? 'Content script unavailable' });
+            } else {
+              sendResponse(response);
+            }
+          });
+        };
+
+        // Try sending directly first — if content script is already loaded
+        chrome.tabs.sendMessage(tab.id, { type: 'PING' }, (reply) => {
+          if (chrome.runtime.lastError || !reply) {
+            // Content script not loaded — inject it, wait, then send action
+            chrome.scripting.executeScript({
+              target: { tabId: tab.id! },
+              files: ['content-scripts/content.js'],
+            }).then(() => {
+              // Give it a moment to set up message listeners
+              setTimeout(sendAction, 500);
+            }).catch(() => {
+              sendResponse({ success: false, result: 'Cannot inject content script on this page' });
+            });
           } else {
-            sendResponse(response);
+            sendAction();
           }
         });
       });
