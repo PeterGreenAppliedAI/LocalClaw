@@ -196,8 +196,9 @@ export async function handleConsoleRequest(
       return true;
     }
     if (path === 'browser/connect' && method === 'POST') {
+      const wasConnected = remoteBridge.isConnected();
       remoteBridge.setConnected(true);
-      console.log('[Browser] Extension connected as remote browser backend');
+      if (!wasConnected) console.log('[Browser] Extension connected as remote browser backend');
       sendJson(res, { ok: true });
       return true;
     }

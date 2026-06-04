@@ -333,7 +333,8 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
 
   // 4a2. Conversational guard — prevent pipeline misroutes when user is mid-conversation
   // If classified as non-chat but session has prior turns and message has no task intent, stay on chat
-  if (effectiveCategory !== 'chat' && !params.cronMode && !params._reRouted && !params.overrideCategory) {
+  // Skip guard for console/extension — browser control needs website category to persist
+  if (effectiveCategory !== 'chat' && !params.cronMode && !params._reRouted && !params.overrideCategory && params.sourceContext?.channel !== 'console') {
     if (sessionState && sessionState.turnCount > 0) {
       const hasTaskIntent = /\b(create|make|build|run|execute|search\b.*?\bfor|search the web|look up|generate|produce|write me|send|schedule|research|analyze|give me a|find me a|find me|find the)\b/i.test(message);
       if (!hasTaskIntent) {

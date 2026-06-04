@@ -39,6 +39,7 @@ export default function App() {
   }, [settings]);
 
   // Poll for browser actions from LocalClaw and execute via content script
+  // Also re-registers as browser backend on every cycle (survives LocalClaw restarts)
   useEffect(() => {
     if (!connected || !settings.host) return;
 
@@ -46,6 +47,8 @@ export default function App() {
     const poll = async () => {
       while (active) {
         try {
+          // Re-register on every poll — cheap POST, ensures bridge stays connected after restarts
+          await connectBrowser(settings);
           const action = await pollBrowserAction(settings);
           if (action && action.id) {
             // Relay action to content script on active tab
