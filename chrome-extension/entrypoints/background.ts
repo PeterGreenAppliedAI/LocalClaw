@@ -71,5 +71,33 @@ export default defineBackground(() => {
       });
       return true; // Keep channel open for async response
     }
+
+    // Relay browser actions from side panel → content script on active tab
+    if (message.type === 'RELAY_BROWSER_ACTION') {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs[0];
+        if (!tab?.id) {
+          sendResponse({ success: false, result: 'No active tab' });
+          return;
+        }
+
+        chrome.tabs.sendMessage(tab.id, {
+          type: 'BROWSER_ACTION',
+          action: message.action,
+          ref: message.ref,
+          text: message.text,
+          url: message.url,
+          direction: message.direction,
+          selector: message.selector,
+        }, (response) => {
+          if (chrome.runtime.lastError || !response) {
+            sendResponse({ success: false, result: chrome.runtime.lastError?.message ?? 'Content script unavailable' });
+          } else {
+            sendResponse(response);
+          }
+        });
+      });
+      return true;
+    }
   });
 });

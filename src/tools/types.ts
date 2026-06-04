@@ -4,6 +4,8 @@ export interface ToolContext {
   workspacePath?: string;
   senderId?: string;
   config?: Record<string, unknown>;
+  /** Source channel — used by tools that behave differently per channel (e.g., browser remote bridge for extension) */
+  channel?: string;
 }
 
 /** Structured parameter definition for Ollama tool calling */

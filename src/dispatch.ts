@@ -642,6 +642,7 @@ async function runSpecialist(
     sessionKey,
     workspacePath,
     senderId: params.sourceContext?.senderId,
+    channel: params.sourceContext?.channel,
   };
 
   // Build workspace context — tool-using specialists get minimal context (SOUL+IDENTITY)
@@ -812,6 +813,7 @@ async function runPipelineDispatch(
     sessionKey,
     workspacePath,
     senderId: params.sourceContext?.senderId,
+    channel: params.sourceContext?.channel,
     config: { imageGen: config.imageGen },
   };
 

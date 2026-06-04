@@ -76,3 +76,53 @@ export async function* streamChat(
 export function fileUrl(settings: Settings, path: string): string {
   return `${settings.host}/console/api/files/${encodeURIComponent(path)}`;
 }
+
+/** Register extension as remote browser backend */
+export async function connectBrowser(settings: Settings): Promise<boolean> {
+  try {
+    const res = await fetch(`${settings.host}/console/api/browser/connect`, {
+      method: 'POST',
+      headers: headers(settings.token),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Unregister extension as remote browser backend */
+export async function disconnectBrowser(settings: Settings): Promise<void> {
+  try {
+    await fetch(`${settings.host}/console/api/browser/disconnect`, {
+      method: 'POST',
+      headers: headers(settings.token),
+    });
+  } catch { /* best-effort */ }
+}
+
+/** Poll for pending browser action from LocalClaw */
+export async function pollBrowserAction(settings: Settings): Promise<any | null> {
+  try {
+    const res = await fetch(`${settings.host}/console/api/browser/action`, {
+      headers: headers(settings.token),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.none) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/** Post browser action result back to LocalClaw */
+export async function postBrowserResult(
+  settings: Settings,
+  result: { id: string; success: boolean; result: string },
+): Promise<void> {
+  await fetch(`${settings.host}/console/api/browser/action`, {
+    method: 'POST',
+    headers: headers(settings.token),
+    body: JSON.stringify(result),
+  });
+}

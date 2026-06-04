@@ -4,6 +4,7 @@ import type { LocalClawTool } from './types.js';
 import { BrowserClient } from '../browser/client.js';
 import type { BrowserConfig } from '../config/types.js';
 import { visualSnapshot, type VisualBrowserConfig } from '../browser/visual.js';
+import { remoteBridge } from '../browser/remote-bridge.js';
 
 let sharedClient: BrowserClient | null = null;
 
@@ -60,11 +61,32 @@ tab (optional): Tab ID.`,
     },
     category: 'web_search',
 
-    async execute(params: Record<string, unknown>): Promise<string> {
+    async execute(params: Record<string, unknown>, ctx): Promise<string> {
       const action = params.action as string;
       if (!action) return 'Error: action parameter is required';
 
-      // Lazy-init browser — auto-launch if not running
+      // Remote extension bridge — only for extension (console channel), never for Discord/Telegram/etc.
+      if (remoteBridge.isConnected() && ctx?.channel === 'console') {
+        // Actions that don't need forwarding
+        if (action === 'open') return 'Connected to Chrome extension. Take a snapshot to see page elements.';
+        if (action === 'close') return 'Browser controlled by extension — cannot close.';
+        if (action === 'tabs') return 'Tab management not available in extension mode.';
+
+        try {
+          return await remoteBridge.sendAction({
+            action,
+            ref: params.ref as string | undefined,
+            text: params.text as string | undefined,
+            url: params.url as string | undefined,
+            direction: params.direction as string | undefined,
+            selector: params.ref as string | undefined,
+          });
+        } catch (err) {
+          return `Extension browser action failed: ${err instanceof Error ? err.message : err}`;
+        }
+      }
+
+      // Fallback: local Playwright browser
       if (!sharedClient || !sharedClient.isRunning()) {
         if (action === 'close') {
           return 'Browser is already closed.';

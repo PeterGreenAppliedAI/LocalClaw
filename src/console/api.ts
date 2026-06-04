@@ -11,6 +11,7 @@ import { handleTools } from './handlers/tools.js';
 import { handleChat, handleChatReset } from './handlers/chat.js';
 import { handleServeFile } from './handlers/files.js';
 import { handleListResearch, handleDeleteResearch } from './handlers/research.js';
+import { remoteBridge } from '../browser/remote-bridge.js';
 
 const API_PREFIX = '/console/api/';
 
@@ -178,6 +179,32 @@ export async function handleConsoleRequest(
     }
     if (path === 'chat/reset' && method === 'POST') {
       await handleChatReset(req, res, deps);
+      return true;
+    }
+
+    // Browser action bridge — extension polls for pending actions and posts results
+    if (path === 'browser/action' && method === 'GET') {
+      const action = remoteBridge.getPendingAction();
+      sendJson(res, action ?? { none: true });
+      return true;
+    }
+    if (path === 'browser/action' && method === 'POST') {
+      const { parseBody } = await import('./helpers/parse-body.js');
+      const body = await parseBody<{ id: string; success: boolean; result: string }>(req);
+      remoteBridge.resolveAction(body);
+      sendJson(res, { ok: true });
+      return true;
+    }
+    if (path === 'browser/connect' && method === 'POST') {
+      remoteBridge.setConnected(true);
+      console.log('[Browser] Extension connected as remote browser backend');
+      sendJson(res, { ok: true });
+      return true;
+    }
+    if (path === 'browser/disconnect' && method === 'POST') {
+      remoteBridge.setConnected(false);
+      console.log('[Browser] Extension disconnected');
+      sendJson(res, { ok: true });
       return true;
     }
 

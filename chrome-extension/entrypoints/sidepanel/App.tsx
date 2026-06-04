@@ -4,7 +4,7 @@ import { Settings } from './components/Settings.js';
 import type { Settings as SettingsType, ChatMessage, PageContext } from '../../lib/types.js';
 import { DEFAULT_SETTINGS } from '../../lib/types.js';
 import { getSettings, saveSettings, getMessages, saveMessages, clearMessages, getSenderId } from '../../lib/storage.js';
-import { streamChat, healthCheck } from '../../lib/api.js';
+import { streamChat, healthCheck, connectBrowser, disconnectBrowser, pollBrowserAction, postBrowserResult } from '../../lib/api.js';
 
 type View = 'chat' | 'settings' | 'loading';
 
@@ -28,11 +28,45 @@ export default function App() {
     });
   }, []);
 
-  // Check connection on settings change
+  // Check connection on settings change + register as browser backend
   useEffect(() => {
     if (!settings.host) return;
-    healthCheck(settings).then(setConnected);
+    healthCheck(settings).then(ok => {
+      setConnected(ok);
+      if (ok) connectBrowser(settings);
+    });
+    return () => { disconnectBrowser(settings); };
   }, [settings]);
+
+  // Poll for browser actions from LocalClaw and execute via content script
+  useEffect(() => {
+    if (!connected || !settings.host) return;
+
+    let active = true;
+    const poll = async () => {
+      while (active) {
+        try {
+          const action = await pollBrowserAction(settings);
+          if (action && action.id) {
+            // Relay action to content script on active tab
+            const response = await chrome.runtime.sendMessage({
+              type: 'RELAY_BROWSER_ACTION',
+              ...action,
+            });
+            await postBrowserResult(settings, {
+              id: action.id,
+              success: response?.success ?? false,
+              result: response?.result ?? 'No response from content script',
+            });
+          }
+        } catch { /* polling error, retry */ }
+        // Poll every 500ms — fast enough for interactive feel
+        await new Promise(r => setTimeout(r, 500));
+      }
+    };
+    poll();
+    return () => { active = false; };
+  }, [connected, settings]);
 
   // Listen for context menu actions from background
   useEffect(() => {
