@@ -412,6 +412,8 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
   let driftRepairAttempted = false;
   const driftTracker = new DriftTracker();
   const fileTokens: string[] = []; // Collect [FILE:] paths stripped from observations
+  let lastActionHash = ''; // Action dedup: detect repeated identical tool calls
+  let actionRepeatCount = 0;
 
   // Temperature lock: ≤0.3 for tool-calling specialists (ChatGPT feedback §6)
   // Exception: gemma4 needs higher temp for reasoning (best practices: 1.0, top_p=0.95)
@@ -585,6 +587,27 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
           console.warn(`[ReAct] Param validation failed for ${toolName}: ${validation.errors.join('; ')}`);
           logToolCall({ tool: toolName, category: config.model, durationMs: 0, success: false, error: observation });
         } else {
+          // Action dedup: block identical consecutive tool calls (Browser-Use pattern)
+          const actionHash = `${toolName}:${JSON.stringify(toolParams)}`;
+          if (actionHash === lastActionHash) {
+            actionRepeatCount++;
+            if (actionRepeatCount >= 2) {
+              observation = `BLOCKED: You called ${toolName} with the same parameters ${actionRepeatCount + 1} times. Try a different action, different parameters, or provide your final answer.`;
+              console.log(`[ReAct] Action dedup: blocked repeat #${actionRepeatCount + 1} of ${toolName}`);
+              lastActionHash = '';
+              actionRepeatCount = 0;
+              // Skip execution, use the block message as observation
+              logToolCall({ tool: toolName, category: config.model, durationMs: 0, success: false, error: 'action_dedup' });
+              steps.push({ thought: '', action: { tool: toolName, params: toolParams }, observation });
+              messages.push(msg);
+              messages.push({ role: 'tool', content: observation });
+              continue;
+            }
+          } else {
+            lastActionHash = actionHash;
+            actionRepeatCount = 0;
+          }
+
           console.log(`[ReAct] → ${toolName}(${JSON.stringify(toolParams).slice(0, 200)})`);
           try {
             observation = await executor(toolName, toolParams, toolContext);

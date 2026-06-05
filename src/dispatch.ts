@@ -346,13 +346,23 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     }
   }
 
-  // 4a3. Browser control: route to deterministic pipeline instead of ReAct
+  // 4a3. Browser control: guided ReAct with code guardrails
+  let browserControlMode = false;
   if (params.sourceContext?.channel === 'console') {
     try {
       const { remoteBridge } = await import('./browser/remote-bridge.js');
       if (remoteBridge.isConnected()) {
-        specialistConfig = { ...specialistConfig, pipeline: 'browser_control', model: 'qwen3.6:35b' };
-        console.log('[Dispatch] Browser control mode → browser_control pipeline');
+        browserControlMode = true;
+        // Override to qwen3.6 for reasoning, strip pipeline (use ReAct), strip web_fetch
+        specialistConfig = {
+          ...specialistConfig,
+          model: 'qwen3.6:35b',
+          pipeline: undefined as any, // force ReAct, no pipeline
+          maxIterations: 20,
+          maxTokens: 16384,
+          tools: specialistConfig.tools.filter(t => t !== 'web_fetch'),
+        };
+        console.log('[Dispatch] Browser control mode → guided ReAct');
       }
     } catch { /* remote-bridge not available */ }
   }
@@ -671,7 +681,35 @@ async function runSpecialist(
   // Channel context for delivery targets (cron scheduling, send_message, etc.)
   let systemPrompt = specialist.systemPrompt;
 
-  // Browser control — use gemma4 for better reasoning + replace specialist prompt
+  // Browser control prompt — replaces specialist prompt when extension is connected
+  if (params.sourceContext?.channel === 'console' && specialist.model === 'qwen3.6:35b' && !specialist.pipeline) {
+    systemPrompt = `You are a browser automation agent controlling the user's real Chrome browser. They can see every action you take in real time.
+
+ACTIONS AVAILABLE:
+- snapshot: See the page with numbered interactive elements.
+- screenshot: Take a visual screenshot — use this when snapshot doesn't show prices/products (JS-heavy sites).
+- click ref=N: Click element N from the snapshot.
+- type ref=N text="...": Type into element N.
+- pressKey text="Enter": Press a key after typing in search fields.
+- navigate url="...": Go to a URL. PREFER direct URLs (google.com/search?q=..., amazon.com/s?k=...).
+- text_content: Read visible text of the page.
+- scroll: Scroll down to see more content.
+
+WORKFLOW:
+1. Navigate to the target site using a direct URL when possible.
+2. Take a snapshot or screenshot to see what's on the page.
+3. If snapshot doesn't show product data/prices, use screenshot — it reads the rendered page visually.
+4. Extract the data you need, then move to the next site if comparing vendors.
+5. When you have enough data, provide your final answer.
+
+RULES:
+- NEVER call the same action twice in a row with the same parameters.
+- For price comparison tasks, visit 2-3 different vendor sites (Google Shopping, eBay, Amazon, Newegg).
+- Prefer direct URLs over multi-step UI interaction.
+- If an action fails or a URL 404s, skip it and try a different source.
+- When you have enough data, STOP and give your final answer. Don't navigate back or close the browser.
+- URLs must be ACTUAL vendor URLs (amazon.com/dp/..., newegg.com/p/..., ebay.com/itm/...). Never use Google redirect links (google.com/shopping/product/...). If you only have Google Shopping results, navigate to the actual vendor site to get the real URL.`;
+  }
 
   if (params.sourceContext) {
     const ctx = params.sourceContext;
@@ -686,6 +724,9 @@ async function runSpecialist(
       maxIterations: specialist.maxIterations,
       temperature: specialist.temperature,
       maxTokens: specialist.maxTokens,
+      // Browser control: skip growing-text drift detection (model needs room for long answers)
+      // Repeat detection still active via action dedup in engine
+      skipDriftDetection: params.sourceContext?.channel === 'console' && specialist.model === 'qwen3.6:35b',
       topK: specialist.topK,
       topP: specialist.topP,
       repeatPenalty: specialist.repeatPenalty,

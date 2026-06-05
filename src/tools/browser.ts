@@ -68,7 +68,7 @@ After typing into a search field, use "pressKey" with text="Enter" to submit.
 If DOM interaction fails, the browser automatically escalates to visual mode (vision model + coordinate clicking).
 
 Workflow: open → navigate → snapshot → click/type by number → pressKey Enter to submit → snapshot to verify → repeat.`,
-    parameterDescription: `action (required): "open" | "navigate" | "snapshot" | "text_content" | "screenshot" | "click" | "type" | "select" | "pressKey" | "wait" | "tabs" | "close".
+    parameterDescription: `action (required): "open" | "navigate" | "snapshot" | "text_content" | "screenshot" | "click" | "type" | "select" | "pressKey" | "scroll" | "wait" | "tabs" | "close".
 url (optional): URL for navigate/open.
 ref (optional): Element reference number from snapshot, CSS selector, or text description of element. Used by click/type/select/pressKey.
 text (optional): Text to type (for "type"), option to select (for "select"), or key name (for "pressKey" — e.g., "Enter", "Tab", "Escape").
@@ -82,7 +82,7 @@ tab (optional): Tab ID.`,
           description: 'Browser action to perform',
           enum: [
             'open', 'navigate', 'snapshot', 'text_content', 'screenshot',
-            'click', 'type', 'select', 'wait', 'pressKey',
+            'click', 'type', 'select', 'wait', 'pressKey', 'scroll',
             'visual_snapshot',
             'tabs', 'console', 'pdf', 'close',
           ],
@@ -141,9 +141,12 @@ tab (optional): Tab ID.`,
           if (action === 'navigate') {
             await new Promise(r => setTimeout(r, 3000));
           }
-          // Auto-vision: if snapshot/text_content looks sparse (JS-heavy site), auto-take screenshot
-          if ((action === 'snapshot' || action === 'text_content') && result.length < 500) {
-            console.log(`[Browser] Sparse ${action} result (${result.length} chars) — auto-triggering vision screenshot`);
+          // Auto-vision: if snapshot doesn't contain useful product data (prices, ratings)
+          // JS-heavy sites render data after page load — snapshot gets nav elements but no prices
+          const hasUsefulData = /\$[\d,]+|\d+\.\d{2}|rating|stars|reviews|add to cart/i.test(result);
+          const isSparse = result.length < 500;
+          if ((action === 'snapshot' || action === 'text_content') && (isSparse || !hasUsefulData) && !result.includes('Action failed')) {
+            console.log(`[Browser] ${isSparse ? 'Sparse' : 'No product data in'} ${action} (${result.length} chars) — auto-triggering vision`);
             try {
               const visionResult = await captureAndDescribe(remoteBridge, ollamaUrl, config?.visionModel);
               if (visionResult) return result + '\n\n[VISUAL DESCRIPTION of what is actually rendered on screen:]\n' + visionResult;
