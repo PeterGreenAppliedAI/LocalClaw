@@ -22,6 +22,8 @@ export interface ReActConfig {
   repeatPenalty?: number;
   systemPrompt?: string;
   contextSize?: number;
+  /** Skip drift detection — browser control sessions produce long responses that trigger false positives */
+  skipDriftDetection?: boolean;
 }
 
 export type ParsedReActResponse =

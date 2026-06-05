@@ -512,15 +512,19 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
         ? { tool: toolCalls![0].function.name, params: toolCalls![0].function.arguments ?? {} }
         : undefined;
       const drift = driftTracker.checkDrift(msg.content || '', toolCallInfo);
-      if (drift !== 'none') {
+      // In browser control mode, only catch repeating tool calls — let growing answers through
+      const shouldRepair = drift !== 'none' && (!config.skipDriftDetection || drift === 'repeating');
+      if (shouldRepair) {
         driftRepairAttempted = true;
         console.log(`[ReAct] Step ${i + 1}: drift detected (${drift}) — injecting re-anchor`);
         messages.push(msg);
         messages.push({
           role: 'user',
-          content: `You appear to be ${drift === 'repeating' ? 'repeating the same tool call' : drift === 'hedging' ? 'hedging instead of acting' : 'generating longer responses without progress'}. `
-            + `Original request: "${userMessage}". `
-            + `Progress: ${steps.length} tool calls completed. Focus on the next concrete action to answer the request, or provide your final answer if you have enough information.`,
+          content: drift === 'repeating'
+            ? `STOP. You are repeating the same action. Do NOT call the same tool with the same parameters again. Either try a completely different approach or provide your final answer with the data you already have.`
+            : `You appear to be ${drift === 'hedging' ? 'hedging instead of acting' : 'generating longer responses without progress'}. `
+              + `Original request: "${userMessage}". `
+              + `Progress: ${steps.length} tool calls completed. Focus on the next concrete action to answer the request, or provide your final answer if you have enough information.`,
         });
         continue;
       }

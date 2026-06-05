@@ -92,6 +92,31 @@ export default defineBackground(() => {
           return;
         }
 
+        // Screenshot — try captureVisibleTab, fall back to chrome.debugger CDP
+        if (message.action === 'screenshot') {
+          (async () => {
+            // Attempt 1: captureVisibleTab with host_permissions
+            try {
+              const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+              sendResponse({ success: true, result: dataUrl });
+              return;
+            } catch { /* fall through to debugger */ }
+
+            // Attempt 2: chrome.debugger API (shows infobar but always works)
+            try {
+              const target = { tabId: tab.id! };
+              await chrome.debugger.attach(target, '1.3');
+              const result = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', { format: 'png' });
+              await chrome.debugger.detach(target);
+              const dataUrl = `data:image/png;base64,${(result as any).data}`;
+              sendResponse({ success: true, result: dataUrl });
+            } catch (err) {
+              sendResponse({ success: false, result: `Screenshot failed: ${err}` });
+            }
+          })();
+          return;
+        }
+
         const sendAction = () => {
           chrome.tabs.sendMessage(tab.id!, {
             type: 'BROWSER_ACTION',

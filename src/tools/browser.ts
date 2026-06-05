@@ -8,6 +8,40 @@ import { remoteBridge } from '../browser/remote-bridge.js';
 
 let sharedClient: BrowserClient | null = null;
 
+/** Capture visible tab screenshot and describe with vision model */
+async function captureAndDescribe(
+  bridge: typeof remoteBridge,
+  ollamaUrl?: string,
+  visionModel?: string,
+): Promise<string | null> {
+  const dataUrl = await bridge.sendAction({ action: 'screenshot' });
+  if (!dataUrl || !dataUrl.startsWith('data:image')) {
+    console.warn(`[Browser] Screenshot returned invalid data: ${typeof dataUrl} (${dataUrl?.slice(0, 100)})`);
+    return null;
+  }
+
+  const base64 = dataUrl.split(',')[1];
+  if (!base64) return null;
+
+  const model = visionModel ?? 'qwen3.6:35b';
+  const response = await fetch(`${ollamaUrl ?? 'http://127.0.0.1:11434'}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages: [{
+        role: 'user',
+        content: 'Describe what you see on this page. List every product name, price, and vendor visible. Be specific and thorough.',
+        images: [base64],
+      }],
+      stream: false,
+      options: { temperature: 0.3, num_predict: 4096 },
+    }),
+  });
+  const json = await response.json() as { message?: { content?: string } };
+  return json.message?.content ?? null;
+}
+
 const MEDIA_DIR = 'data/media/browser';
 
 export function createBrowserTool(config?: BrowserConfig, ollamaUrl?: string): LocalClawTool {
@@ -83,6 +117,17 @@ tab (optional): Tab ID.`,
         if (action === 'close') return 'Browser controlled by extension — cannot close.';
         if (action === 'tabs') return 'Tab management not available in extension mode.';
 
+        // Screenshot: capture tab → send to vision model for description
+        if (action === 'screenshot' || action === 'visual_snapshot') {
+          try {
+            const result = await captureAndDescribe(remoteBridge, ollamaUrl, config?.visionModel);
+            return result ?? 'Screenshot capture failed';
+          } catch (err) {
+            console.warn(`[Browser] Screenshot/vision error:`, err instanceof Error ? err.message : err);
+            return `Screenshot/vision failed: ${err instanceof Error ? err.message : err}`;
+          }
+        }
+
         try {
           const result = await remoteBridge.sendAction({
             action,
@@ -95,6 +140,16 @@ tab (optional): Tab ID.`,
           // Navigate changes the page — wait for new content script to load
           if (action === 'navigate') {
             await new Promise(r => setTimeout(r, 3000));
+          }
+          // Auto-vision: if snapshot/text_content looks sparse (JS-heavy site), auto-take screenshot
+          if ((action === 'snapshot' || action === 'text_content') && result.length < 500) {
+            console.log(`[Browser] Sparse ${action} result (${result.length} chars) — auto-triggering vision screenshot`);
+            try {
+              const visionResult = await captureAndDescribe(remoteBridge, ollamaUrl, config?.visionModel);
+              if (visionResult) return result + '\n\n[VISUAL DESCRIPTION of what is actually rendered on screen:]\n' + visionResult;
+            } catch (vErr) {
+              console.warn('[Browser] Auto-vision failed:', vErr instanceof Error ? vErr.message : vErr);
+            }
           }
           return result;
         } catch (err) {

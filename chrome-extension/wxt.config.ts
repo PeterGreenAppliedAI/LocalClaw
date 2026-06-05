@@ -5,7 +5,7 @@ export default defineConfig({
   manifest: {
     name: 'LocalClaw',
     description: 'LocalClaw AI browser companion — local-first, private, always by your side',
-    permissions: ['sidePanel', 'contextMenus', 'activeTab', 'scripting', 'storage'],
+    permissions: ['sidePanel', 'contextMenus', 'scripting', 'storage', 'tabs', 'debugger'],
     host_permissions: ['http://*/*', 'https://*/*'],
     action: {
       default_title: 'Open LocalClaw',

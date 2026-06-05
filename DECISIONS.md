@@ -141,7 +141,7 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Why FalkorDB over alternatives:**
 - vs Neo4j: Free (MIT-adjacent), ~85MB vs 2.6GB memory, sub-ms lookups, native vector search. Neo4j Community can't cluster.
 - vs SQLite (existing EmbeddingStore): No graph traversal, no relationship modeling, brute-force vector search.
-- vs Memgraph: No native vector search.
+- vs Memgraph: Lacked native vector search at time of evaluation (has since added it).
 
 **What the graph enables that flat storage can't:**
 - SUPERSEDES edges: fact evolution with history ("ML engineer" → "Senior ML engineer")

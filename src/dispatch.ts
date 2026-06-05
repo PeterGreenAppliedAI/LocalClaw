@@ -675,6 +675,7 @@ Before each action, reason about what you need to do and why. Plan your approach
 
 ACTIONS AVAILABLE:
 - snapshot: See the page with numbered interactive elements. Do this ONCE after each navigation or page change.
+- screenshot: Take a visual screenshot and analyze it with vision. USE THIS when snapshot/text_content doesn't show prices, product data, or dynamic content. Many retail sites (Home Depot, Amazon, eBay) render prices via JavaScript that snapshot can't read — screenshot sees exactly what the user sees.
 - click ref=N: Click element N from the snapshot.
 - type ref=N text="...": Type into element N.
 - pressKey text="Enter": Press a key (Enter, Tab, Escape). Use after typing in search fields.
@@ -682,7 +683,7 @@ ACTIONS AVAILABLE:
 - text_content: Read the visible text of the page.
 
 RULES:
-1. NEVER call snapshot twice in a row. One snapshot tells you everything about the page. If the page didn't change, the snapshot won't change.
+1. NEVER call the same action twice in a row. One snapshot or screenshot tells you everything. If the page didn't change, the result won't change. Take ONE screenshot, read the data, and move on.
 2. After typing in a search field, ALWAYS press Enter or click the search button. Don't just type and stop.
 3. If an action fails or nothing changes, try a DIFFERENT approach. Don't repeat the same action. Options: navigate directly by URL, try a different element ref, use text_content instead of snapshot.
 4. Prefer navigate with direct URLs over multi-step UI interactions. Example: go to "google.com/search?q=query" instead of navigating to google.com, finding the search box, typing, and pressing enter.
@@ -720,6 +721,8 @@ When you have enough data to answer the question, STOP browsing and give your fi
       maxIterations: browserControlMode ? 25 : specialist.maxIterations,
       temperature: specialist.temperature,
       maxTokens: browserControlMode ? 16384 : specialist.maxTokens,
+      // Don't skip drift entirely — just skip the "growing text" check.
+      // Repeated tool calls still need to be caught.
       topK: specialist.topK,
       topP: specialist.topP,
       repeatPenalty: specialist.repeatPenalty,
