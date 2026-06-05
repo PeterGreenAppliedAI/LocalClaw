@@ -11,6 +11,7 @@ import { researchPipeline } from './research.js';
 import { planPipeline } from './plan.js';
 import { codeGenPipeline } from './code-gen.js';
 import { analyticsPipeline } from './analytics.js';
+import { browserControlPipeline } from './browser-control.js';
 
 /**
  * Register all pipeline definitions.
@@ -37,6 +38,9 @@ export function registerAllPipelines(registry: PipelineRegistry): void {
 
   // Data analytics
   registry.register(analyticsPipeline);
+
+  // Browser control (Chrome extension)
+  registry.register(browserControlPipeline);
 
   // Meta pipelines
   registry.register(planPipeline);

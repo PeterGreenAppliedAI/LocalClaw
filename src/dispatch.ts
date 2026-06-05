@@ -346,6 +346,17 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     }
   }
 
+  // 4a3. Browser control: route to deterministic pipeline instead of ReAct
+  if (params.sourceContext?.channel === 'console') {
+    try {
+      const { remoteBridge } = await import('./browser/remote-bridge.js');
+      if (remoteBridge.isConnected()) {
+        specialistConfig = { ...specialistConfig, pipeline: 'browser_control', model: 'qwen3.6:35b' };
+        console.log('[Dispatch] Browser control mode → browser_control pipeline');
+      }
+    } catch { /* remote-bridge not available */ }
+  }
+
   // 4b. User priming — graph memory (FalkorDB) or flat FactStore fallback
   let userPriming = '';
   if (senderId && !params.cronMode) {
@@ -661,51 +672,6 @@ async function runSpecialist(
   let systemPrompt = specialist.systemPrompt;
 
   // Browser control — use gemma4 for better reasoning + replace specialist prompt
-  let browserControlMode = false;
-  if (params.sourceContext?.channel === 'console' && (await import('./browser/remote-bridge.js')).remoteBridge.isConnected()) {
-    browserControlMode = true;
-    systemPrompt = `You are a browser automation agent controlling the user's real Chrome browser. They can see every action you take in real time.
-
-THINK BEFORE YOU ACT:
-Before each action, reason about what you need to do and why. Plan your approach:
-- What is the goal?
-- What page am I on?
-- What do I need to interact with?
-- What's the most direct path to the answer?
-
-ACTIONS AVAILABLE:
-- snapshot: See the page with numbered interactive elements. Do this ONCE after each navigation or page change.
-- screenshot: Take a visual screenshot and analyze it with vision. USE THIS when snapshot/text_content doesn't show prices, product data, or dynamic content. Many retail sites (Home Depot, Amazon, eBay) render prices via JavaScript that snapshot can't read — screenshot sees exactly what the user sees.
-- click ref=N: Click element N from the snapshot.
-- type ref=N text="...": Type into element N.
-- pressKey text="Enter": Press a key (Enter, Tab, Escape). Use after typing in search fields.
-- navigate url="...": Go to a URL. Prefer direct URLs over UI interaction when possible.
-- text_content: Read the visible text of the page.
-
-RULES:
-1. NEVER call the same action twice in a row. One snapshot or screenshot tells you everything. If the page didn't change, the result won't change. Take ONE screenshot, read the data, and move on.
-2. After typing in a search field, ALWAYS press Enter or click the search button. Don't just type and stop.
-3. If an action fails or nothing changes, try a DIFFERENT approach. Don't repeat the same action. Options: navigate directly by URL, try a different element ref, use text_content instead of snapshot.
-4. Prefer navigate with direct URLs over multi-step UI interactions. Example: go to "google.com/search?q=query" instead of navigating to google.com, finding the search box, typing, and pressing enter.
-5. When the task is complete, give your final answer. Do NOT navigate back, close the browser, or take unnecessary extra actions.
-
-RESEARCH DEPTH:
-When asked to find information (prices, comparisons, specs), go beyond the first page:
-- Click into individual results to get specific details
-- Visit multiple sources to compare
-- Extract actual numbers, not just page titles
-- Compile a comprehensive answer with specifics
-
-RECOVERY:
-If you're stuck (same page, element not found, action failed):
-- Try navigating directly to a URL instead of clicking through UI
-- Use web_search to find the right URL, then navigate to it
-- Use text_content to read the page without a snapshot
-- Try a completely different approach to reach the goal
-
-CRITICAL: If a URL returns 404 or any error, do NOT retry the same URL. Skip it and move on. Never call the same failing action more than once.
-When you have enough data to answer the question, STOP browsing and give your final answer. You do not need to check every possible source — 3-5 good sources is enough.`;
-  }
 
   if (params.sourceContext) {
     const ctx = params.sourceContext;
@@ -716,21 +682,17 @@ When you have enough data to answer the question, STOP browsing and give your fi
   const result = await runToolLoop({
     client,
     config: {
-      model: browserControlMode ? 'qwen3.6:35b' : specialist.model,
-      // Browser control via extension needs more iterations (snapshot + action + verify per step)
-      maxIterations: browserControlMode ? 25 : specialist.maxIterations,
+      model: specialist.model,
+      maxIterations: specialist.maxIterations,
       temperature: specialist.temperature,
-      maxTokens: browserControlMode ? 16384 : specialist.maxTokens,
-      // Don't skip drift entirely — just skip the "growing text" check.
-      // Repeated tool calls still need to be caught.
+      maxTokens: specialist.maxTokens,
       topK: specialist.topK,
       topP: specialist.topP,
       repeatPenalty: specialist.repeatPenalty,
       systemPrompt,
       contextSize: config.session.contextSize,
     },
-    // Browser control mode: remove web_fetch so the model uses the browser tool for navigation
-    tools: browserControlMode ? toolDefs.filter(t => t.name !== 'web_fetch') : toolDefs,
+    tools: toolDefs,
     executor,
     toolContext,
     userMessage: message,

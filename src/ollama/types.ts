@@ -9,6 +9,8 @@ export interface OllamaMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   tool_calls?: OllamaToolCall[];
+  /** Base64-encoded images for vision models */
+  images?: string[];
 }
 
 /** Ollama tool definition (OpenAI-compatible format) */
