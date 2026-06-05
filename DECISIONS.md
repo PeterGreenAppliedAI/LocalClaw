@@ -269,7 +269,33 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 - qwen3.6:35b — best balance. Plans well (direct URLs), acts quickly, recovers from errors. Active choice.
 
 **Lesson:** Browser control is fundamentally different from browser fetching. The website specialist ("fetch and summarize") can't do multi-step automation. Needed: a dedicated prompt (plan before acting, never repeat actions, prefer direct URLs, recovery strategies), a reasoning model (qwen3.6 over qwen3-coder/gemma4), more iterations (25), higher output tokens (16K), and web_fetch stripped from tool list to force browser usage.
-**Status:** Active. Working end-to-end: navigate, snapshot, click, type, pressKey, text_content. qwen3.6:35b for reasoning, content script for execution, remote bridge for transport.
+
+### Deterministic pipeline for browser control — FAILED (June 2026)
+**Tried:** Replaced the working ReAct browser control with a deterministic pipeline (plan → reflect → execute → synthesize → quality review → revision). Same pattern as analytics/heartbeat/web-search. 280 lines became 601 lines.
+
+**What broke:**
+1. **Synthesize stripping cascade** — LLM told to output "synthesize" as final step, `parse_plan` stripped it, `reflect_on_plan` stripped it again from revised plans → plans shrank from 5 steps to 1-2
+2. **Plan reflection made plans worse** — saw a 4-step plan, "revised" it to 2 steps. Same model doing action + critique produces rubber stamp effect (confirmed by research)
+3. **Per-step reflection JSON parsing failed** — summary field contained page content with unescaped quotes/newlines that broke JSON parsing, even with JSON5. When reflection failed, no summary was captured → synthesis had no data
+4. **Reflection injected hallucinated actions** — `sort_results`, `validate_urls`, `check_pagination` despite action validation filter (plan reflection's revised plan bypassed validation initially)
+5. **Quality review suggested infrastructure changes** — "use Playwright with waitForSelector" — revision LLM took this literally and wrote a Python tutorial instead of product data
+6. **Revision hallucinated data** — with no real data from failed collection, revision invented URLs, prices, and vendor names
+
+**Research findings that explain the failure:**
+- Skyvern (45% → 85.8% on WebVoyager) achieved this by adding a **Validator LLM**, not a planner. Upfront planning is a known failure mode.
+- Browser-Use uses pure ReAct with code-driven loop detection (action hashing). No separate planner.
+- Same model for action + critique produces rubber stamp effect. External signals (DOM mutations, screenshot diffs) are needed for honest validation.
+- WebVoyager keeps only 3 most recent observations. Keeping all step results bloats context.
+
+**What worked instead:** Guided ReAct with code guardrails:
+- Action dedup via hash comparison (Browser-Use pattern) — blocks identical consecutive tool calls
+- Content-aware auto-vision — regex checks for price/product patterns in snapshot, auto-escalates to screenshot+vision when missing
+- Skip growing-text drift detection — let model produce long final answers
+- 20 iterations max, qwen3.6:35b, web_fetch stripped
+
+**Lesson:** Not everything benefits from a deterministic pipeline. Browser control is inherently reactive — the model needs to see page content before deciding what to do next. Upfront planning commits to a strategy before seeing the data. The pipeline pattern works for categories with predictable workflows (analytics: always load → compute → chart → interpret). Browser control has unpredictable workflows — different sites, different layouts, different failure modes. ReAct with code guardrails (dedup, vision fallback, iteration caps) is the right pattern.
+
+**Status:** Active. Guided ReAct with action dedup, content-aware auto-vision, qwen3.6:35b. 10 steps for multi-vendor comparison with real prices and URLs.
 
 ### !save writing to both FactStore and GraphMemory (May 2026)
 **Problem:** The `!save` command (user-approved fact storage after `!reset`) only wrote to the flat JSONL FactStore, never to FalkorDB. Facts only reached the graph via heartbeat transcript review — a separate extraction pass that could produce different results.
