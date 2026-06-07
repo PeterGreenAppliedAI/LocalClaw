@@ -39,6 +39,8 @@ function getImageDimensions(buf: Buffer): { width: number; height: number } | nu
 export class VisionService {
   private config: VisionConfig;
   private baseUrl: string;
+  /** Async queue lock — only one vision call to Ollama at a time */
+  private queueTail: Promise<void> = Promise.resolve();
 
   constructor(config: VisionConfig, ollamaBaseUrl: string) {
     this.config = config;
@@ -52,6 +54,15 @@ export class VisionService {
   async describe(imageBuffer: Buffer, _mimeType: string): Promise<string | null> {
     if (!this.config.enabled) return null;
 
+    // Queue: only one vision call at a time. Prevents Ollama overload on media bursts.
+    return new Promise<string | null>((resolve) => {
+      this.queueTail = this.queueTail.then(async () => {
+        resolve(await this._describeImpl(imageBuffer));
+      });
+    });
+  }
+
+  private async _describeImpl(imageBuffer: Buffer): Promise<string | null> {
     try {
       // qwen3-vl crashes on images smaller than 32x32 (known Ollama bug)
       // Resize undersized images instead of rejecting them

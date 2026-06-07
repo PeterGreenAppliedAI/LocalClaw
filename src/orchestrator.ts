@@ -157,6 +157,8 @@ export class Orchestrator {
   private visionService: VisionService;
   private config: LocalClawConfig;
   private rateLimits = new Map<string, number[]>();
+  /** Media debounce: batch rapid media messages from the same sender into one dispatch */
+  private pendingMedia = new Map<string, { attachments: import('./channels/types.js').Attachment[]; timer: ReturnType<typeof setTimeout>; msg: InboundMessage }>();
   private heartbeatCron?: Cron;
   private embeddingStore?: EmbeddingStore;
   private factStore?: FactStore;
@@ -1242,6 +1244,42 @@ Write a useful ${timeOfDay} update:
   }
 
   private async handleMessage(msg: InboundMessage): Promise<void> {
+    // Media debounce: batch rapid media-only messages from the same sender
+    // If a message has attachments but no meaningful text, collect it and wait for more
+    const isMediaOnly = msg.attachments?.length && (!msg.content?.trim() || msg.content.trim().length < 5);
+    if (isMediaOnly) {
+      const key = `${msg.channel}:${msg.senderId}`;
+      const pending = this.pendingMedia.get(key);
+      if (pending) {
+        // Add attachments to existing batch, reset timer
+        pending.attachments.push(...(msg.attachments ?? []));
+        clearTimeout(pending.timer);
+        pending.timer = setTimeout(() => {
+          this.pendingMedia.delete(key);
+          // Reconstruct message with all collected attachments
+          pending.msg.attachments = pending.attachments;
+          console.log(`[Orchestrator] Media batch: ${pending.attachments.length} attachment(s) from ${msg.senderId}`);
+          this.handleMessage(pending.msg);
+        }, 3000);
+        return; // Wait for more or timer to fire
+      } else {
+        // First media message — start collecting
+        const timer = setTimeout(() => {
+          const p = this.pendingMedia.get(key);
+          if (!p) return;
+          this.pendingMedia.delete(key);
+          console.log(`[Orchestrator] Media batch: ${p.attachments.length} attachment(s) from ${msg.senderId}`);
+          this.handleMessage(p.msg);
+        }, 3000);
+        this.pendingMedia.set(key, {
+          attachments: [...(msg.attachments ?? [])],
+          timer,
+          msg: { ...msg, attachments: msg.attachments }, // Clone first message as base
+        });
+        return; // Wait for more or timer to fire
+      }
+    }
+
     if (this.isRateLimited(msg.senderId)) {
       console.log(`[Orchestrator] Rate limited: ${msg.senderId}`);
       await this.channelRegistry.send(
@@ -1692,6 +1730,7 @@ Write a useful ${timeOfDay} update:
     let fileOverrideCategory: string | undefined;
     const DATA_EXTENSIONS = new Set(['csv', 'xlsx', 'xls', 'json', 'tsv']);
     const TEXT_EXTENSIONS = new Set(['md', 'txt', 'html', 'htm', 'log', 'xml', 'yaml', 'yml']);
+    const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v']);
 
     if (msg.attachments?.length) {
       const prefixes: string[] = [];
@@ -1760,6 +1799,11 @@ Write a useful ${timeOfDay} update:
             channelId: msg.channelId,
           }));
           return; // Wait for user's reply
+        } else if (VIDEO_EXTENSIONS.has(ext) || att.mimeType.startsWith('video/')) {
+          // Videos: save but don't process (no video analysis pipeline yet)
+          const sizeMB = (att.size / (1024 * 1024)).toFixed(1);
+          console.log(`[Orchestrator] Video saved: ${saved.filename} (${sizeMB} MB)`);
+          suffixes.push(`[The user sent a video: ${saved.filename} (${sizeMB} MB). The video has been saved but video analysis is not currently available.]`);
         } else {
           suffixes.push(`[Attached file: ${saved.localPath}] (${saved.filename}, ${saved.mimeType})`);
         }
