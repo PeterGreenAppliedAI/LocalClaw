@@ -1,0 +1,60 @@
+{"message": "https://reddit.com/r/ollama", "expected": "website", "layer": "override", "note": "bare URL → website"}
+{"message": "check out https://arxiv.org/abs/2401.12345", "expected": "website", "layer": "override", "note": "URL in text → website"}
+{"message": "https://www.youtube.com/watch?v=abc123", "expected": "website", "layer": "override", "note": "YouTube URL → website"}
+{"message": "check my email", "expected": "personal", "layer": "override", "note": "email keyword → personal"}
+{"message": "any unread gmail?", "expected": "personal", "layer": "override", "note": "gmail keyword → personal"}
+{"message": "what's on my calendar today", "expected": "personal", "layer": "override", "note": "calendar + today → personal"}
+{"message": "do I have anything tomorrow", "expected": "personal", "layer": "override", "note": "have anything + tomorrow → personal"}
+{"message": "am I free this week", "expected": "personal", "layer": "override", "note": "am I free + time → personal"}
+{"message": "check my schedule for next week", "expected": "personal", "layer": "override", "note": "schedule + next week → personal"}
+{"message": "make me a PDF report on AI trends", "expected": "research", "layer": "override", "note": "make + PDF + report → research"}
+{"message": "create a pdf report on market analysis", "expected": "research", "layer": "override", "note": "create + pdf + report → research"}
+{"message": "research AAPL stock performance", "expected": "research", "layer": "override", "note": "research + stock → research override"}
+{"message": "analyze market trends for semiconductors", "expected": "research", "layer": "override", "note": "analyze + market + trends → research"}
+{"message": "go to eventbrite.com and find events", "expected": "multi", "layer": "override", "note": "go to + .com → multi (browser)"}
+{"message": "take a screenshot of the homepage", "expected": "multi", "layer": "override", "note": "screenshot + page → multi"}
+{"message": "navigate to amazon.com", "expected": "multi", "layer": "override", "note": "navigate to + .com → multi"}
+{"message": "install numpy with pip", "expected": "exec", "layer": "keyword", "note": "pip command → exec"}
+{"message": "run npm install", "expected": "exec", "layer": "keyword", "note": "npm command → exec"}
+{"message": "sudo apt-get update", "expected": "exec", "layer": "keyword", "note": "sudo command → exec"}
+{"message": "git status", "expected": "exec", "layer": "keyword", "note": "git command → exec"}
+{"message": "list files in the data directory", "expected": "exec", "layer": "keyword", "note": "list + files + directory → exec"}
+{"message": "read the contents of config.json", "expected": "config", "layer": "keyword", "note": "KNOWN ISSUE: 'config' keyword matches before 'read file' exec pattern — config wins due to keyword order"}
+{"message": "run the build command for the project", "expected": "exec", "layer": "keyword", "note": "run + build + command → exec"}
+{"message": "deploy the docker container", "expected": "exec", "layer": "keyword", "note": "deploy + docker → exec"}
+{"message": "add a task to review the PR", "expected": "task", "layer": "keyword", "note": "add task → task"}
+{"message": "show my tasks", "expected": "task", "layer": "keyword", "note": "my tasks → task"}
+{"message": "mark the deployment task as done", "expected": "task", "layer": "keyword", "note": "mark done → task"}
+{"message": "what's on my todo list", "expected": "task", "layer": "keyword", "note": "todo list → task"}
+{"message": "remind me at 9am to call the dentist", "expected": "cron", "layer": "keyword", "note": "remind + time → cron"}
+{"message": "schedule a daily report at 8am", "expected": "cron", "layer": "keyword", "note": "schedule + daily → cron"}
+{"message": "set up a cron job for weekly summaries", "expected": "cron", "layer": "keyword", "note": "cron job → cron"}
+{"message": "add a heartbeat check for server status", "expected": "cron", "layer": "keyword", "note": "add heartbeat → cron"}
+{"message": "what did we discuss yesterday", "expected": "memory", "layer": "keyword", "note": "discussed yesterday → memory"}
+{"message": "do you remember what I said about FalkorDB", "expected": "memory", "layer": "keyword", "note": "remember + said → memory"}
+{"message": "recall our conversation about the architecture", "expected": "memory", "layer": "keyword", "note": "recall + conversation → memory"}
+{"message": "send a message to the dev channel", "expected": "message", "layer": "keyword", "note": "send message + channel → message"}
+{"message": "notify the team about the outage", "expected": "message", "layer": "keyword", "note": "notify + team → message"}
+{"message": "search for the latest AI news", "expected": "web_search", "layer": "keyword", "note": "search keyword → web_search"}
+{"message": "google quantum computing breakthroughs", "expected": "web_search", "layer": "keyword", "note": "google keyword → web_search"}
+{"message": "look up the weather in NYC", "expected": "web_search", "layer": "keyword", "note": "look up → web_search"}
+{"message": "find and save the best flight deals", "expected": "multi", "layer": "keyword", "note": "find + save compound → multi"}
+{"message": "search for events and add them to my tasks", "expected": "multi", "layer": "keyword", "note": "search + add compound → multi"}
+{"message": "make me a spreadsheet of expenses", "expected": "multi", "layer": "keyword", "note": "spreadsheet format → multi"}
+{"message": "create a pptx presentation on AI", "expected": "multi", "layer": "keyword", "note": "pptx format → multi"}
+{"message": "hey how are you", "expected": "chat", "layer": "fallback", "note": "greeting → fallback to chat"}
+{"message": "that's interesting, tell me more", "expected": "message", "layer": "keyword", "note": "KNOWN ISSUE: 'tell' keyword matches message — should be chat"}
+{"message": "I think you're right about that", "expected": "chat", "layer": "fallback", "note": "opinion → fallback to chat"}
+{"message": "what do you think about local models", "expected": "chat", "layer": "fallback", "note": "opinion question → fallback to chat"}
+{"message": "what about the pricing?", "expected": "chat", "layer": "sticky", "context": {"previousCategory": "chat"}, "note": "follow-up stays on chat"}
+{"message": "can you explain that differently", "expected": "chat", "layer": "sticky", "context": {"previousCategory": "chat"}, "note": "follow-up explanation stays on chat"}
+{"message": "yeah but what if we used a different approach", "expected": "chat", "layer": "sticky", "context": {"previousCategory": "chat"}, "note": "conversational follow-up stays on chat"}
+{"message": "search for docker tutorials", "expected": "web_search", "layer": "keyword", "context": {"previousCategory": "chat"}, "note": "explicit search breaks sticky"}
+{"message": "create a new task for code review", "expected": "task", "layer": "keyword", "context": {"previousCategory": "chat"}, "note": "imperative command breaks sticky"}
+{"message": "hi", "expected": "chat", "layer": "fallback", "context": {"previousCategory": "memory"}, "note": "greeting breaks sticky, falls to default"}
+{"message": "tell me about your architecture", "expected": "message", "layer": "keyword", "note": "KNOWN ISSUE: 'tell' keyword matches message — should be chat"}
+{"message": "I just found out something interesting", "expected": "chat", "layer": "fallback", "note": "'found out' should NOT trigger web_search"}
+{"message": "I'm using the latest version of node", "expected": "web_search", "layer": "keyword", "note": "KNOWN ISSUE: 'latest' keyword matches web_search — should be chat"}
+{"message": "tell me about the trade-offs", "expected": "message", "layer": "keyword", "note": "KNOWN ISSUE: 'tell' keyword matches message — should be chat"}
+{"message": "configure the heartbeat schedule", "expected": "config", "layer": "keyword", "note": "configure → config"}
+{"message": "update my settings", "expected": "config", "layer": "keyword", "note": "settings → config"}
