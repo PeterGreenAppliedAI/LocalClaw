@@ -252,6 +252,52 @@ export async function handleConsoleRequest(
       return true;
     }
 
+    // Live log tail
+    if (path === 'logs' && method === 'GET') {
+      try {
+        const { readFileSync, existsSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const qs = new URL(url, 'http://localhost').searchParams;
+        const lines = parseInt(qs.get('lines') ?? '100', 10);
+
+        // Try live log, fall back to localclaw.log
+        const logPaths = [
+          join(process.cwd(), 'data', 'localclaw-live.log'),
+          join(process.cwd(), 'localclaw.log'),
+        ];
+        let content = '';
+        for (const p of logPaths) {
+          if (existsSync(p)) {
+            const full = readFileSync(p, 'utf-8');
+            const allLines = full.split('\n');
+            content = allLines.slice(-lines).join('\n');
+            break;
+          }
+        }
+        sendJson(res, { lines: content.split('\n').filter(l => l.trim()), count: lines });
+      } catch (err) {
+        sendError(res, err instanceof Error ? err.message : 'Failed to read logs');
+      }
+      return true;
+    }
+
+    // Quality scores
+    if (path === 'quality' && method === 'GET') {
+      try {
+        const { readFileSync, existsSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const qPath = join(process.cwd(), 'data', 'quality', 'quality-scores.jsonl');
+        if (!existsSync(qPath)) { sendJson(res, []); return true; }
+        const entries = readFileSync(qPath, 'utf-8').trim().split('\n').filter(l => l.trim()).map(l => {
+          try { return JSON.parse(l); } catch { return null; }
+        }).filter(Boolean);
+        sendJson(res, entries.slice(-50)); // last 50
+      } catch {
+        sendJson(res, []);
+      }
+      return true;
+    }
+
     // File serving (generated charts, workspace files)
     const fileMatch = path.match(/^files\/(.+)$/);
     if (fileMatch && method === 'GET') {
