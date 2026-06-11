@@ -414,6 +414,8 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
   const fileTokens: string[] = []; // Collect [FILE:] paths stripped from observations
   let lastActionHash = ''; // Action dedup: detect repeated identical tool calls
   let actionRepeatCount = 0;
+  let totalPromptTokens = 0; // Token tracking
+  let totalCompletionTokens = 0;
 
   // Temperature lock: ≤0.3 for tool-calling specialists (ChatGPT feedback §6)
   // Exception: gemma4 needs higher temp for reasoning (best practices: 1.0, top_p=0.95)
@@ -466,6 +468,10 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       tools: ollamaTools.length > 0 ? ollamaTools : undefined,
       options: buildOllamaOptions(config, effectiveTemperature),
     });
+
+    // Track token usage
+    if (response.prompt_eval_count) totalPromptTokens += response.prompt_eval_count;
+    if (response.eval_count) totalCompletionTokens += response.eval_count;
 
     const msg = response.message;
     let toolCalls = msg.tool_calls;
@@ -727,7 +733,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
     steps.push({ thought: '', finalAnswer: answer });
     const fileAppend = fileTokens.map(p => ` [FILE:${p}]`).join('');
-    return { answer: answer + fileAppend, steps, iterations: i + 1, hitMaxIterations: false };
+    return { answer: answer + fileAppend, steps, iterations: i + 1, hitMaxIterations: false, promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens };
   }
 
   // Max iterations reached — use reasoning pass if available, otherwise ask model to synthesize
@@ -752,7 +758,7 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
       steps.push({ thought: '', finalAnswer: answer });
       const fileAppend = fileTokens.map(p => ` [FILE:${p}]`).join('');
-      return { answer: answer + fileAppend, steps, iterations: config.maxIterations, hitMaxIterations: true };
+      return { answer: answer + fileAppend, steps, iterations: config.maxIterations, hitMaxIterations: true, promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens };
     } catch (err) {
       console.warn(`[ReAct] OLLAMA_INFERENCE_ERROR: Max-iter reasoning pass failed — ${err instanceof Error ? err.message : err}`);
       // Fall through to normal synthesis
@@ -776,11 +782,11 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
     const answer = finalResponse.message?.content || 'I was unable to complete the request within the allowed steps.';
     steps.push({ thought: '', finalAnswer: answer });
-    return { answer: answer + fileAppend, steps, iterations: config.maxIterations, hitMaxIterations: true };
+    return { answer: answer + fileAppend, steps, iterations: config.maxIterations, hitMaxIterations: true, promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens };
   } catch {
     // Synthesis failed — use last observation
     const lastStep = steps[steps.length - 1];
     const fallbackAnswer = lastStep?.observation ?? lastStep?.thought ?? 'I was unable to complete the request.';
-    return { answer: fallbackAnswer + fileAppend, steps, iterations: config.maxIterations, hitMaxIterations: true };
+    return { answer: fallbackAnswer + fileAppend, steps, iterations: config.maxIterations, hitMaxIterations: true, promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens };
   }
 }

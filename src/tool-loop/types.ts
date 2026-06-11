@@ -10,6 +10,10 @@ export interface ReActResult {
   steps: ReActStep[];
   iterations: number;
   hitMaxIterations: boolean;
+  /** Total prompt tokens consumed across all iterations */
+  promptTokens?: number;
+  /** Total completion tokens generated across all iterations */
+  completionTokens?: number;
 }
 
 export interface ReActConfig {

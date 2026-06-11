@@ -347,6 +347,60 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 
 ---
 
+## Conference-Inspired Improvements (June 2026, AI Dev Summit)
+
+### Memory decay (June 2026)
+**Source:** Talk 2 (Lamatic AI) — "memory eviction and decay let the agent forget gracefully."
+**Problem:** Facts persist forever in the graph store. Low-importance ephemeral facts accumulate, degrading search quality. Flat store has TTL but graph store had none.
+**Fix:** `applyDecay()` in GraphMemoryStore. Confidence decays automatically based on importance tier: imp 1 at 0.05/day, imp 2 at 0.02/day, imp 3 at 0.005/day. Identity facts (4-5) never decay. Facts below 0.3 confidence auto-removed. Facts 0.3-0.5 surfaced as review candidates.
+**Status:** Active.
+
+### Contradiction eviction (June 2026)
+**Source:** Talk 2 (Lamatic AI) — "deleting 'favorite color is red' when user says they hate red."
+**Problem:** "I use Ubuntu" and "I switched to Arch" coexisted in the graph until manual heartbeat review.
+**Fix:** On `addFact()`, vector search for similar existing facts (cosine distance 0.15-0.4). For each match, phi4-mini judges YES/NO on contradiction. If YES, old fact marked `superseded: true`.
+**Status:** Active.
+
+### Token economics monitoring (June 2026)
+**Source:** Talk 1 (stealth founder) — "Uber burning annual token budget in four months."
+**Problem:** Ollama returns `eval_count` and `prompt_eval_count` in every response but they were completely discarded. No visibility into token consumption per category.
+**Fix:** Token counts captured from Ollama responses (both streaming and non-streaming), accumulated per tool loop iteration, logged per dispatch. `[Dispatch] Tokens: 3200 prompt + 800 completion = 4000 total (web_search)`
+**Status:** Active.
+
+### LLM-as-judge quality scoring (June 2026)
+**Source:** Talk 3 (Ramana) — "LLM-as-judge graded on accuracy, relevance, citation, tone."
+**Problem:** Quality review existed only in web_search and research pipelines. No systematic scoring across categories.
+**Fix:** Post-dispatch quality check for pipeline categories (web_search, research, analytics, multi, exec, code_gen). Router model scores 1-5 on accuracy, relevance, completeness. Logged to `data/quality/quality-scores.jsonl` for weekly review. Skipped for chat/cron/task/memory (subjective or deterministic).
+**Status:** Active.
+
+### Metadata-filtered memory search (June 2026)
+**Source:** Talk 3 (Ramana) — "metadata as the filter layer applied before semantic search."
+**Problem:** Vector KNN searched ALL facts for a sender. No pre-filtering by importance, category, or age.
+**Fix:** `search()` now accepts optional filters: `minImportance`, `categories`, `maxAgeDays`. Cypher WHERE clauses applied before vector KNN. Dispatch can pass context-aware filters per category.
+**Status:** Active (filters available, context-aware dispatch filtering ready to wire).
+
+### Specialist use case specs (June 2026)
+**Source:** Talk 3 (Ramana) — "12-point spec per use case."
+**Fix:** `SPECIALISTS.md` with 12-point specs for top 5 specialists (chat, web_search, research, multi, exec). Includes in/out scope, acceptance criteria, edge cases, known failures, test cases.
+**Status:** Active.
+
+### Session-scoped permissions (June 2026)
+**Source:** Talk 5 (Architex) — "block by default, approve once scoped to the conversation."
+**Fix:** Added `toolGrants` to SessionState. Foundation for per-session tool access with TTL.
+**Status:** Schema added, enforcement logic ready to wire in dispatch.
+
+### Progressive tool disclosure (June 2026)
+**Source:** Talk 6 (Juwan Lightfoot) — "MCP servers inject ~7000 tokens of tool definitions."
+**Fix:** Added `relevanceHints` field to LocalClawTool interface. Foundation for filtering tool injection based on user message context.
+**Status:** Interface extended, filtering logic ready to wire in prompt-builder.
+
+### Media burst handling (June 2026)
+**Source:** WhatsApp media burst incident.
+**Fix:** Vision queue (one call at a time), media debounce (3-second batching), video path (acknowledge and save), rate limiter adjustment.
+**Status:** Active.
+
+---
+
 ## Ollama Version Issues
 
 ### Image generation API broken on 0.23.1 (May 2026)

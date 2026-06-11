@@ -149,6 +149,27 @@ attachment → check extension
   → unknown                            → ask user same choice
 ```
 
+## Execution Isolation
+
+```
+Isolation Layer          What It Protects              Status
+─────────────────────────────────────────────────────────────
+Docker sandbox           Exec tool commands            Active — allowlisted commands only
+Cron mode                Automated task execution      Active — strips write tools
+Pipeline isolation       Pipeline dispatches           Active — fresh context per dispatch
+Owner-only code gate     Sensitive tools               Active — tools invisible to non-owners
+6-layer security         Channel + user permissions    Active — static per config
+Session-scoped perms     Per-conversation access       Planned
+Ephemeral micro-VMs      Untrusted agent execution     Roadmap — Firecracker
+Resource limits          CPU/memory per exec           Roadmap
+```
+
+**Current gaps:**
+- Docker container persists between exec calls (not ephemeral)
+- No CPU/memory resource limits on exec tool
+- No network isolation for exec (can reach any host the container can)
+- Browser control via extension runs in user's actual Chrome (no sandbox)
+
 ## Tech Stack
 
 | Component | Technology |

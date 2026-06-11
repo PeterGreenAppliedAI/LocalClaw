@@ -125,6 +125,9 @@ export interface DispatchResult {
   hitMaxIterations: boolean;
   steps?: Array<{ tool?: string; params?: Record<string, unknown>; observation?: string }>;
   attachments?: Array<{ data: Buffer; mimeType: string; filename: string }>;
+  /** Token usage from Ollama (prompt + completion) */
+  promptTokens?: number;
+  completionTokens?: number;
 }
 
 /**
@@ -474,6 +477,53 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   }
 
   result.category = effectiveCategory;
+
+  // Log token usage if available
+  const promptTok = (result as any).promptTokens;
+  const completionTok = (result as any).completionTokens;
+  if (promptTok || completionTok) {
+    console.log(`[Dispatch] Tokens: ${promptTok ?? 0} prompt + ${completionTok ?? 0} completion = ${(promptTok ?? 0) + (completionTok ?? 0)} total (${effectiveCategory})`);
+  }
+
+  // LLM-as-judge quality scoring for pipeline categories
+  const QUALITY_CATEGORIES = new Set(['web_search', 'research', 'analytics', 'multi', 'exec', 'code_gen']);
+  if (QUALITY_CATEGORIES.has(effectiveCategory) && result.answer?.length > 100 && !params.cronMode) {
+    try {
+      const qualityResponse = await client.chat({
+        model: config.router?.model ?? 'phi4:14b',
+        messages: [{
+          role: 'user',
+          content: `Rate this response. User asked: "${message.slice(0, 200)}"\nResponse: "${result.answer.slice(0, 2000)}"\nScore 1-5 on: accuracy, relevance, completeness. JSON only: {"accuracy": N, "relevance": N, "completeness": N}`,
+        }],
+        options: { temperature: 0.1, num_predict: 64 },
+      });
+      const qRaw = (qualityResponse.message?.content ?? '').trim();
+      const qMatch = qRaw.match(/\{[\s\S]*\}/);
+      if (qMatch) {
+        const scores = JSON.parse(qMatch[0]) as { accuracy?: number; relevance?: number; completeness?: number };
+        const avg = ((scores.accuracy ?? 3) + (scores.relevance ?? 3) + (scores.completeness ?? 3)) / 3;
+        const level = avg >= 4 ? 'GOOD' : avg >= 3 ? 'OK' : 'POOR';
+        console.log(`[Quality] ${effectiveCategory}: ${level} (acc=${scores.accuracy}, rel=${scores.relevance}, comp=${scores.completeness})`);
+
+        // Log to JSONL for weekly review
+        try {
+          const { appendFileSync, mkdirSync } = await import('node:fs');
+          const { join } = await import('node:path');
+          const qualityDir = join(process.cwd(), 'data', 'quality');
+          mkdirSync(qualityDir, { recursive: true });
+          appendFileSync(join(qualityDir, 'quality-scores.jsonl'), JSON.stringify({
+            timestamp: new Date().toISOString(),
+            category: effectiveCategory,
+            scores,
+            avg: Math.round(avg * 10) / 10,
+            level,
+            messagePreview: message.slice(0, 100),
+            answerLength: result.answer.length,
+          }) + '\n');
+        } catch { /* best-effort logging */ }
+      }
+    } catch { /* quality scoring is best-effort */ }
+  }
 
   // --- Re-route helper: summarize conversation intent before handing off to another specialist ---
   const summarizeForHandoff = async (): Promise<string> => {

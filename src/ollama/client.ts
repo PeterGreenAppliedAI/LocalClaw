@@ -96,7 +96,7 @@ export class OllamaClient {
       }
     }
 
-    // Build final response
+    // Build final response — preserve token counts from the last chunk
     return {
       model: lastChunk?.model ?? params.model,
       message: {
@@ -105,6 +105,9 @@ export class OllamaClient {
         tool_calls: lastChunk?.message?.tool_calls,
       },
       done: true,
+      eval_count: lastChunk?.eval_count,
+      prompt_eval_count: lastChunk?.prompt_eval_count,
+      total_duration: lastChunk?.total_duration,
     } as OllamaChatResponse;
   }
 

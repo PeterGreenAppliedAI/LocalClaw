@@ -30,6 +30,8 @@ export interface LocalClawTool {
   /** Example usage shown in the system prompt to guide the model. */
   example?: string;
   category: string;
+  /** Keywords that indicate when this tool is relevant — used for progressive disclosure to reduce token injection */
+  relevanceHints?: string[];
   execute: (params: Record<string, unknown>, ctx: ToolContext) => Promise<string>;
 }
 

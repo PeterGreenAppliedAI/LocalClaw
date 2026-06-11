@@ -142,6 +142,44 @@ export class GraphMemoryStore {
       return null;
     }
 
+    // Contradiction check: find similar (but not duplicate) facts that might be superseded
+    try {
+      const similarCheck = await this.graph!.query(
+        `CALL db.idx.vector.queryNodes('Fact', 'embedding', 3, vecf32($emb))
+         YIELD node, score
+         WHERE node.senderId = $senderId AND score >= 0.15 AND score < 0.4
+         RETURN node.id, node.text, score`,
+        { params: { emb: embedding, senderId } }
+      );
+
+      for (const row of (similarCheck.data ?? []) as any[]) {
+        const existingText = row['node.text'] ?? '';
+        const existingId = row['node.id'];
+        if (!existingText || !existingId) continue;
+
+        // Ask router model: does the new fact contradict/replace the old one?
+        try {
+          const response = await this.client.chat({
+            model: 'phi4-mini:latest',
+            messages: [{
+              role: 'user',
+              content: `Fact A: "${existingText}"\nFact B: "${text}"\nDoes Fact B contradict, update, or replace Fact A? Answer YES or NO only.`,
+            }],
+            options: { temperature: 0.1, num_predict: 5 },
+          });
+          const answer = (response.message?.content ?? '').trim().toUpperCase();
+          if (answer.startsWith('YES')) {
+            // Auto-supersede the old fact
+            await this.graph!.query(
+              `MATCH (old:Fact {id: $oldId}) SET old.superseded = true`,
+              { params: { oldId: existingId } }
+            );
+            console.log(`[GraphMemory] Contradiction: "${text.slice(0, 40)}..." supersedes "${existingText.slice(0, 40)}..."`);
+          }
+        } catch { /* contradiction check is best-effort */ }
+      }
+    } catch { /* similarity search for contradictions is best-effort */ }
+
     const id = `fact_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
     const importance = input.importance ?? 2;
@@ -272,20 +310,42 @@ Return: [{"name":"entity","type":"person|organization|technology|..."}]`,
   /**
    * Semantic search — find facts relevant to a query using multi-signal scoring.
    */
-  async search(query: string, senderId: string, topK = 5): Promise<GraphSearchResult[]> {
+  async search(query: string, senderId: string, topK = 5, filters?: {
+    minImportance?: number;
+    categories?: string[];
+    maxAgeDays?: number;
+  }): Promise<GraphSearchResult[]> {
     if (!this.graph) await this.connect();
 
     const [queryEmb] = await this.client.embed(query);
     if (!queryEmb) return [];
 
-    // Vector KNN + property retrieval
+    // Build metadata filter clauses
+    const whereClauses = ['node.senderId = $senderId'];
+    const filterParams: Record<string, any> = { emb: queryEmb, senderId, topK: topK * 2 };
+
+    if (filters?.minImportance) {
+      whereClauses.push('node.importance >= $minImp');
+      filterParams.minImp = filters.minImportance;
+    }
+    if (filters?.categories?.length) {
+      whereClauses.push('node.category IN $cats');
+      filterParams.cats = filters.categories;
+    }
+    if (filters?.maxAgeDays) {
+      const since = new Date(Date.now() - filters.maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+      whereClauses.push('node.createdAt >= $since');
+      filterParams.since = since;
+    }
+
+    // Vector KNN + metadata filters
     const result = await this.graph!.query(
       `CALL db.idx.vector.queryNodes('Fact', 'embedding', $topK, vecf32($emb))
        YIELD node, score
-       WHERE node.senderId = $senderId
+       WHERE ${whereClauses.join(' AND ')}
        RETURN node.text, node.importance, node.category, node.confidence,
               node.createdAt, score, node.id`,
-      { params: { emb: queryEmb, senderId, topK: topK * 2 } } // fetch extra to filter
+      { params: filterParams }
     );
 
     const now = Date.now();
@@ -948,6 +1008,74 @@ Return: [{"name":"entity","type":"person|organization|technology|..."}]`,
       .map(([k, v]) => `- ${k.replace(/([A-Z])/g, ' $1').toLowerCase().trim()}: ${v}`);
 
     return lines.length > 0 ? lines.join('\n') : null;
+  }
+
+  /**
+   * Apply confidence decay to facts based on age and importance tier.
+   * Called during heartbeat. Facts below 0.3 are auto-removed.
+   * Facts between 0.3-0.5 are returned as review candidates.
+   *
+   * Decay rates: imp 1 = 0.05/day, imp 2 = 0.02/day, imp 3 = 0.005/day, imp 4-5 = 0
+   */
+  async applyDecay(senderId: string): Promise<{ removed: number; reviewCandidates: string[] }> {
+    if (!this.graph) await this.connect();
+
+    const DECAY_RATES: Record<number, number> = { 1: 0.05, 2: 0.02, 3: 0.005 };
+    const now = Date.now();
+    let removed = 0;
+    const reviewCandidates: string[] = [];
+
+    // Load all non-critical facts (importance 1-3)
+    const result = await this.graph!.query(
+      `MATCH (f:Fact {senderId: $senderId})
+       WHERE f.importance <= 3
+       RETURN f.id, f.text, f.importance, f.confidence, f.createdAt`,
+      { params: { senderId } }
+    );
+
+    for (const row of (result.data ?? []) as any[]) {
+      const importance = row['f.importance'] ?? 2;
+      const confidence = row['f.confidence'] ?? 0.8;
+      const createdAt = new Date(row['f.createdAt'] ?? now).getTime();
+      const ageDays = (now - createdAt) / (24 * 60 * 60 * 1000);
+      const decayRate = DECAY_RATES[importance] ?? 0;
+
+      if (decayRate === 0) continue;
+
+      const decayedConfidence = confidence - (decayRate * ageDays);
+      const factId = row['f.id'];
+      const factText = row['f.text'] ?? '';
+
+      if (decayedConfidence < 0.3) {
+        // Auto-remove — confidence too low
+        await this.graph!.query(
+          `MATCH (f:Fact {id: $id}) DETACH DELETE f`,
+          { params: { id: factId } }
+        );
+        removed++;
+        console.log(`[GraphMemory] Decay removed: "${factText.slice(0, 50)}..." (imp=${importance}, conf=${decayedConfidence.toFixed(2)})`);
+      } else if (decayedConfidence < 0.5) {
+        // Flag for review — confidence getting low
+        reviewCandidates.push(factText);
+        // Update confidence in graph
+        await this.graph!.query(
+          `MATCH (f:Fact {id: $id}) SET f.confidence = $conf`,
+          { params: { id: factId, conf: Math.round(decayedConfidence * 100) / 100 } }
+        );
+      } else if (decayedConfidence < confidence - 0.01) {
+        // Just update the decayed confidence (significant change only)
+        await this.graph!.query(
+          `MATCH (f:Fact {id: $id}) SET f.confidence = $conf`,
+          { params: { id: factId, conf: Math.round(decayedConfidence * 100) / 100 } }
+        );
+      }
+    }
+
+    if (removed > 0 || reviewCandidates.length > 0) {
+      console.log(`[GraphMemory] Decay: removed ${removed}, review candidates: ${reviewCandidates.length}`);
+    }
+
+    return { removed, reviewCandidates };
   }
 
   async close(): Promise<void> {

@@ -39,6 +39,9 @@ export interface SessionState {
   // Metadata
   lastUpdated: string;
   lastSemanticUpdate: number;
+
+  // Session-scoped tool permissions (granted per conversation, expire on !reset)
+  toolGrants?: Record<string, { grantedAt: string; expiresAt?: string }>;
 }
 
 export function createEmptySessionState(category: string): SessionState {
