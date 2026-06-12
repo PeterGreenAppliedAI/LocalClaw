@@ -51,6 +51,9 @@ export interface ClassifyResult {
  * These patterns must be very specific to avoid false positives.
  */
 const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
+  // Speculative/conversational language → chat (prevents "I wonder if you could create" → multi)
+  { pattern: /^(I wonder|I'm wondering|what if|do you think|what do you think|I feel like|I was thinking|could you theoretically)\b/i, category: 'chat' },
+
   // URL in message → website (fetch + summarize, not search)
   // Matches: bare URL, URL with short intro, "check this URL", etc.
   { pattern: /^\s*https?:\/\/\S+\s*$/i, category: 'website' },

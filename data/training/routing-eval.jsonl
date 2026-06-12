@@ -45,7 +45,7 @@
 {"message": "hey how are you", "expected": "chat", "layer": "fallback", "note": "greeting → fallback to chat"}
 {"message": "that's interesting, tell me more", "expected": "message", "layer": "keyword", "note": "KNOWN ISSUE: 'tell' keyword matches message — should be chat"}
 {"message": "I think you're right about that", "expected": "chat", "layer": "fallback", "note": "opinion → fallback to chat"}
-{"message": "what do you think about local models", "expected": "chat", "layer": "fallback", "note": "opinion question → fallback to chat"}
+{"message": "what do you think about local models", "expected": "chat", "layer": "override", "note": "'do you think' → chat override"}
 {"message": "what about the pricing?", "expected": "chat", "layer": "sticky", "context": {"previousCategory": "chat"}, "note": "follow-up stays on chat"}
 {"message": "can you explain that differently", "expected": "chat", "layer": "sticky", "context": {"previousCategory": "chat"}, "note": "follow-up explanation stays on chat"}
 {"message": "yeah but what if we used a different approach", "expected": "chat", "layer": "sticky", "context": {"previousCategory": "chat"}, "note": "conversational follow-up stays on chat"}
@@ -59,3 +59,6 @@
 {"message": "configure the heartbeat schedule", "expected": "config", "layer": "keyword", "note": "configure → config"}
 {"message": "update my settings", "expected": "config", "layer": "keyword", "note": "settings → config"}
 {"message": "do some web search on Fable 5", "expected": "web_search", "layer": "keyword", "context": {"previousCategory": "chat"}, "note": "explicit web search request breaks sticky"}
+{"message": "I wonder if you could create a harness with open source models", "expected": "chat", "layer": "override", "note": "'I wonder' → chat override, not multi"}
+{"message": "what if we used a different model for routing", "expected": "chat", "layer": "override", "note": "'what if' → chat override"}
+{"message": "do you think local models can match cloud quality", "expected": "chat", "layer": "override", "note": "'do you think' → chat override"}
