@@ -38,9 +38,11 @@ import { extractMediaAttachments } from './services/media-extraction.js';
 import { stripThinkingTags } from './utils/text.js';
 import { splitFinalMessage } from './utils/text.js';
 import { extractTrainingPairs } from './learnings/training-collector.js';
+import { isCommand, getCommandName } from './commands/router.js';
+import { RateLimiter } from './services/rate-limiter.js';
+import { MediaDebouncer } from './services/media-debouncer.js';
 
-const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-const RATE_LIMIT_MAX = 10; // max messages per window per user
+// Rate limiting and media debouncing now handled by extracted services
 
 export class Orchestrator {
   private client: OllamaClient;
@@ -52,9 +54,8 @@ export class Orchestrator {
   private sttService: STTService;
   private visionService: VisionService;
   private config: LocalClawConfig;
-  private rateLimits = new Map<string, number[]>();
-  /** Media debounce: batch rapid media messages from the same sender into one dispatch */
-  private pendingMedia = new Map<string, { attachments: import('./channels/types.js').Attachment[]; timer: ReturnType<typeof setTimeout>; msg: InboundMessage }>();
+  private rateLimiter = new RateLimiter();
+  private mediaDebouncer = new MediaDebouncer();
   private heartbeatCron?: Cron;
   private embeddingStore?: EmbeddingStore;
   private factStore?: FactStore;
@@ -1130,53 +1131,13 @@ Write a useful ${timeOfDay} update:
     return allFacts;
   }
 
-  private isRateLimited(userId: string): boolean {
-    const now = Date.now();
-    const timestamps = this.rateLimits.get(userId) ?? [];
-    const recent = timestamps.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-    recent.push(now);
-    this.rateLimits.set(userId, recent);
-    return recent.length > RATE_LIMIT_MAX;
-  }
-
   private async handleMessage(msg: InboundMessage): Promise<void> {
     // Media debounce: batch rapid media-only messages from the same sender
-    // If a message has attachments but no meaningful text, collect it and wait for more
-    const isMediaOnly = msg.attachments?.length && (!msg.content?.trim() || msg.content.trim().length < 5);
-    if (isMediaOnly) {
-      const key = `${msg.channel}:${msg.senderId}`;
-      const pending = this.pendingMedia.get(key);
-      if (pending) {
-        // Add attachments to existing batch, reset timer
-        pending.attachments.push(...(msg.attachments ?? []));
-        clearTimeout(pending.timer);
-        pending.timer = setTimeout(() => {
-          this.pendingMedia.delete(key);
-          // Reconstruct message with all collected attachments
-          pending.msg.attachments = pending.attachments;
-          console.log(`[Orchestrator] Media batch: ${pending.attachments.length} attachment(s) from ${msg.senderId}`);
-          this.handleMessage(pending.msg);
-        }, 3000);
-        return; // Wait for more or timer to fire
-      } else {
-        // First media message — start collecting
-        const timer = setTimeout(() => {
-          const p = this.pendingMedia.get(key);
-          if (!p) return;
-          this.pendingMedia.delete(key);
-          console.log(`[Orchestrator] Media batch: ${p.attachments.length} attachment(s) from ${msg.senderId}`);
-          this.handleMessage(p.msg);
-        }, 3000);
-        this.pendingMedia.set(key, {
-          attachments: [...(msg.attachments ?? [])],
-          timer,
-          msg: { ...msg, attachments: msg.attachments }, // Clone first message as base
-        });
-        return; // Wait for more or timer to fire
-      }
+    if (this.mediaDebouncer.tryBatch(msg, (batchedMsg) => this.handleMessage(batchedMsg))) {
+      return; // Message collected, waiting for batch timer
     }
 
-    if (this.isRateLimited(msg.senderId)) {
+    if (this.rateLimiter.isLimited(msg.senderId)) {
       console.log(`[Orchestrator] Rate limited: ${msg.senderId}`);
       await this.channelRegistry.send(
         { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
