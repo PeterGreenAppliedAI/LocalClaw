@@ -297,13 +297,33 @@ src/
     index.ts                #   Entry point
     steps/                  #   Individual setup steps
 
+  utils/
+    text.ts                   #   stripThinkingTags, splitFinalMessage (extracted from orchestrator)
+
+  commands/
+    router.ts                 #   isCommand(), getCommandName() — command detection
+    types.ts                  #   CommandContext interface
+
+  services/                   # Extracted services (from orchestrator decomposition)
+    heartbeat-service.ts      #   runHeartbeat() — 411 lines of maintenance logic
+    briefing-service.ts       #   runBriefing() — calendar/task/memory CoT synthesis
+    rate-limiter.ts           #   Sliding window per-user rate limiter
+    media-debouncer.ts        #   3-second batching for rapid media messages
+    media-extraction.ts       #   extractMediaAttachments() — [IMAGE:]/[FILE:] token parsing
+
+  learnings/
+    training-collector.ts     #   extractTrainingPairs() — router training data from sessions
+
+  browser/
+    remote-bridge.ts          #   Action queue between backend and Chrome extension
+
 chrome-extension/             # Browser companion (separate npm project)
   entrypoints/
-    background.ts             #   Service worker: context menus, message relay
-    content.ts                #   Content script: page context extraction
-    sidepanel/                #   React side panel (chat UI, settings)
+    background.ts             #   Service worker: context menus, message relay, screenshot capture
+    content.ts                #   Content script: page context + DOM action executor
+    sidepanel/                #   React side panel (chat UI, settings, action polling)
   lib/
-    api.ts                    #   LocalClaw API client (SSE streaming)
+    api.ts                    #   LocalClaw API client (SSE streaming, browser bridge)
     storage.ts                #   chrome.storage.local wrappers
     types.ts                  #   Shared types
 ```
@@ -431,7 +451,7 @@ System operations (heartbeat, cron) should never match or save user-facing skill
 - **Framework:** Vitest (`npm test` / `vitest run`)
 - **Type checking:** `npx tsc --noEmit`
 - **CI:** GitHub Actions runs type check + tests + build on every push/PR to main
-- **Current:** 266 tests across 21 files
+- **Current:** 347 tests across 23 files
 - **What needs tests** (Tier 2+ per code_rubric):
   - Auth/authz logic (owner-only tier, security filtering)
   - Networking (Ollama client, web fetch, SSRF checks)

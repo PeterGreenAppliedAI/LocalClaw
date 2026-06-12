@@ -233,7 +233,7 @@ localclaw/
 │   ├── src/pages/            # Dashboard, Chat, Sessions, Tasks, Cron, Memory, Channels, Tools, Config
 │   ├── src/api/              # API client + React Query hooks
 │   └── dist/                 # Built static files (served by web adapter)
-├── test/                     # 266 tests across 21 suites
+├── test/                     # 347 tests across 23 suites
 ├── CLAUDE.md                 # AI code generation guidelines (for Claude Code)
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens

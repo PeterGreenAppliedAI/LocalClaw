@@ -15,8 +15,17 @@ LocalClaw is a local-model-first AI agent framework running on personal infrastr
 - **Context Compaction** — Budget-aware structured compression with memory flush and summary prefix
 - **Observation Summarization** — LLM-based summarization for old tool observations instead of hard truncation
 - **Non-streaming Message Splitting** — Long responses split correctly on all code paths
-- **Conversational Guard** — Prevents pipeline misroutes mid-conversation
+- **Conversational Guard** — Lightweight length-based guard for short ambiguous messages. Replaced keyword-based task intent matching (too fragile). Speculative language ("I wonder", "what if") routed to chat via pre-model override
 - **Chrome Extension** — Browser companion side panel (WXT + React + Manifest V3). Content script extracts page context, streams to LocalClaw via existing Web API. Right-click context menus. Works cross-network (extension on Windows, LocalClaw on Mac Mini)
+- **Browser Control** — Remote browser bridge: model calls browser tool → extension executes DOM actions on user's real Chrome tab. Screenshot + vision for JS-heavy sites. Guided ReAct with action dedup (deterministic pipeline attempted and reverted — documented in DECISIONS.md)
+- **Memory Decay + Contradiction Eviction** — Automatic confidence decay by importance tier. Contradiction detection on addFact() via phi4-mini. Human-in-the-loop fact review via heartbeat
+- **Token Economics Monitoring** — Capture eval_count/prompt_eval_count from Ollama responses, log per dispatch
+- **LLM-as-Judge Quality Scoring** — Post-dispatch quality check for pipeline categories, scores to JSONL
+- **Security Hardening** — Path traversal fixes (relative() check), scoped tool executor, session agentId sanitization, Telegram allowFrom, web API warning
+- **Orchestrator Decomposition** — 2,019 → 1,347 lines. Extracted: heartbeat service, briefing service, rate limiter, media debouncer, command router, text utilities, media extraction, training collector
+- **Latency Optimization** — Parallel memory + router (800-1500ms saved), async compaction cache, tool-loop streaming with status events, web-fetch page caching, expanded pre-model overrides
+- **Routing Test Corpus** — 347 tests covering pre-model overrides, keyword fallback, sticky routing, speculative language, security
+- **Media Burst Handling** — Vision queue (sequential, not parallel), 3-second media debounce, video file path, rate limiter adjustment
 
 ---
 
