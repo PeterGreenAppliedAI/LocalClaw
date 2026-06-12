@@ -334,18 +334,15 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     }
   }
 
-  // 4a2. Conversational guard — prevent pipeline misroutes when user is mid-conversation
-  // If classified as non-chat but session has prior turns and message has no task intent, stay on chat
-  // Skip guard for console/extension — browser control needs website category to persist
+  // 4a2. Conversational guard — lightweight version (June 2026)
+  // Only guards short ambiguous messages (<30 chars, no verb) mid-conversation.
+  // Long or explicit messages trust the router. No keyword matching — just length + context.
   if (effectiveCategory !== 'chat' && !params.cronMode && !params._reRouted && !params.overrideCategory && params.sourceContext?.channel !== 'console') {
-    if (sessionState && sessionState.turnCount > 0) {
-      const hasTaskIntent = /\b(create|make|build|run|execute|search\b.*?\bfor|search the web|web search|do.*search|look up|generate|produce|write me|send|schedule|research|analyze|give me a|find me a|find me|find the)\b/i.test(message);
-      if (!hasTaskIntent) {
-        console.log(`[Dispatch] Conversational guard: ${effectiveCategory} → chat (no task intent, turn ${sessionState.turnCount})`);
-        effectiveCategory = 'chat';
-        classification = { category: 'chat', confidence: 'sticky' as const };
-        specialistConfig = config.specialists.chat ?? specialistConfig;
-      }
+    if (sessionState && sessionState.turnCount > 0 && message.trim().length < 30) {
+      console.log(`[Dispatch] Conversational guard: ${effectiveCategory} → chat (short ambiguous message, turn ${sessionState.turnCount})`);
+      effectiveCategory = 'chat';
+      classification = { category: 'chat', confidence: 'sticky' as const };
+      specialistConfig = config.specialists.chat ?? specialistConfig;
     }
   }
 
