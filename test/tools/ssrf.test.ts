@@ -90,3 +90,31 @@ describe('isBlockedHostname', () => {
     expect(isBlockedHostname('api.example.com')).toBe(false);
   });
 });
+
+describe('IP notation edge cases', () => {
+  // Octal/hex IP notation could bypass regex-based checks
+  // Node.js URL parser normalizes these differently across versions
+
+  it('blocks standard loopback variations', () => {
+    expect(isPrivateIpAddress('127.0.0.1')).toBe(true);
+    expect(isPrivateIpAddress('127.0.0.0')).toBe(true);
+    expect(isPrivateIpAddress('127.255.255.255')).toBe(true);
+  });
+
+  it('blocks 0.0.0.0 (all interfaces)', () => {
+    expect(isPrivateIpAddress('0.0.0.0')).toBe(true);
+  });
+
+  it('blocks link-local (169.254.x.x)', () => {
+    expect(isPrivateIpAddress('169.254.1.1')).toBe(true);
+    expect(isPrivateIpAddress('169.254.169.254')).toBe(true); // AWS metadata
+  });
+
+  it('blocks CGNAT range (100.64-127.x.x)', () => {
+    expect(isPrivateIpAddress('100.64.0.1')).toBe(true);
+    expect(isPrivateIpAddress('100.127.255.255')).toBe(true);
+    // Just outside CGNAT
+    expect(isPrivateIpAddress('100.63.255.255')).toBe(false);
+    expect(isPrivateIpAddress('100.128.0.0')).toBe(false);
+  });
+});
