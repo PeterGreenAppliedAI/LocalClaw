@@ -21,6 +21,15 @@ import { buildWorkspaceContext, type WorkspaceCategory } from './agents/workspac
 import { logDispatch, logRouterClassification } from './metrics.js';
 
 /**
+ * Cached compaction results per session — used for async compaction.
+ * On first message needing compaction: runs synchronously (unavoidable).
+ * On subsequent messages: uses cached result, schedules fresh compaction async.
+ */
+const compactionCache = new Map<string, { messages: OllamaMessage[]; cachedAt: number }>();
+const COMPACTION_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const pendingCompactions = new Set<string>(); // prevent overlapping compactions
+
+/**
  * Frozen workspace snapshot cache — workspace context is loaded once per session
  * and reused for all dispatches. This prevents mid-session memory writes from
  * destabilizing the conversation and enables prefix caching benefits.
@@ -250,31 +259,52 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       outputReserve,
     });
 
-    try {
-      const compacted = await buildCompactedHistory({
-        store: sessionStore,
-        client,
-        agentId,
-        sessionKey,
-        budgetTokens: budget.historyBudget,
-        recentTurnsToKeep: config.session.recentTurnsToKeep,
-        model: tempSpecialist?.model ?? config.router.model,
-        workspacePath,
-        factStore: params.factStore,
-        senderId: params.sourceContext?.senderId,
-      });
-      history = compacted.messages;
-      if (compacted.compacted) {
-        console.log(`[Dispatch] History compacted (budget: ${budget.historyBudget} tokens)`);
+    const compactionKey = `${agentId}:${sessionKey}`;
+    const cachedCompaction = compactionCache.get(compactionKey);
+    const compactionParams = {
+      store: sessionStore, client, agentId, sessionKey,
+      budgetTokens: budget.historyBudget,
+      recentTurnsToKeep: config.session.recentTurnsToKeep,
+      model: tempSpecialist?.model ?? config.router.model,
+      workspacePath,
+      factStore: params.factStore,
+      senderId: params.sourceContext?.senderId,
+    };
+
+    if (cachedCompaction && Date.now() - cachedCompaction.cachedAt < COMPACTION_CACHE_TTL_MS) {
+      // Use cached compaction result (fast path)
+      history = cachedCompaction.messages;
+      console.log(`[Dispatch] Using cached compaction (${Math.round((Date.now() - cachedCompaction.cachedAt) / 1000)}s old)`);
+
+      // Schedule async refresh if not already pending
+      if (!pendingCompactions.has(compactionKey)) {
+        pendingCompactions.add(compactionKey);
+        buildCompactedHistory(compactionParams).then(result => {
+          compactionCache.set(compactionKey, { messages: result.messages, cachedAt: Date.now() });
+          if (result.compacted) console.log(`[Dispatch] Async compaction refreshed (budget: ${budget.historyBudget} tokens)`);
+        }).catch(err => {
+          console.warn('[Dispatch] Async compaction failed:', err instanceof Error ? err.message : err);
+        }).finally(() => {
+          pendingCompactions.delete(compactionKey);
+        });
       }
-    } catch (err) {
-      // Fallback: simple truncation (original behavior)
-      console.warn('[Dispatch] Compaction failed, falling back to turn-count truncation:', err);
-      const transcript = sessionStore.loadTranscript(agentId, sessionKey, config.session.maxHistoryTurns);
-      history = transcript.map(t => ({
-        role: t.role as 'user' | 'assistant',
-        content: t.role === 'assistant' ? stripThinking(t.content) : t.content,
-      }));
+    } else {
+      // No cache — must run synchronously (first message or cache expired)
+      try {
+        const compacted = await buildCompactedHistory(compactionParams);
+        history = compacted.messages;
+        compactionCache.set(compactionKey, { messages: compacted.messages, cachedAt: Date.now() });
+        if (compacted.compacted) {
+          console.log(`[Dispatch] History compacted (budget: ${budget.historyBudget} tokens)`);
+        }
+      } catch (err) {
+        console.warn('[Dispatch] Compaction failed, falling back to turn-count truncation:', err);
+        const transcript = sessionStore.loadTranscript(agentId, sessionKey, config.session.maxHistoryTurns);
+        history = transcript.map(t => ({
+          role: t.role as 'user' | 'assistant',
+          content: t.role === 'assistant' ? stripThinking(t.content) : t.content,
+        }));
+      }
     }
   }
 

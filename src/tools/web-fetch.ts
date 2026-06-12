@@ -3,6 +3,10 @@ import type { WebFetchConfig } from '../config/types.js';
 import { assertPublicUrl, assertPublicRedirect } from './ssrf.js';
 import { LocalClawError } from '../errors.js';
 import { extractReadableContent, htmlToMarkdown, truncateText } from './web-fetch-utils.js';
+import { readCache, writeCache, type CacheEntry } from './web-shared.js';
+
+const fetchCache = new Map<string, CacheEntry<string>>();
+const FETCH_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 export function createWebFetchTool(config?: WebFetchConfig): LocalClawTool {
   const maxChars = config?.maxChars ?? 30000;
@@ -27,8 +31,16 @@ export function createWebFetchTool(config?: WebFetchConfig): LocalClawTool {
       const url = params.url as string;
       if (!url) return 'Error: url parameter is required';
 
-      // SSRF protection
+      // SSRF protection — always validate before anything else
       await assertPublicUrl(url);
+
+      // Cache check after validation
+      const cacheKey = `${url}:${(params.extractMode as string) ?? 'text'}:${(params.maxChars as number) ?? maxChars}`;
+      const cached = readCache(fetchCache, cacheKey);
+      if (cached) {
+        console.log(`[web_fetch] Cache hit: ${url.slice(0, 60)}`);
+        return cached;
+      }
 
       const extractMode = (params.extractMode as string) ?? 'text';
       const limit = (params.maxChars as number) ?? maxChars;
@@ -72,20 +84,25 @@ export function createWebFetchTool(config?: WebFetchConfig): LocalClawTool {
         }
 
         // HTML: extract with Readability
+        let result: string;
         try {
           const article = await extractReadableContent(body, url);
 
           if (extractMode === 'markdown') {
             const md = htmlToMarkdown(article.content);
-            return truncateText(`# ${article.title}\n\n${md}`, limit);
+            result = truncateText(`# ${article.title}\n\n${md}`, limit);
+          } else {
+            result = truncateText(`${article.title}\n\n${article.textContent}`, limit);
           }
-
-          return truncateText(`${article.title}\n\n${article.textContent}`, limit);
         } catch {
           // Readability failed — return raw HTML → markdown
           const md = htmlToMarkdown(body);
-          return truncateText(md, limit);
+          result = truncateText(md, limit);
         }
+
+        // Cache successful fetch
+        writeCache(fetchCache, cacheKey, result, FETCH_CACHE_TTL);
+        return result;
       } catch (err) {
         // Never bypass SSRF blocks via fallback
         if (err instanceof LocalClawError && err.code === 'SSRF_BLOCKED') {
