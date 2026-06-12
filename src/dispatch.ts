@@ -162,6 +162,68 @@ function resolveChannelSecurity(
  * Dispatch a message through the Router → Specialist pipeline.
  * Loads session transcript for context, saves turn after completion.
  */
+/**
+ * Build user priming context from graph memory or flat store.
+ * Runs in parallel with router classification for latency savings.
+ */
+async function buildUserPriming(params: DispatchParams, message: string, senderId: string): Promise<string> {
+  try {
+    let stableFacts: string[] = [];
+    let contextFacts: string[] = [];
+
+    if (params.graphMemory) {
+      const stable = await params.graphMemory.getStableFacts(senderId, 4);
+      stableFacts = stable.slice(0, 5).map(f => `- ${f.text}`);
+
+      if (message.length > 10) {
+        const results = await params.graphMemory.search(message, senderId, 5);
+        contextFacts = results
+          .filter(r => !stableFacts.some(s => s.includes(r.text)))
+          .map(r => `- ${r.text}`);
+
+        // Lazy multi-hop: only if KNN returned few results
+        if (results.length < 3) {
+          try {
+            const hops = await params.graphMemory.findMultiHop(message, senderId, 2, 3);
+            const hopFacts = hops
+              .filter(h => !stableFacts.some(s => s.includes(h.text)) && !contextFacts.some(c => c.includes(h.text)))
+              .map(h => `- ${h.text}`);
+            contextFacts.push(...hopFacts);
+          } catch { /* multi-hop optional */ }
+        }
+      }
+    } else if (params.factStore) {
+      const allFacts = params.factStore.loadFactsJson(senderId);
+      stableFacts = allFacts
+        .filter(f => (f.importance ?? 2) >= 4 && f.confidence >= 0.7)
+        .sort((a, b) => (b.importance ?? 2) - (a.importance ?? 2))
+        .slice(0, 5)
+        .map(f => `- ${f.text}`);
+    }
+
+    let modelSummary: string | null = null;
+    if (params.graphMemory) {
+      try { modelSummary = await params.graphMemory.getUserModelSummary(senderId); } catch { /* best-effort */ }
+    }
+
+    const allPriming = [...new Set([...stableFacts, ...contextFacts])];
+    const primingParts: string[] = [];
+    if (allPriming.length > 0) {
+      primingParts.push(`## Background context about this user (do NOT reference unless directly relevant)\n${allPriming.join('\n')}`);
+    }
+    if (modelSummary) {
+      primingParts.push(`## User preferences (adapt your style accordingly)\n${modelSummary}`);
+    }
+    if (primingParts.length > 0) {
+      if (contextFacts.length > 0 || modelSummary) {
+        console.log(`[Dispatch] Memory injection: ${stableFacts.length} stable + ${contextFacts.length} contextual${modelSummary ? ' + model' : ''} (graph)`);
+      }
+      return primingParts.join('\n\n');
+    }
+  } catch { /* Non-critical */ }
+  return '';
+}
+
 export async function dispatchMessage(params: DispatchParams): Promise<DispatchResult> {
   const { client, registry, config, message, agentId = 'main', sessionKey = 'default', sessionStore } = params;
 
@@ -229,21 +291,30 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     }
   }
 
+  // Run classification and memory injection IN PARALLEL (saves 800-1500ms)
+  // Classification doesn't need memory results; memory doesn't need classification.
   const classifyStart = Date.now();
-  let classification: ClassifyResult;
-  if (params.overrideCategory) {
-    classification = { category: params.overrideCategory, confidence: 'override' as any };
-  } else {
-    classification = await classifyMessage(client, config.router, message, previousCategory);
-  }
+  const classifyPromise = params.overrideCategory
+    ? Promise.resolve({ category: params.overrideCategory, confidence: 'override' as any } as ClassifyResult)
+    : classifyMessage(client, config.router, message, previousCategory);
+
+  // Start memory priming in background (will be awaited later before specialist runs)
+  const senderId = params.sourceContext?.senderId;
+  const memoryPromise = (senderId && !params.cronMode && (params.graphMemory || params.factStore))
+    ? buildUserPriming(params, message, senderId)
+    : Promise.resolve('');
+
+  let classification = await classifyPromise;
   const { category } = classification;
-  logRouterClassification({ category, confidence: classification.confidence, durationMs: Date.now() - classifyStart });
+  const classifyMs = Date.now() - classifyStart;
+  logRouterClassification({ category, confidence: classification.confidence, durationMs: classifyMs });
+  console.log(`[Dispatch] Routing: ${classifyMs}ms (memory running in parallel)`);
 
   console.log(`[Dispatch] Category: ${category} (${classification.confidence})`);
 
   // 2b. Channel security — category enforcement
   const channelSecurity = resolveChannelSecurity(config, params.sourceContext?.channel);
-  const senderId = params.sourceContext?.senderId;
+  // senderId already declared above (parallel section)
   const isTrusted = senderId !== undefined && (!channelSecurity?.trustedUsers || channelSecurity.trustedUsers.includes(senderId));
   let effectiveCategory = category;
 
@@ -367,71 +438,12 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     } catch { /* remote-bridge not available */ }
   }
 
-  // 4b. User priming — graph memory (FalkorDB) or flat FactStore fallback
+  // 4b. User priming — await the parallel memory promise started earlier
   let userPriming = '';
-  if (senderId && !params.cronMode) {
-    try {
-      let stableFacts: string[] = [];
-      let contextFacts: string[] = [];
-
-      if (params.graphMemory) {
-        // Graph memory: native vector search + importance filtering
-        const stable = await params.graphMemory.getStableFacts(senderId, 4);
-        stableFacts = stable.slice(0, 5).map(f => `- ${f.text}`);
-
-        if (message.length > 10) {
-          // Vector KNN search
-          const results = await params.graphMemory.search(message, senderId, 5);
-          contextFacts = results
-            .filter(r => !stableFacts.some(s => s.includes(r.text)))
-            .map(r => `- ${r.text}`);
-
-          // Multi-hop: find connected facts through shared entities
-          if (results.length > 0) {
-            try {
-              const hops = await params.graphMemory.findMultiHop(message, senderId, 2, 3);
-              const hopFacts = hops
-                .filter(h => !stableFacts.some(s => s.includes(h.text)) && !contextFacts.some(c => c.includes(h.text)))
-                .map(h => `- ${h.text}`);
-              contextFacts.push(...hopFacts);
-            } catch { /* multi-hop optional */ }
-          }
-        }
-      } else if (params.factStore) {
-        // Flat store fallback
-        const allFacts = params.factStore.loadFactsJson(senderId);
-        stableFacts = allFacts
-          .filter(f => (f.importance ?? 2) >= 4 && f.confidence >= 0.7)
-          .sort((a, b) => (b.importance ?? 2) - (a.importance ?? 2))
-          .slice(0, 5)
-          .map(f => `- ${f.text}`);
-      }
-
-      // Layer 3: Behavioral model (how the user communicates and decides)
-      let modelSummary: string | null = null;
-      if (params.graphMemory) {
-        try {
-          modelSummary = await params.graphMemory.getUserModelSummary(senderId);
-        } catch { /* best-effort */ }
-      }
-
-      const allPriming = [...new Set([...stableFacts, ...contextFacts])];
-      const primingParts: string[] = [];
-      if (allPriming.length > 0) {
-        primingParts.push(`## Background context about this user (do NOT reference unless directly relevant)\n${allPriming.join('\n')}`);
-      }
-      if (modelSummary) {
-        primingParts.push(`## User preferences (adapt your style accordingly)\n${modelSummary}`);
-      }
-      if (primingParts.length > 0) {
-        userPriming = primingParts.join('\n\n');
-        if (contextFacts.length > 0 || modelSummary) {
-          console.log(`[Dispatch] Memory injection: ${stableFacts.length} stable + ${contextFacts.length} contextual${modelSummary ? ' + model' : ''} (graph)`);
-        }
-      }
-    } catch {
-      // Non-critical — continue without priming
-    }
+  try {
+    userPriming = await memoryPromise;
+  } catch {
+    // Non-critical — continue without priming
   }
 
   // 4c. Continuation context — for short follow-ups, also include the last assistant message

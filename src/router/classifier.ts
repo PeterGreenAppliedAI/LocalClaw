@@ -76,6 +76,13 @@ const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
   // Research — only compound intent patterns, not bare keywords
   { pattern: /\b(research|analyze)\b.*\b(stock|market|data|trend|performance|price)\b/i, category: 'research' },
   { pattern: /\b(stock|market|data|trend|performance)\b.*\b(research|analyze|analysis)\b/i, category: 'research' },
+
+  // Task management — explicit task commands
+  { pattern: /^(add|create|make)\s+(a\s+)?task\b/i, category: 'task' },
+  { pattern: /^(show|list|check)\s+(my\s+)?tasks?\b/i, category: 'task' },
+
+  // Image generation — explicit generation requests
+  { pattern: /^(generate|create|draw|make)\s+(an?\s+)?(image|picture|illustration|photo)\b/i, category: 'image' },
 ];
 
 /**
