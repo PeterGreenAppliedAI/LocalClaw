@@ -7,19 +7,19 @@ export class SessionStore {
   constructor(private readonly baseDir: string) {}
 
   private sessionPath(agentId: string, sessionKey: string): string {
-    return join(this.baseDir, agentId, `${sanitizeKey(sessionKey)}.json`);
+    return join(this.baseDir, sanitizeKey(agentId), `${sanitizeKey(sessionKey)}.json`);
   }
 
   private metaPath(agentId: string, sessionKey: string): string {
-    return join(this.baseDir, agentId, `${sanitizeKey(sessionKey)}.meta.json`);
+    return join(this.baseDir, sanitizeKey(agentId), `${sanitizeKey(sessionKey)}.meta.json`);
   }
 
   private summaryPath(agentId: string, sessionKey: string): string {
-    return join(this.baseDir, agentId, `${sanitizeKey(sessionKey)}.summary.json`);
+    return join(this.baseDir, sanitizeKey(agentId), `${sanitizeKey(sessionKey)}.summary.json`);
   }
 
   private statePath(agentId: string, sessionKey: string): string {
-    return join(this.baseDir, agentId, `${sanitizeKey(sessionKey)}.state.json`);
+    return join(this.baseDir, sanitizeKey(agentId), `${sanitizeKey(sessionKey)}.state.json`);
   }
 
   loadTranscript(agentId: string, sessionKey: string, maxTurns?: number): ConversationTurn[] {

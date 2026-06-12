@@ -154,6 +154,9 @@
     web: {
       enabled: true,
       port: 3100,
+      // SECURITY: Set a token when exposing the web API on a network.
+      // Without it, anyone on your network can send commands via /api/message.
+      // token: "your-secret-token-here",
     },
     whatsapp: {
       enabled: false,

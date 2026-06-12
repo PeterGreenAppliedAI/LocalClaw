@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { resolve, join } from 'node:path';
+import { resolve, join, relative, isAbsolute } from 'node:path';
 
 /**
  * Path traversal tests for file containment.
- * Verifies that the startsWith + '/' fix prevents sibling-prefix escapes.
+ * Uses path.relative() — cross-platform safe (POSIX + Windows).
  */
 
 function isContained(fullPath: string, workspace: string): boolean {
-  return fullPath.startsWith(resolve(workspace) + '/');
+  const rel = relative(resolve(workspace), fullPath);
+  return !rel.startsWith('..') && !isAbsolute(rel);
 }
 
 describe('File containment (startsWith fix)', () => {

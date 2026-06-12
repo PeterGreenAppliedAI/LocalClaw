@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, relative, isAbsolute } from 'node:path';
 import type { LocalClawTool, ToolContext } from './types.js';
 
 export function createReadFileTool(): LocalClawTool {
@@ -28,7 +28,8 @@ export function createReadFileTool(): LocalClawTool {
       }
 
       const fullPath = resolve(workspace, path);
-      if (!fullPath.startsWith(resolve(workspace) + '/')) {
+      const rel = relative(resolve(workspace), fullPath);
+      if (rel.startsWith('..') || isAbsolute(rel)) {
         return 'Error: Path traversal not allowed — must read within workspace';
       }
 

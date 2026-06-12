@@ -1,6 +1,6 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync, statSync } from 'node:fs';
-import { join, extname } from 'node:path';
+import { join, extname, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
   ChannelAdapter,
@@ -145,7 +145,8 @@ export class WebApiAdapter implements ChannelAdapter {
     const fullPath = join(CONSOLE_DIST, filePath);
 
     // Security: prevent path traversal
-    if (!fullPath.startsWith(CONSOLE_DIST + '/') && fullPath !== CONSOLE_DIST) {
+    const relPath = relative(CONSOLE_DIST, fullPath);
+    if (relPath.startsWith('..') || isAbsolute(relPath)) {
       res.writeHead(403);
       res.end('Forbidden');
       return;

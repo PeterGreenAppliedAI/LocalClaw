@@ -37,6 +37,23 @@ export class ToolRegistry {
     };
   }
 
+  /**
+   * Create a scoped executor that only allows specified tools.
+   * Final enforcement gate — tools not in the allowlist are rejected
+   * regardless of what the model requests.
+   */
+  createScopedExecutor(allowedTools: Set<string>): ToolExecutor {
+    return async (toolName: string, params: Record<string, unknown>, ctx: ToolContext) => {
+      if (!allowedTools.has(toolName)) {
+        console.warn(`[ToolRegistry] Blocked unauthorized tool call: ${toolName}`);
+        return `Error: Tool "${toolName}" is not available in this context.`;
+      }
+      const tool = this.tools.get(toolName);
+      if (!tool) throw toolNotFound(toolName);
+      return tool.execute(params, ctx);
+    };
+  }
+
   list(): string[] {
     return [...this.tools.keys()];
   }

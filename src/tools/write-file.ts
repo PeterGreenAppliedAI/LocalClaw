@@ -1,5 +1,5 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, resolve, relative, isAbsolute } from 'node:path';
 import type { LocalClawTool, ToolContext } from './types.js';
 
 /**
@@ -51,7 +51,8 @@ export function createWriteFileTool(): LocalClawTool {
       }
 
       const fullPath = resolve(workspace, path);
-      if (!fullPath.startsWith(resolve(workspace) + '/')) {
+      const rel = relative(resolve(workspace), fullPath);
+      if (rel.startsWith('..') || isAbsolute(rel)) {
         return 'Error: Path traversal not allowed — must write within workspace';
       }
 

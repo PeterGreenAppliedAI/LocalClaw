@@ -37,9 +37,10 @@ export class TelegramAdapter implements ChannelAdapter {
     const bot = new grammy.Bot(config.token);
     this.bot = bot;
 
-    // Store allowFrom list for access control
-    if ((config as any).allowFrom?.length) {
-      this.allowFrom = new Set((config as any).allowFrom as string[]);
+    // Store allowFrom list for access control (schema: {users?: string[], channels?: string[]})
+    const allowFromConfig = (config as any).allowFrom;
+    if (allowFromConfig?.users?.length) {
+      this.allowFrom = new Set(allowFromConfig.users as string[]);
       console.log(`[Telegram] allowFrom: ${this.allowFrom.size} user(s)`);
     }
 

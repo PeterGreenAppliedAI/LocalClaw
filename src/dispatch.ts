@@ -692,7 +692,9 @@ async function runSpecialist(
   }
 
   const toolDefs = registry.getDefinitions(tools);
-  const baseExecutor = registry.createExecutor();
+  // Scoped executor — final enforcement gate. Only tools in the filtered list can execute.
+  const allowedToolSet = new Set(tools);
+  const scopedExecutor = registry.createScopedExecutor(allowedToolSet);
   const workspacePath = resolveWorkspacePath(agentId, config);
   const errorStore = new ErrorLearningStore(workspacePath);
 
@@ -706,9 +708,9 @@ async function runSpecialist(
           console.log(`[Dispatch] Confirmation required for ${toolName}`);
           return `⚠️ Confirmation required — about to run **${toolName}**:\n\`\`\`\n${preview}\n\`\`\`\nTell the user what you're about to do and ask them to reply "confirm" to proceed.`;
         }
-        return baseExecutor(toolName, toolParams, ctx);
+        return scopedExecutor(toolName, toolParams, ctx);
       }
-    : baseExecutor;
+    : scopedExecutor;
   const toolContext: ToolContext = {
     agentId,
     sessionKey,

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
-import { extname, resolve } from 'node:path';
+import { extname, resolve, relative, isAbsolute } from 'node:path';
 import type { ConsoleApiDeps } from '../types.js';
 import { sendError } from '../helpers/send-json.js';
 import { resolveWorkspacePath } from '../../agents/scope.js';
@@ -31,7 +31,8 @@ export function handleServeFile(
   const fullPath = resolve(workspace, filePath);
 
   // Security: prevent path traversal outside workspace
-  if (!fullPath.startsWith(resolve(workspace) + '/')) {
+  const rel = relative(resolve(workspace), fullPath);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
     sendError(res, 'Forbidden', 403);
     return;
   }
