@@ -40,6 +40,8 @@ export interface RunReActLoopParams {
     client: OllamaClient;
     model: string;
   };
+  /** Stream callback — streams natural language tokens to user during final answer generation */
+  onStream?: (delta: string) => void;
 }
 
 /**
@@ -375,7 +377,7 @@ const MAX_TOOL_RESULT_CHARS = 2000;
  *   5. Safety: max iterations limit
  */
 export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResult> {
-  const { client, config, tools, executor, toolContext, userMessage, history, workspaceContext, promptContext, errorStore, summarizeObservations } = params;
+  const { client, config, tools, executor, toolContext, userMessage, history, workspaceContext, promptContext, errorStore, summarizeObservations, onStream } = params;
 
   // Build observation summarizer if enabled
   const observationSummarizer: ObservationSummarizer | undefined = summarizeObservations?.enabled
@@ -462,6 +464,8 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       await trimToolLoopMessages(messages, config.contextSize, observationSummarizer);
     }
 
+    // Non-streaming model call for tool iterations
+    // Streaming only happens in the final synthesis call (below, after tool loop exits)
     const response = await client.chat({
       model: config.model,
       messages,
@@ -614,6 +618,23 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
             actionRepeatCount = 0;
           }
 
+          // Stream tool status to user (lightweight progress indicator)
+          // Stream tool status to user (plain text, no emoji — safe for all channels/TTS)
+          if (onStream) {
+            const STATUS_MAP: Record<string, string> = {
+              web_search: 'Searching...\n',
+              web_fetch: 'Reading page...\n',
+              browser: 'Browsing...\n',
+              exec: 'Running command...\n',
+              code_session: 'Running code...\n',
+              memory_search: 'Searching memory...\n',
+              image_generate: 'Generating image...\n',
+              diagram_generate: 'Creating diagram...\n',
+            };
+            const status = STATUS_MAP[toolName];
+            if (status) onStream(status);
+          }
+
           console.log(`[ReAct] → ${toolName}(${JSON.stringify(toolParams).slice(0, 200)})`);
           try {
             observation = await executor(toolName, toolParams, toolContext);
@@ -733,6 +754,8 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
 
     steps.push({ thought: '', finalAnswer: answer });
     const fileAppend = fileTokens.map(p => ` [FILE:${p}]`).join('');
+    // Stream the final answer to user (answer already computed, no tool-call risk)
+    if (onStream && answer) onStream(answer);
     return { answer: answer + fileAppend, steps, iterations: i + 1, hitMaxIterations: false, promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens };
   }
 
@@ -773,12 +796,16 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
       content: 'You have reached the maximum number of tool calls. Based ONLY on the actual tool results above, provide your best answer to the original question. If you were unable to find the requested information, say so honestly. NEVER fabricate data, file names, command output, or results that did not appear in the tool observations. Do not call any more tools.',
     });
 
-    const finalResponse = await client.chat({
+    // Final synthesis — stream to user if callback provided (safe: no tools, pure text)
+    const finalChatParams = {
       model: config.model,
       messages,
       options: buildOllamaOptions(config, config.temperature),
       // No tools — force a text answer
-    });
+    };
+    const finalResponse = onStream
+      ? await client.chatStream(finalChatParams, onStream)
+      : await client.chat(finalChatParams);
 
     const answer = finalResponse.message?.content || 'I was unable to complete the request within the allowed steps.';
     steps.push({ thought: '', finalAnswer: answer });

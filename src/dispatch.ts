@@ -816,6 +816,7 @@ RULES:
     summarizeObservations: config.session.summarizeToolObservations
       ? { enabled: true, client, model: config.session.summarizationModel ?? config.router.model }
       : undefined,
+    onStream: params.onStream,
   });
 
   return {
