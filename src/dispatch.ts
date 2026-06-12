@@ -339,7 +339,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   // Skip guard for console/extension — browser control needs website category to persist
   if (effectiveCategory !== 'chat' && !params.cronMode && !params._reRouted && !params.overrideCategory && params.sourceContext?.channel !== 'console') {
     if (sessionState && sessionState.turnCount > 0) {
-      const hasTaskIntent = /\b(create|make|build|run|execute|search\b.*?\bfor|search the web|look up|generate|produce|write me|send|schedule|research|analyze|give me a|find me a|find me|find the)\b/i.test(message);
+      const hasTaskIntent = /\b(create|make|build|run|execute|search\b.*?\bfor|search the web|web search|do.*search|look up|generate|produce|write me|send|schedule|research|analyze|give me a|find me a|find me|find the)\b/i.test(message);
       if (!hasTaskIntent) {
         console.log(`[Dispatch] Conversational guard: ${effectiveCategory} → chat (no task intent, turn ${sessionState.turnCount})`);
         effectiveCategory = 'chat';
@@ -493,7 +493,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
         model: config.router?.model ?? 'phi4:14b',
         messages: [{
           role: 'user',
-          content: `Rate this response. User asked: "${message.slice(0, 200)}"\nResponse: "${result.answer.slice(0, 2000)}"\nScore 1-5 on: accuracy, relevance, completeness. JSON only: {"accuracy": N, "relevance": N, "completeness": N}`,
+          content: `Rate this response for a ${effectiveCategory} task. User asked: "${message.slice(0, 200)}"\nResponse: "${result.answer.slice(0, 2000)}"\n\nScoring guide (1=bad, 3=adequate, 5=excellent):\n- accuracy: Does it contain correct information? For web_search: are facts sourced? For exec: did the command work?\n- relevance: Does it answer what was asked? Ignore unrelated session context.\n- completeness: Does it cover the topic sufficiently for a ${effectiveCategory} response? A web search summary doesn't need to be a research paper.\n\nScore generously for responses that accomplish the task. A structured answer with sources is at least a 4.\nJSON only: {"accuracy": N, "relevance": N, "completeness": N}`,
         }],
         options: { temperature: 0.1, num_predict: 64 },
       });

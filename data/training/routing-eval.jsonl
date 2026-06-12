@@ -58,3 +58,4 @@
 {"message": "tell me about the trade-offs", "expected": "message", "layer": "keyword", "note": "KNOWN ISSUE: 'tell' keyword matches message — should be chat"}
 {"message": "configure the heartbeat schedule", "expected": "config", "layer": "keyword", "note": "configure → config"}
 {"message": "update my settings", "expected": "config", "layer": "keyword", "note": "settings → config"}
+{"message": "do some web search on Fable 5", "expected": "web_search", "layer": "keyword", "context": {"previousCategory": "chat"}, "note": "explicit web search request breaks sticky"}
