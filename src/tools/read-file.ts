@@ -28,7 +28,7 @@ export function createReadFileTool(): LocalClawTool {
       }
 
       const fullPath = resolve(workspace, path);
-      if (!fullPath.startsWith(resolve(workspace))) {
+      if (!fullPath.startsWith(resolve(workspace) + '/')) {
         return 'Error: Path traversal not allowed — must read within workspace';
       }
 

@@ -31,7 +31,7 @@ export function handleServeFile(
   const fullPath = resolve(workspace, filePath);
 
   // Security: prevent path traversal outside workspace
-  if (!fullPath.startsWith(resolve(workspace))) {
+  if (!fullPath.startsWith(resolve(workspace) + '/')) {
     sendError(res, 'Forbidden', 403);
     return;
   }

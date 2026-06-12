@@ -1,8 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { ConsoleApiDeps } from '../types.js';
 import { sendJson, sendError } from '../helpers/send-json.js';
+
+/** Sanitize path components to prevent directory traversal */
+function sanitizePath(input: string): string {
+  return input.replace(/\.\./g, '').replace(/[/\\]/g, '_');
+}
 
 export function handleSessions(_req: IncomingMessage, res: ServerResponse, deps: ConsoleApiDeps): void {
   const baseDir = deps.config.session.transcriptDir;
@@ -37,7 +42,18 @@ export function handleSessionTranscript(
   agentId: string,
   sessionKey: string,
 ): void {
-  const transcript = deps.sessionStore.loadTranscript(agentId, sessionKey);
+  const safeAgent = sanitizePath(agentId);
+  const safeKey = sanitizePath(sessionKey);
+
+  // Verify resolved path stays within transcript directory
+  const baseDir = resolve(deps.config.session.transcriptDir);
+  const targetDir = resolve(join(baseDir, safeAgent));
+  if (!targetDir.startsWith(baseDir + '/')) {
+    sendError(res, 'Invalid agent ID', 400);
+    return;
+  }
+
+  const transcript = deps.sessionStore.loadTranscript(safeAgent, safeKey);
   sendJson(res, transcript);
 }
 
@@ -48,6 +64,16 @@ export function handleSessionDelete(
   agentId: string,
   sessionKey: string,
 ): void {
-  deps.sessionStore.clearSession(agentId, sessionKey);
+  const safeAgent = sanitizePath(agentId);
+  const safeKey = sanitizePath(sessionKey);
+
+  const baseDir = resolve(deps.config.session.transcriptDir);
+  const targetDir = resolve(join(baseDir, safeAgent));
+  if (!targetDir.startsWith(baseDir + '/')) {
+    sendError(res, 'Invalid agent ID', 400);
+    return;
+  }
+
+  deps.sessionStore.clearSession(safeAgent, safeKey);
   sendJson(res, { ok: true });
 }

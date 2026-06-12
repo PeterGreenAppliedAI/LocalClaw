@@ -16,6 +16,7 @@ export class TelegramAdapter implements ChannelAdapter {
   private bot: any = null;
   private handler: ((msg: InboundMessage) => Promise<void>) | null = null;
   private currentStatus: ChannelStatus = 'disconnected';
+  private allowFrom: Set<string> | null = null;
 
   async connect(config: ChannelAdapterConfig): Promise<void> {
     if (!config.token) {
@@ -36,10 +37,22 @@ export class TelegramAdapter implements ChannelAdapter {
     const bot = new grammy.Bot(config.token);
     this.bot = bot;
 
+    // Store allowFrom list for access control
+    if ((config as any).allowFrom?.length) {
+      this.allowFrom = new Set((config as any).allowFrom as string[]);
+      console.log(`[Telegram] allowFrom: ${this.allowFrom.size} user(s)`);
+    }
+
     bot.on('message', async (ctx: any) => {
       if (!this.handler) return;
 
       const msg = ctx.message;
+
+      // Access control: reject messages from users not in allowFrom list
+      if (this.allowFrom && !this.allowFrom.has(String(msg.from.id))) {
+        return; // silently ignore
+      }
+
       const content = msg.text ?? msg.caption ?? '';
 
       // Download photo/document attachments

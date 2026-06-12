@@ -401,6 +401,30 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 
 ---
 
+## Security Hardening (June 2026, External Review)
+
+### Web API authentication warning (June 2026)
+**Finding (P0):** Web adapter bound to 0.0.0.0 with no token = anyone on the network can exec commands.
+**Fix:** Startup warning when no token + 0.0.0.0. Host stays configurable (user accesses from network). README updated with security configuration section and explicit guidance to set a token.
+**Status:** Active. Warning on startup, docs updated.
+
+### Session route path traversal (June 2026)
+**Finding (P1):** Console API accepts `agentId` from URL path and passes to `join(baseDir, agentId, ...)` unsanitized. `../` in agentId = file access outside sessions directory.
+**Fix:** `sanitizePath()` strips `..` and path separators. Resolved path verified to be within base directory using `startsWith(baseDir + '/')`.
+**Status:** Active.
+
+### File containment prefix matching (June 2026)
+**Finding (P1):** `startsWith(resolve(workspace))` allows sibling-prefix escapes (`main2` when workspace is `main`).
+**Fix:** Changed to `startsWith(resolve(workspace) + '/')` in read_file, write_file, console file serving, and static console serving.
+**Status:** Active.
+
+### Telegram allowFrom (June 2026)
+**Finding (P2):** Discord and Slack enforce `allowFrom`, Telegram didn't.
+**Fix:** Added `allowFrom` set to TelegramAdapter. When configured, messages from users not in the set are silently ignored.
+**Status:** Active.
+
+---
+
 ## Ollama Version Issues
 
 ### Image generation API broken on 0.23.1 (May 2026)

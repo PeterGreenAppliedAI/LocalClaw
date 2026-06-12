@@ -148,6 +148,39 @@ DISCORD_BOT_TOKEN=your_bot_token
 BRAVE_API_KEY=your_brave_key        # optional — for web search
 ```
 
+### Security Configuration
+
+**Web API:** The web channel binds to `0.0.0.0` by default for network access. If you expose port 3100, **configure a token** — without it, anyone on your network can send commands via `/api/message` or `/console/api/chat`, including exec and file write operations.
+
+```json5
+web: {
+  enabled: true,
+  port: 3100,
+  host: "0.0.0.0",       // Use "127.0.0.1" for local-only access
+  token: "your-secret",   // Required for network-exposed instances
+}
+```
+
+**Channel access control:** Each channel supports security settings to restrict who can use which tools and categories:
+
+```json5
+security: {
+  trustedUsers: ["user-id-1"],           // Users with full access
+  allowedCategories: ["chat", "web_search"], // Whitelist categories for this channel
+  ownerOnlyTools: ["exec", "write_file"],    // Invisible to non-owners (code gate)
+  blockedTools: ["send_message"],            // Blocked for everyone on this channel
+  restrictedTools: ["exec"],                 // Blocked for untrusted users
+  confirmTools: ["exec"],                    // Require user confirmation before running
+}
+```
+
+**Key security principles:**
+- `ownerOnlyTools` is a **code gate** — tools are removed from the model's vocabulary entirely, not just prompted to avoid. Prompt injection cannot bypass this.
+- `ownerId` in the root config identifies the single owner. Set it.
+- Telegram supports `allowFrom` to restrict which user IDs can interact with the bot.
+- Cron mode automatically strips write tools so automated tasks can't modify state.
+- The Docker sandbox isolates exec commands from the host filesystem.
+
 ### Run
 
 ```bash

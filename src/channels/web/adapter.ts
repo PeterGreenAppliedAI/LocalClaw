@@ -99,6 +99,11 @@ export class WebApiAdapter implements ChannelAdapter {
       this.server!.listen(port, host, () => {
         this.currentStatus = 'connected';
         console.log(`[Web] API listening on http://${host}:${port}`);
+        if (!this.apiKey && host === '0.0.0.0') {
+          console.warn('[Web] ⚠️  WARNING: Web API is network-accessible with NO authentication token.');
+          console.warn('[Web]    Anyone on your network can send commands via /api/message or /console/api/chat.');
+          console.warn('[Web]    Set "token" in your web channel config to require Bearer auth.');
+        }
         resolve();
       });
       this.server!.on('error', reject);
@@ -140,7 +145,7 @@ export class WebApiAdapter implements ChannelAdapter {
     const fullPath = join(CONSOLE_DIST, filePath);
 
     // Security: prevent path traversal
-    if (!fullPath.startsWith(CONSOLE_DIST)) {
+    if (!fullPath.startsWith(CONSOLE_DIST + '/') && fullPath !== CONSOLE_DIST) {
       res.writeHead(403);
       res.end('Forbidden');
       return;
