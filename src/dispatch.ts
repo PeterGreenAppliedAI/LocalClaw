@@ -439,11 +439,16 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   }
 
   // 4b. User priming — await the parallel memory promise started earlier
+  const memoryStart = Date.now();
   let userPriming = '';
   try {
     userPriming = await memoryPromise;
   } catch {
     // Non-critical — continue without priming
+  }
+  const memoryMs = Date.now() - memoryStart;
+  if (memoryMs > 10) {
+    console.log(`[Dispatch] Memory priming: ${memoryMs}ms (waited after routing)`);
   }
 
   // 4c. Continuation context — for short follow-ups, also include the last assistant message
