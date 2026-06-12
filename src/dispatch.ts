@@ -901,14 +901,16 @@ async function runPipelineDispatch(
     ? specialist.tools.filter(t => !CRON_BLOCKED_TOOLS.has(t))
     : specialist.tools;
 
-  const baseExecutor = registry.createExecutor();
+  // Scoped executor — final enforcement gate for pipelines too
+  const allowedToolSet = new Set(tools);
+  const scopedExecutor = registry.createScopedExecutor(allowedToolSet);
   const workspacePath = resolveWorkspacePath(agentId, config);
   const errorStore = new ErrorLearningStore(workspacePath);
 
-  // Wrap executor to record errors for learning
+  // Wrap scoped executor to record errors for learning
   const executor: ToolExecutor = async (toolName, toolParams, ctx) => {
     try {
-      return await baseExecutor(toolName, toolParams, ctx);
+      return await scopedExecutor(toolName, toolParams, ctx);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       errorStore.recordError({ tool: toolName, params: toolParams, error: errMsg, step: 0, category });
