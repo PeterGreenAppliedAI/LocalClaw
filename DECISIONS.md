@@ -410,17 +410,66 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 
 ### Session route path traversal (June 2026)
 **Finding (P1):** Console API accepts `agentId` from URL path and passes to `join(baseDir, agentId, ...)` unsanitized. `../` in agentId = file access outside sessions directory.
-**Fix:** `sanitizePath()` strips `..` and path separators. Resolved path verified to be within base directory using `startsWith(baseDir + '/')`.
+**Fix:** `sanitizePath()` strips `..` and path separators. SessionStore now sanitizes agentId in all path methods (not just sessionKey).
 **Status:** Active.
 
 ### File containment prefix matching (June 2026)
 **Finding (P1):** `startsWith(resolve(workspace))` allows sibling-prefix escapes (`main2` when workspace is `main`).
-**Fix:** Changed to `startsWith(resolve(workspace) + '/')` in read_file, write_file, console file serving, and static console serving.
+**Fix (round 1):** Changed to `startsWith(resolve(workspace) + '/')`.
+**Fix (round 2):** Replaced with `path.relative()` + `isAbsolute()` check — cross-platform safe (POSIX + Windows). Applied to read_file, write_file, console file serving, and static console serving.
 **Status:** Active.
 
 ### Telegram allowFrom (June 2026)
 **Finding (P2):** Discord and Slack enforce `allowFrom`, Telegram didn't.
-**Fix:** Added `allowFrom` set to TelegramAdapter. When configured, messages from users not in the set are silently ignored.
+**Fix (round 1):** Added `allowFrom` set to TelegramAdapter.
+**Fix (round 2):** Fixed to read `allowFrom.users` (schema-compatible `{users?: string[]}`) instead of treating `allowFrom` as a flat array (which never matched the Zod schema).
+**Status:** Active.
+
+### Scoped tool executor (June 2026)
+**Finding (P1):** ToolRegistry.createExecutor() directly executed any tool. Pipeline stages bypassed dispatch-time filtering.
+**Fix:** Added `createScopedExecutor(allowedTools: Set<string>)` — rejects tools not in the allowlist. Wired in both ReAct and pipeline dispatch paths as the final enforcement gate. Cron tool stripping now enforced even in pipelines.
+**Status:** Active.
+
+---
+
+## Latency Optimization (June 2026)
+
+### Parallel memory + router (June 2026)
+**Problem:** Graph memory queries (embed → KNN → multi-hop → user model) ran sequentially BEFORE router classification. ~800-1500ms of blocking before routing even started.
+**Fix:** Router classification and memory injection run as `Promise.all()`. Router starts immediately, memory runs alongside. Memory results injected when they arrive — if memory finishes during routing, wait time is 0ms.
+**Also:** Lazy multi-hop — only runs if KNN returns <3 results (inspired by Hermes Agent pattern).
+**Measured:** Routing 0-4ms (sticky) with memory priming 235-2900ms in parallel. Previously sequential (additive).
+**Status:** Active.
+
+### Async compaction cache (June 2026)
+**Problem:** History compaction (fact extraction + LLM summary) ran synchronously on every message once history exceeded 50% budget. 300-1000ms blocking.
+**Fix:** Cache compaction results per session (5-min TTL). First message: synchronous (unavoidable). Subsequent messages: use cached result, schedule fresh compaction async in background. Prevents overlapping compactions via `pendingCompactions` set.
+**Status:** Active.
+
+### Tool-loop streaming (June 2026)
+**Problem:** Tool-loop specialists used non-streaming `client.chat()`. User saw "thinking..." for 2-5 seconds with no feedback.
+**Fix:** Three streaming points: (1) plain-text tool status events ("Searching...", "Running command...") before each tool execution, (2) max-iterations synthesis via `chatStream()` with `tools: undefined` (safe — no tool-call risk), (3) normal final answer post-hoc streamed after tool calls complete.
+**Rule:** Tool-loop model calls stay non-streaming (prevents leaking JSON/function calls). Only stream user-facing natural language.
+**Status:** Active.
+
+### Web-fetch page caching (June 2026)
+**Problem:** Same pages fetched repeatedly across conversations. No caching.
+**Fix:** In-memory cache with 1-hour TTL. SSRF validation runs BEFORE cache check (reviewer feedback). Cache key includes URL + extractMode + maxChars. Only successful content cached. Web search already had caching — now web-fetch matches.
+**Status:** Active.
+
+### Expanded pre-model overrides (June 2026)
+**Problem:** Router LLM inference (phi4:14b) takes 400-800ms even for obvious classifications.
+**Fix:** Added pre-model overrides: "add/create task" → task, "show/list tasks" → task, "generate/create image" → image. Conservative start-of-message patterns only. Also added speculative language override: "I wonder", "what if", "do you think" → chat (prevents "I wonder if you could create" → multi).
+**Status:** Active.
+
+### Conversational guard simplified (June 2026)
+**Problem:** Keyword-based task intent matching caused both false positives (blocked "do some web search") and false negatives (let "I wonder if you could create" through). Every keyword fix broke another case.
+**Fix:** Replaced 11-line keyword regex with 8-line length check: short messages (<30 chars) mid-conversation downgrade to chat. Long or explicit messages trust the router. No keyword matching.
+**Status:** Active.
+
+### Quality judge calibration (June 2026)
+**Problem:** LLM-as-judge scored every response against research-report standards. Web search returning structured data with sources scored 2/5 (POOR).
+**Fix:** Calibrated prompt per category with scoring guide: "a structured answer with sources is at least a 4." Category name included in prompt so judge knows the expected output format.
 **Status:** Active.
 
 ---
