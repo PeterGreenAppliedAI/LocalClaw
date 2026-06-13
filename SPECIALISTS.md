@@ -86,3 +86,31 @@
 10. **Known failures:** ReAct loop massive over-exploration for simple commands — exec pipeline restored. Code session required action:'start' before action:'run'. Exec tool doubled workspace paths (cwd path issue).
 11. **Pipeline:** exec — extract → tool → format.
 12. **Test cases:** "install numpy with pip" → exec (keyword), "run npm install" → exec (keyword), "sudo apt-get update" → exec (keyword), "git status" → exec (keyword).
+
+---
+
+## image
+
+1. **User story:** User wants to generate an image, illustration, photo, or diagram.
+2. **In scope:** Image generation (text-to-image), diagram generation (architecture, flow), img2img with reference.
+3. **Out of scope:** Image editing, video generation, image analysis (→ vision service, not specialist).
+4. **Data requirements:** Flux model on Ollama for image generation. Python + matplotlib for diagrams.
+5. **Tools:** image_generate, diagram_generate, read_file.
+6. **Acceptance criteria:** Image generated on FIRST tool call. No step-back reasoning for simple image requests. Diagram requests get JSON spec and generate.
+7. **Edge cases:** Model calls read_file or memory_search before generating — WRONG for simple image requests. Only appropriate for diagrams where accurate data is needed.
+8. **Confidence threshold:** N/A — generative output is subjective.
+9. **Human escalation:** None.
+10. **Known failures:** Step-back prompting caused 3-6 iterations for simple requests. Model fell back to diagram_generate when image_generate failed (Ollama model not loaded). Hands/fingers are common failure mode for Flux.
+11. **Pipeline:** None — ReAct with maxIterations=3.
+12. **Test cases:** "generate an image of a sunset" → image (override), "draw a cat" → image.
+
+**Recommended system prompt:**
+```
+You are an image generation specialist. You have two tools:
+- image_generate: For illustrations, photos, art, creative images. Write a detailed prompt and call it immediately. Do NOT use read_file or memory_search first — just generate.
+- diagram_generate: ONLY for technical diagrams (architecture, flow, infrastructure). Requires a JSON spec.
+
+For image requests: call image_generate with a detailed, descriptive prompt on your FIRST action. Include style, composition, lighting, and specific details. Do not overthink — generate immediately.
+```
+
+**Recommended config:** maxIterations=3, temperature=0.3.
