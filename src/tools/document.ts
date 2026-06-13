@@ -2,6 +2,7 @@ import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, basename, extname } from 'node:path';
 import { execSync } from 'node:child_process';
 import type { LocalClawTool, ToolContext } from './types.js';
+import { renderTemplate, AVAILABLE_TEMPLATES, type DocumentContent } from './document-templates.js';
 
 const SOFFICE = process.env.SOFFICE_PATH ?? '/opt/homebrew/bin/soffice';
 const OUTPUT_DIR = 'data/media/documents';
@@ -90,6 +91,8 @@ filename (optional): Output filename without extension (default: "document").`,
         inputPath: { type: 'string', description: 'Input file path for "convert" action' },
         format: { type: 'string', description: 'Target output format', enum: SUPPORTED_FORMATS },
         filename: { type: 'string', description: 'Output filename without extension (default: "document")' },
+        template: { type: 'string', description: `Document template for professional formatting: ${AVAILABLE_TEMPLATES.join(', ')}. Default: simple.`, enum: [...AVAILABLE_TEMPLATES] },
+        templateData: { type: 'string', description: 'JSON string with template data: {"title":"...","subtitle":"...","author":"...","date":"...","sections":[{"heading":"...","content":"..."}],"metadata":{"to":"...","from":"..."}}' },
       },
       required: ['action', 'format'],
     },
@@ -106,7 +109,21 @@ filename (optional): Output filename without extension (default: "document").`,
       mkdirSync(OUTPUT_DIR, { recursive: true });
 
       if (action === 'create') {
-        const content = params.content as string;
+        let content = params.content as string;
+        const templateName = (params.template as string) ?? 'simple';
+        const templateDataStr = params.templateData as string | undefined;
+
+        // If template data provided, render through template engine
+        if (templateDataStr && templateName !== 'simple') {
+          try {
+            const data = JSON.parse(templateDataStr) as DocumentContent;
+            content = renderTemplate(templateName, data);
+            console.log(`[Document] Using template: ${templateName}`);
+          } catch (err) {
+            console.warn(`[Document] Template data parse failed, using raw content:`, err instanceof Error ? err.message : err);
+          }
+        }
+
         if (!content) return 'Missing "content" parameter for create action.';
 
         // Determine source format from content

@@ -92,8 +92,20 @@ export async function runHeartbeat(deps: HeartbeatDeps): Promise<void> {
       console.log(`[Heartbeat] Cleaned up ${cleaned} old media files`);
     }
 
-    // --- Intelligent memory management ---
+    // --- Memory decay ---
     const senderId = hb.delivery.target;
+    if (graphMemory && senderId) {
+      try {
+        const decay = await graphMemory.applyDecay(senderId);
+        if (decay.removed > 0 || decay.reviewCandidates.length > 0) {
+          console.log(`[Heartbeat] Memory decay: ${decay.removed} removed, ${decay.reviewCandidates.length} review candidates`);
+        }
+      } catch (err) {
+        console.warn('[Heartbeat] Memory decay failed:', err instanceof Error ? err.message : err);
+      }
+    }
+
+    // --- Intelligent memory management ---
 
     // Auto-cancel overdue tasks + remove duplicates
     if (taskStore) {
