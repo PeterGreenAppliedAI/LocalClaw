@@ -142,7 +142,9 @@ export class GraphMemoryStore {
       return null;
     }
 
-    // Contradiction check: find similar (but not duplicate) facts that might be superseded
+    // Contradiction check: find similar (but not duplicate) facts that might be superseded.
+    // Collect IDs here; the SUPERSEDES edges are created after the new Fact node exists (below).
+    const supersededIds: string[] = [];
     try {
       const similarCheck = await this.graph!.query(
         `CALL db.idx.vector.queryNodes('Fact', 'embedding', 3, vecf32($emb))
@@ -169,11 +171,7 @@ export class GraphMemoryStore {
           });
           const answer = (response.message?.content ?? '').trim().toUpperCase();
           if (answer.startsWith('YES')) {
-            // Auto-supersede the old fact
-            await this.graph!.query(
-              `MATCH (old:Fact {id: $oldId}) SET old.superseded = true`,
-              { params: { oldId: existingId } }
-            );
+            supersededIds.push(existingId);
             console.log(`[GraphMemory] Contradiction: "${text.slice(0, 40)}..." supersedes "${existingText.slice(0, 40)}..."`);
           }
         } catch { /* contradiction check is best-effort */ }
@@ -202,6 +200,18 @@ export class GraphMemoryStore {
         },
       }
     );
+
+    // Create SUPERSEDES edges for any contradictions found above (new -> old)
+    for (const oldId of supersededIds) {
+      try {
+        await this.graph!.query(
+          `MATCH (newF:Fact {id: $newId}), (old:Fact {id: $oldId})
+           CREATE (newF)-[:SUPERSEDES {at: $now}]->(old)
+           SET old.superseded = true`,
+          { params: { newId: id, oldId, now } }
+        );
+      } catch { /* best-effort */ }
+    }
 
     // Extract entities via LLM NER when none provided
     let entities: Array<{ name: string; type: string }> = [];

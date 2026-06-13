@@ -583,7 +583,7 @@ export class Orchestrator {
           if (this.graphMemory) {
             for (const fact of facts) {
               try {
-                await this.graphMemory.addFact(fact, senderId);
+                await this.graphMemory.addFact(fact, senderId, sessionKey);
               } catch (err) {
                 console.warn(`[Heartbeat] Graph write failed for "${fact.text.slice(0, 50)}":`, err instanceof Error ? err.message : err);
               }
@@ -693,7 +693,7 @@ export class Orchestrator {
         if (this.graphMemory) {
           for (const fact of pending.facts) {
             try {
-              await this.graphMemory.addFact(fact, senderId);
+              await this.graphMemory.addFact(fact, senderId, route.sessionKey);
             } catch (err) {
               console.warn(`[Facts] Graph write failed for "${fact.text.slice(0, 50)}":`, err instanceof Error ? err.message : err);
             }

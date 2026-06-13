@@ -44,6 +44,7 @@ export function createMemorySaveTool(
           const id = await graphMemory.addFact(
             { text: content, category, confidence: 1.0, source: 'user/memory_save', importance },
             ctx.senderId ?? 'unknown',
+            ctx.sessionKey,
           );
           if (!id) return 'Already saved (duplicate detected).';
           return `Saved [${category}] fact (conf: 1.0, id: ${id})`;
