@@ -622,8 +622,8 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       /\[\w+\s*\(.*\)\]/i,
       // Promises of action chat can't keep — "let me search", "I'll look that up", "going to find"
       // Chat has no tools, so a future-action promise is a capability gap → re-route to a specialist.
-      /\b(?:let me|i'?ll|i will|i'?m going to|i'?m gonna|give me a (?:sec|moment) and i'?ll)\s+(?:search|look up|look into|find|check|pull up|dig up|google|research|fetch|browse)/i,
-      /\b(?:on it|let me pull together|let me dig into)\b/i,
+      // Requires a search/research VERB so generic acks ("on it", "I'll help") don't trigger.
+      /\b(?:let me|i'?ll|i will|i'?m going to|i'?m gonna|give me a (?:sec|moment) and i'?ll)\s+(?:search|look up|look into|find|check|pull up|pull together|dig up|dig into|google|research|fetch|browse)/i,
     ];
     if (CAPABILITY_GAP_PATTERNS.some(p => p.test(stripThinking(result.answer)))) {
       const handoffMessage = await summarizeForHandoff();
@@ -1074,6 +1074,7 @@ async function runPipelineDispatch(
     workspaceContext,
     userPriming: userPriming || undefined,
     model: specialist.model,
+    contextSize: specialist.contextSize ?? config.session.contextSize,
     routerModel: config.router?.model,
     sourceContext: params.sourceContext,
     onStream: params.onStream,

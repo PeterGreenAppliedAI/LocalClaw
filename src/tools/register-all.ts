@@ -154,8 +154,8 @@ export async function registerAllTools(
     registry.register(createTaskRemoveTool(options.taskStore));
   }
 
-  // Reason tool (requires Ollama client + reasoning config)
-  if (options?.ollamaClient && config.reasoning) {
+  // Reason tool (requires Ollama client + an explicitly configured reasoning model)
+  if (options?.ollamaClient && config.reasoning?.model) {
     registry.register(createReasonTool(options.ollamaClient, config.reasoning));
   }
 

@@ -74,11 +74,12 @@ const BUCKET_PATTERNS: Array<{ pattern: RegExp; bucket: string }> = [
   // real_estate MUST precede finance — "off market"/"real estate market" contain "market" (a finance keyword).
   // Stems use leading \b only (no trailing) so plurals/suffixes match: properties, listings, foreclosure.
   { pattern: /\b(propert|parcel|real estate|off.?market|listing|zoning|foreclos|lien|deed|realtor|mls|condo|co-?ops?\b)/i, bucket: 'real_estate' },
+  // hardware MUST precede finance AND ai_tech — product/GPU terms else get stolen by finance's
+  // "market" ("RTX market", "GPU hardware market") or ai_tech's "inference". Product lines
+  // (rtx/radeon/ryzen/dgx/strix, apple m-series/mlx) are unambiguous hardware; bare "nvidia/amd/apple"
+  // stay out so "NVIDIA/Apple stock" still routes to finance.
+  { pattern: /\b(gpu|hardware|rtx|radeon|geforce|ryzen|threadripper|epyc|strix|dgx|instinct|tensor core|vram|npu|workstation|server|rack|nvme|motherboard|apple silicon|apple m[1-4]|mac studio|mac mini|macbook|mlx|unified memory|m[1-4] (pro|max|ultra|chip))\b/i, bucket: 'hardware' },
   { pattern: /\b(stock|market|earnings|revenue|profit|investor|ipo|nasdaq|nyse|dividend|valuation)\b/i, bucket: 'finance' },
-  // hardware MUST precede ai_tech — "GPU/hardware for inference" else gets stolen by ai_tech's "inference".
-  // Product lines (rtx/radeon/ryzen/dgx/strix...) are unambiguous hardware; bare "nvidia/amd" stay out
-  // (they collide with finance "stock"). "hardware" word + components route here.
-  { pattern: /\b(gpu|hardware|rtx|radeon|geforce|ryzen|threadripper|epyc|strix|dgx|instinct|tensor core|vram|npu|workstation|server|rack|nvme|motherboard|apple silicon|mac studio|mac mini|macbook|mlx|unified memory|m[1-4] (pro|max|ultra))\b/i, bucket: 'hardware' },
   { pattern: /\b(ai|llm|model|ollama|anthropic|openai|transformer|inference|training|neural|deep learning|machine learning|gpt|claude|gemma|qwen|llama)\b/i, bucket: 'ai_tech' },
   { pattern: /\b(health|medical|symptom|disease|treatment|doctor|hospital|diagnosis|medication|clinical)\b/i, bucket: 'health' },
   { pattern: /\b(event|conference|meetup|workshop|hackathon|networking|summit|expo)\b/i, bucket: 'events' },

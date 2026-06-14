@@ -13,7 +13,7 @@ function logQualityReview(entry: Record<string, unknown>): void {
 
 /**
  * Web search pipeline: extract(query, count) → tool(web_search) → code(pick top URLs)
- *   → loop(web_fetch each URL, max 3) → llm(synthesize with sources)
+ *   → parallel(web_fetch each URL, top 5) → llm(synthesize with sources)
  *
  * Replaces the ReAct loop for the "web_search" category.
  */
@@ -80,7 +80,7 @@ export const webSearchPipeline: PipelineDefinition = {
       tool: 'web_fetch',
       resolveParamsList: (ctx) => {
         const urls = ctx.params._urls as string[];
-        return urls.map(url => ({ url, extractMode: 'text', maxChars: '3000' }));
+        return urls.map(url => ({ url, extractMode: 'text', maxChars: '6000' }));
       },
     },
     {
@@ -99,7 +99,7 @@ export const webSearchPipeline: PipelineDefinition = {
       type: 'llm',
       stream: true,
       temperature: 0.4,
-      maxTokens: 2048,
+      maxTokens: 8192,
       buildPrompt: (ctx) => {
         const searchResults = ctx.stageResults.search as string;
         const pages = (ctx.params._pages as string[] | undefined) ?? [];

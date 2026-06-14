@@ -26,7 +26,7 @@ export function createReasonTool(client: OllamaClient, config: ReasoningConfig):
       const userContent = context ? `${prompt}\n\n---\nContext:\n${context}` : prompt;
 
       const response = await client.chat({
-        model: config.model,
+        model: config.model!,  // guaranteed set — register-all only registers this tool when reasoning.model exists
         messages: [
           {
             role: 'system',

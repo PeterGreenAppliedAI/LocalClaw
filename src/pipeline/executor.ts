@@ -56,6 +56,9 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
         temperature: stage.temperature ?? 0.5,
         num_predict: stage.maxTokens ?? 2048,
       };
+      // Set num_ctx so synthesis stages with large fetched-page inputs aren't truncated by a
+      // small Ollama default. (vLLM/MiniMax ignores num_ctx — it serves its full context.)
+      if (ctx.contextSize) stageOptions.num_ctx = ctx.contextSize;
       if (stage.topK !== undefined) stageOptions.top_k = stage.topK;
       if (stage.topP !== undefined) stageOptions.top_p = stage.topP;
       if (stage.repeatPenalty !== undefined) stageOptions.repeat_penalty = stage.repeatPenalty;

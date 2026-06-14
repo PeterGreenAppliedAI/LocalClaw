@@ -269,7 +269,9 @@ export const VisionConfigSchema = z.object({
 });
 
 export const ReasoningConfigSchema = z.object({
-  model: z.string().default('nemotron-3-nano:30b'),
+  // No default model — the `reason` tool is only registered when a model is explicitly set,
+  // so an empty `reasoning: {}` can never point at a stale/dead model.
+  model: z.string().optional(),
   maxTokens: z.number().default(8192),
   temperature: z.number().default(0.6),
 });

@@ -31,6 +31,15 @@ describe('search-buckets', () => {
       expect(detectBucket('Apple M4 Max for local inference')).toBe('hardware');
       expect(detectBucket('Mac Studio for running LLMs')).toBe('hardware');
       expect(detectBucket('MLX vs llama.cpp on M3 Ultra')).toBe('hardware');
+      expect(detectBucket('M4 chip local LLM performance')).toBe('hardware');
+    });
+
+    it('hardware beats finance when the query contains "market"', () => {
+      // "RTX market" / "GPU hardware market" must not get stolen by finance's "market" keyword
+      expect(detectBucket('GPU hardware market for local inference')).toBe('hardware');
+      expect(detectBucket('RTX 5090 market')).toBe('hardware');
+      // ...but a pure market/finance query with no hardware product term stays finance
+      expect(detectBucket('semiconductor market trends')).toBe('finance');
     });
 
     it('does not let hardware steal finance (NVIDIA/Apple stock) or pure-AI queries', () => {

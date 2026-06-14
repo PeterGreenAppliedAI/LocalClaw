@@ -29,6 +29,8 @@ export interface PipelineContext {
   userPriming?: string;
   /** Specialist model name */
   model: string;
+  /** Input context window for llm stages (num_ctx). From the specialist/session config. */
+  contextSize?: number;
   /** Fast router model for classification tasks (e.g., llm_branch) */
   routerModel?: string;
   /** Source context from dispatch */
