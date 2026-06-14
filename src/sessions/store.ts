@@ -82,6 +82,10 @@ export class SessionStore {
     } catch {
       // Ignore
     }
+
+    // Reset turn count to 0 — otherwise stale metadata could let a turn-count-keyed
+    // compaction cache reuse old history for the freshly cleared session.
+    this.updateMetadata(agentId, sessionKey, 0);
   }
 
   loadSummary(agentId: string, sessionKey: string): CompactionSummary | null {

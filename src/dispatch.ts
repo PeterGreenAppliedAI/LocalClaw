@@ -80,6 +80,12 @@ export function clearWorkspaceCache(sessionKey?: string): void {
     workspaceCache.clear();
   }
 }
+
+/** Clear cached compaction state — called on session reset so a fresh session
+ *  can never reuse the prior session's compacted history. */
+export function clearCompactionCache(agentId: string, sessionKey: string): void {
+  compactionCache.delete(`${agentId}:${sessionKey}`);
+}
 import { computeBudget } from './context/budget.js';
 import { buildCompactedHistory } from './context/compactor.js';
 import { PipelineRegistry } from './pipeline/registry.js';
@@ -716,6 +722,40 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       model: specialistConfig?.model,
       iterations: result.iterations,
     });
+
+    // Prewarm compaction for the NEXT dispatch: build + cache it keyed to the post-append
+    // turn count. Without this, the turn-count gate would miss after every exchange and
+    // recompute synchronously. Best-effort, background; uses the pre-routing budget so the
+    // cached result matches what the next message's pre-routing compaction would produce.
+    const newTurnCount = sessionStore.getMetadata(agentId, sessionKey)?.turnCount ?? 0;
+    const prewarmKey = `${agentId}:${sessionKey}`;
+    if (!pendingCompactions.has(prewarmKey)) {
+      pendingCompactions.add(prewarmKey);
+      const wsPath = resolveWorkspacePath(agentId, config);
+      const wsCtx = getCachedWorkspaceContext(sessionKey, wsPath, 'minimal');
+      const prewarmBudget = computeBudget({
+        contextSize: config.session.contextSize,
+        systemPrompt: '',
+        workspaceContext: wsCtx,
+        currentMessage: '',
+        outputReserve: 4096,
+      });
+      buildCompactedHistory({
+        store: sessionStore, client, agentId, sessionKey,
+        budgetTokens: prewarmBudget.historyBudget,
+        recentTurnsToKeep: config.session.recentTurnsToKeep,
+        model: config.router.model,
+        workspacePath: wsPath,
+        factStore: params.factStore,
+        senderId: params.sourceContext?.senderId,
+      }).then(result => {
+        compactionCache.set(prewarmKey, { messages: result.messages, cachedAt: Date.now(), turnCount: newTurnCount });
+      }).catch(err => {
+        console.warn('[Dispatch] Prewarm compaction failed:', err instanceof Error ? err.message : err);
+      }).finally(() => {
+        pendingCompactions.delete(prewarmKey);
+      });
+    }
   }
 
   // Return with display-safe answer (thinking stripped for channel delivery)
