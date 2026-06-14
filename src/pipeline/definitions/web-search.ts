@@ -48,7 +48,15 @@ export const webSearchPipeline: PipelineDefinition = {
 
         const p: Record<string, unknown> = { query: enhancedQuery };
         if (ctx.params.count) p.count = ctx.params.count;
-        if (ctx.params.freshness) p.freshness = ctx.params.freshness;
+        // Freshness: trust the extractor if set, else force a recency window when the
+        // query signals "recent" — prevents evergreen/historical pages answering a "latest" ask.
+        if (ctx.params.freshness) {
+          p.freshness = ctx.params.freshness;
+        } else if (/\b(recent|latest|newest|just (released|announced|launched|dropped)|this (week|month|year)|right now|currently|up.?to.?date|2026)\b/i.test(query)) {
+          p.freshness = 'month';
+          ctx.params.freshness = 'month';
+          console.log('[WebSearch] Recency query detected — forcing freshness=month');
+        }
         return p;
       },
     },
@@ -123,6 +131,13 @@ export const webSearchPipeline: PipelineDefinition = {
           return;
         }
 
+        // Add a recency check only when the query asked for current/recent info
+        const isRecencyQuery = !!ctx.params.freshness;
+        const today = new Date().toISOString().split('T')[0];
+        const recencyCheck = isRecencyQuery
+          ? `\n5. RECENCY: The user asked for recent/current info (today is ${today}). Does the content actually cover recent developments, or is it a stale/historical overview? FAIL if the bulk of the answer is more than ~1 year old when recency was requested.`
+          : '';
+
         try {
           const response = await ctx.client.chat({
             model: ctx.routerModel ?? ctx.model,
@@ -136,7 +151,7 @@ Check:
 1. Does it provide analysis or insight beyond restating search snippets/headlines?
 2. Are sources cited with URLs?
 3. Is it well-structured with clear sections (not a raw dump of results)?
-4. Does it comprehensively answer the original question: "${ctx.userMessage}"?
+4. Does it comprehensively answer the original question: "${ctx.userMessage}"?${recencyCheck}
 
 Respond with JSON: {"pass": true} if adequate, or {"pass": false, "fix": "brief instruction to improve"}`,
             }],
