@@ -141,14 +141,10 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
 
     // Handle !research command
     if (trimmed.toLowerCase().startsWith('!research')) {
-      const rawArgs = trimmed.slice('!research'.length).trim();
-      const typeMatch = rawArgs.match(/^--(\w+)\s+/);
-      const validTypes = ['deck', 'brief', 'deepdive', 'market', 'teardown', 'memo'];
-      const artifactType = typeMatch && validTypes.includes(typeMatch[1]) ? typeMatch[1] : 'memo';
-      const topic = typeMatch ? rawArgs.slice(typeMatch[0].length).trim() : rawArgs;
+      const topic = trimmed.slice('!research'.length).trim();
 
       if (!topic) {
-        res.write(`data: ${JSON.stringify({ type: 'done', answer: 'Usage: `!research [--deck|--brief|--deepdive|--market|--teardown|--memo] <topic>`', category: 'research', iterations: 0 })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done', answer: 'Usage: `!research <topic>` — produces a researched PDF report', category: 'research', iterations: 0 })}\n\n`);
         clearInterval(keepalive);
         res.end();
         return;
@@ -156,9 +152,9 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
 
       const slug = topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
       const today = new Date().toISOString().split('T')[0];
-      const enhancedMessage = `[RESEARCH PIPELINE]\nArtifact type: ${artifactType}\nTopic: ${topic}\nOutput slug: ${slug}\nCurrent date: ${today}\n\nProduce a research deck on this topic using the MOST RECENT data available. Search for ${new Date().getFullYear()} data first. Follow your pipeline stages exactly.`;
+      const enhancedMessage = `[RESEARCH PIPELINE]\nTopic: ${topic}\nOutput slug: ${slug}\nCurrent date: ${today}\n\nProduce a thorough researched PDF report on this topic using the most recent data available (search for ${new Date().getFullYear()} data first).`;
 
-      res.write(`data: ${JSON.stringify({ type: 'status', message: `Researching: ${topic} (${artifactType})...` })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'status', message: `Researching: ${topic}...` })}\n\n`);
 
       const result = await deps.dispatch({
         message: enhancedMessage,

@@ -962,18 +962,12 @@ export class Orchestrator {
     }
 
     if (trimmed.startsWith('!research')) {
-      const rawArgs = msg.content.trim().slice('!research'.length).trim();
-
-      // Parse --type flag
-      const typeMatch = rawArgs.match(/^--(\w+)\s+/);
-      const validTypes = ['deck', 'brief', 'deepdive', 'market', 'teardown', 'memo', 'report'];
-      const artifactType = typeMatch && validTypes.includes(typeMatch[1]) ? typeMatch[1] : 'memo';
-      const topic = typeMatch ? rawArgs.slice(typeMatch[0].length).trim() : rawArgs;
+      const topic = msg.content.trim().slice('!research'.length).trim();
 
       if (!topic) {
         await this.channelRegistry.send(
           { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
-          { text: 'Usage: `!research [--deck|--brief|--deepdive|--market|--teardown|--memo|--report] <topic>`\n\nExample: `!research --report AI regulation trends`' },
+          { text: 'Usage: `!research <topic>`\n\nExample: `!research AI regulation trends in 2026`\nProduces a researched PDF report.' },
         );
         return;
       }
@@ -987,12 +981,12 @@ export class Orchestrator {
       // Send progress indicator
       await this.channelRegistry.send(
         { channel: msg.channel, channelId: msg.channelId!, replyToId: msg.id },
-        { text: `🔬 Researching: **${topic}** (${artifactType})\nThis may take a few minutes...` },
+        { text: `🔬 Researching: **${topic}**\nThis may take a few minutes...` },
       ).catch((err) => { console.warn('[Orchestrator] Send failed:', err instanceof Error ? err.message : err); });
 
       try {
         const today = new Date().toISOString().split('T')[0];
-        const enhancedMessage = `[RESEARCH PIPELINE]\nArtifact type: ${artifactType}\nTopic: ${topic}\nOutput slug: ${slug}\nCurrent date: ${today}\n\nProduce a research deck on this topic using the MOST RECENT data available. Search for ${new Date().getFullYear()} data first. Follow your pipeline stages exactly.`;
+        const enhancedMessage = `[RESEARCH PIPELINE]\nTopic: ${topic}\nOutput slug: ${slug}\nCurrent date: ${today}\n\nProduce a thorough researched PDF report on this topic using the most recent data available (search for ${new Date().getFullYear()} data first).`;
 
         const result = await dispatchMessage({
           client: this.client,

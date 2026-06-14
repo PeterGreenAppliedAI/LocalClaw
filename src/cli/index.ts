@@ -148,7 +148,7 @@ async function main() {
           client,
           registry,
           config,
-          message: `[RESEARCH PIPELINE]\nArtifact type: memo\nTopic: ${topic}\nOutput slug: ${topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)}\nCurrent date: ${new Date().toISOString().split('T')[0]}\n\nProduce a research deck on this topic.`,
+          message: `[RESEARCH PIPELINE]\nTopic: ${topic}\nOutput slug: ${topic.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)}\nCurrent date: ${new Date().toISOString().split('T')[0]}\n\nProduce a thorough researched PDF report on this topic.`,
           agentId,
           sessionKey,
           history,

@@ -1,899 +1,398 @@
-import { writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PipelineDefinition } from '../types.js';
+import type { PipelineDefinition, PipelineContext } from '../types.js';
+import { markdownToHtml } from '../../utils/markdown-to-html.js';
+import { detectBucket, buildSiteFilter, prioritizeUrls } from '../search-buckets.js';
 
-// --- Artifact type slide structure guides ---
-const SECTION_GUIDES: Record<string, string> = {
-  memo: 'Title → Key Findings → Context → Analysis → Evidence → Recommendations → Sources (6-8 slides)',
-  brief: 'Title → BLUF → Situation → Problem → Recommendation → Options → Risks → Timeline → Action → Appendix (8-12 slides)',
-  deck: 'Title → Exec Summary → Highlights → Challenges → KPIs → Financials → Market → Competition → Strategy → Recommendations → Appendix (10-15 slides)',
-  market: 'Title → Exec Summary → Industry Overview → Trends → Segments → Landscape Map → Competitors → Share → SWOT → Recommendations → Projections → Appendix (12-15 slides)',
-  teardown: 'Title → Exec Summary → Competitor Overview → Product Matrix → Pricing → Strengths/Weaknesses → Positioning → Opportunities → Recommendations → Appendix (10-12 slides)',
-  deepdive: 'Title → Context → Architecture → Flow → Deep Dive → Performance → Trade-offs → Limitations → Roadmap → Appendix (10-15 slides)',
-  report: 'Executive Summary → Background → Analysis Section 1 → Analysis Section 2 → Analysis Section 3 → Data & Evidence → Recommendations → Sources (6-10 sections)',
-};
+/**
+ * Research pipeline — REAL research, not a search.
+ *
+ * Flow: decompose topic into facets → investigate each facet in parallel
+ * (search → deep fetch → per-facet synthesis) → gap-check + supplementary →
+ * analytical final synthesis (markdown) → deterministic HTML render → PDF.
+ *
+ * The model writes MARKDOWN (its strength); code converts it to valid HTML and
+ * assembles the report (no LLM-authored HTML). Output is always a PDF.
+ * Gated to explicit "research/report/deep-dive" requests by the router.
+ */
 
 const CHART_RULES = `Chart rules:
 - import matplotlib; matplotlib.use('Agg')
-- Save to: data/workspaces/main/research/<SLUG>/chart_name.png
-- Create dir first: os.makedirs('data/workspaces/main/research/<SLUG>', exist_ok=True)
-- EVERY chart MUST have: descriptive title, labeled axes, legend if multiple series, data labels on bars/points
-- plt.tight_layout() then plt.close() after saving
-- For stocks use yfinance. For other data, use values from research.
+- Save each chart to: data/workspaces/main/research/<SLUG>/<chart_name>.png
+- Create the dir first: os.makedirs('data/workspaces/main/research/<SLUG>', exist_ok=True)
+- EVERY chart MUST have: a descriptive title, labeled axes, a legend if multiple series, and data labels.
+- Call plt.tight_layout() then plt.close() after saving each figure.
+- Use ONLY the data provided in the chart specs — never invent numbers.
 
-CRITICAL — chart styling boilerplate (copy EXACTLY at the top of the script):
+Styling boilerplate (use a clean light theme suitable for a printed PDF report):
 \`\`\`python
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import seaborn as sns
+plt.rcParams.update({'figure.facecolor':'#ffffff','axes.facecolor':'#ffffff','font.size':11,'axes.titlesize':13,'axes.labelsize':11,'figure.figsize':(8,4.5),'savefig.dpi':130})
+\`\`\``;
 
-plt.rcParams.update({
-    'figure.facecolor': '#1a1a2e',
-    'axes.facecolor': '#16213e',
-    'axes.edgecolor': '#e0e0e0',
-    'axes.labelcolor': '#ffffff',
-    'text.color': '#ffffff',
-    'xtick.color': '#e0e0e0',
-    'ytick.color': '#e0e0e0',
-    'legend.facecolor': '#16213e',
-    'legend.edgecolor': '#444444',
-    'legend.labelcolor': '#ffffff',
-    'grid.color': '#2a2a4a',
-    'font.size': 12,
-    'axes.titlesize': 14,
-    'axes.labelsize': 12,
-})
-sns.set_theme(style='darkgrid', rc=plt.rcParams)
-\`\`\`
-Every axis label, tick label, title, legend, and data annotation MUST be clearly readable on the dark background. Use #ffffff for all text.`;
-
-const DECK_TEMPLATE = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TITLE</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css">
-<style>
-.reveal{font-family:'Segoe UI',system-ui,sans-serif}
-.reveal h1,.reveal h2,.reveal h3{font-weight:600;text-transform:none;letter-spacing:-0.02em}
-.reveal h1{font-size:2.2em} .reveal h2{font-size:1.6em}
-.reveal h3{font-size:1.2em;color:#8be9fd}
-.reveal p,.reveal li{font-size:0.85em;line-height:1.6}
-.reveal ul{text-align:left}
-.reveal .subtitle{font-size:0.7em;color:#aaa;margin-top:0.5em}
-.reveal .metric{font-size:2.5em;font-weight:700;color:#50fa7b}
-.reveal .metric-label{font-size:0.6em;color:#aaa}
-.reveal table{margin:0 auto;border-collapse:collapse;font-size:0.75em}
-.reveal th,.reveal td{padding:0.4em 1em;border:1px solid #444}
-.reveal th{background:#333}
-.reveal .two-col{display:flex;gap:2em;text-align:left}
-.reveal .two-col>div{flex:1}
-.reveal .slides section{overflow:hidden;box-sizing:border-box;max-height:700px}
-.reveal img{max-height:350px}
-.reveal .source{font-size:0.5em;color:#666;margin-top:1em}
-.reveal .callout{background:#1e1e3f;border-left:4px solid #8be9fd;padding:0.8em 1.2em;margin:0.5em 0;text-align:left;border-radius:4px}
-</style>
-</head>
-<body>
-<div class="reveal"><div class="slides">
-<!-- SLIDES -->
-</div></div>
-<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
-<script>Reveal.initialize({hash:true,controls:true,progress:true,slideNumber:true,transition:'slide',width:1280,height:720});</script>
-</body></html>`;
-
-const SLIDE_COMPONENTS = `Slide components:
-- Title: <section><h1>Title</h1><p class="subtitle">Subtitle</p></section>
-- Bullets: <section><h2>Title</h2><ul><li>Point</li></ul></section>
-- Metric: <section><h2>Label</h2><div class="metric">$4.2B</div><div class="metric-label">Description</div></section>
-- Two-column: <section><h2>Title</h2><div class="two-col"><div><h3>Left</h3><p>...</p></div><div><h3>Right</h3><p>...</p></div></div></section>
-- Chart: <section><h2>Title</h2><img src="/console/api/files/research/SLUG/chart.png" alt="desc"></section>
-- Image: <section><h2>Title</h2><img src="/console/api/files/research/SLUG/image.png" alt="desc" style="max-height:450px"></section>
-- Callout: <div class="callout">Key insight</div>
-- Source: <p class="source">Source: URL</p>`;
-
-// --- Report mode: professional document styling ---
 const REPORT_CSS = `
 body { font-family: Georgia, 'Times New Roman', serif; color: #1a1a1a; background: #fff; margin: 0; padding: 0; line-height: 1.7; }
 .report { max-width: 780px; margin: 0 auto; padding: 40px 50px; }
-h1.report-title { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #111; border-bottom: 3px solid #2563eb; padding-bottom: 12px; margin-bottom: 8px; }
+h1 { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 28px; font-weight: 700; color: #111; border-bottom: 3px solid #2563eb; padding-bottom: 12px; margin-bottom: 8px; }
 .report-meta { font-size: 13px; color: #666; margin-bottom: 30px; }
 h2 { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 20px; font-weight: 600; color: #1e40af; margin-top: 32px; margin-bottom: 12px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
 h3 { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 16px; font-weight: 600; color: #374151; margin-top: 20px; }
 p { margin: 10px 0; font-size: 14px; }
 ul, ol { margin: 10px 0 10px 20px; font-size: 14px; }
 li { margin-bottom: 6px; }
-.executive-summary { background: #f0f4ff; border-left: 4px solid #2563eb; padding: 16px 20px; margin: 20px 0; border-radius: 0 4px 4px 0; }
-.executive-summary p { margin: 6px 0; }
-.callout { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0; font-size: 14px; }
+blockquote { border-left: 4px solid #f59e0b; background: #fffbeb; margin: 16px 0; padding: 8px 16px; font-size: 14px; }
 table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
-th { background: #1e40af; color: #fff; padding: 10px 14px; text-align: left; font-family: 'Segoe UI', system-ui, sans-serif; font-weight: 600; white-space: nowrap; }
+th { background: #1e40af; color: #fff; padding: 10px 14px; text-align: left; font-family: 'Segoe UI', system-ui, sans-serif; font-weight: 600; }
 td { padding: 8px 14px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
 tr:nth-child(even) td { background: #f9fafb; }
 img { max-width: 100%; height: auto; margin: 16px 0; border: 1px solid #e5e7eb; border-radius: 4px; }
-.sources { margin-top: 40px; border-top: 2px solid #e5e7eb; padding-top: 16px; }
-.sources h2 { color: #6b7280; font-size: 16px; }
-.sources ol { font-size: 12px; color: #4b5563; }
-.sources a { color: #2563eb; text-decoration: none; }
-.sources a:hover { text-decoration: underline; }
+code { background: #f3f4f6; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
 a { color: #2563eb; }
-@media print { .report { padding: 20px; } h2 { page-break-after: avoid; } section { page-break-inside: avoid; } }
+@media print { .report { padding: 20px; } h2 { page-break-after: avoid; } }
 `;
 
-const REPORT_TEMPLATE = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>TITLE</title>
-<style>${REPORT_CSS}</style>
-</head>
-<body>
-<div class="report">
-<!-- CONTENT -->
-</div>
-</body>
-</html>`;
+const REPORT_TEMPLATE = (title: string, body: string) => `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>${title}</title>
+<style>${REPORT_CSS}</style></head>
+<body><div class="report">${body}</div></body></html>`;
 
-const REPORT_COMPONENTS = `Report HTML components:
-- Title: <h1 class="report-title">Report Title</h1><div class="report-meta">Date | Source Count</div>
-- Executive Summary: <div class="executive-summary"><p>Key finding 1.</p><p>Key finding 2.</p></div>
-- Section: <section><h2>Section Title</h2><p>Full paragraph with detailed analysis...</p><p>Another paragraph...</p></section>
-- Subsection: <h3>Subtopic</h3><p>Details...</p>
-- Callout: <div class="callout"><strong>Key Insight:</strong> Important finding here.</div>
-- Table: <table><thead><tr><th>Column</th></tr></thead><tbody><tr><td>Data</td></tr></tbody></table>
-- Chart: <img src="ABSOLUTE_PATH/chart.png" alt="Description">
-- Sources: <div class="sources"><h2>Sources</h2><ol><li><a href="URL">Title - Domain</a></li></ol></div>
-- Inline citation: <sup>[1]</sup> (number matches source list)`;
+// --- helpers ---
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'research';
+}
+function stripThinking(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/\/no_?think/gi, '').trim();
+}
+function extractUrls(text: string): string[] {
+  return [...new Set(text.match(/https?:\/\/[^\s)"\]]+/g) ?? [])];
+}
+function wantsFreshness(text: string): boolean {
+  return /\b(recent|latest|newest|current|today|this year|2026|2025|now|upcoming)\b/i.test(text);
+}
+
+interface AngleResult { angle: string; findings: string; sources: string[]; }
+
+/** Investigate ONE facet: bucket-aware search → deep fetch → focused synthesis. */
+async function researchAngle(ctx: PipelineContext, angle: string): Promise<AngleResult> {
+  try {
+    const bucket = detectBucket(angle);
+    const siteFilter = bucket ? buildSiteFilter(bucket) : null;
+    const query = siteFilter ? `${angle} (${siteFilter})` : angle;
+    const searchParams: Record<string, unknown> = { query, count: '6' };
+    if (wantsFreshness(angle) || wantsFreshness(ctx.params.topic as string)) searchParams.freshness = 'month';
+
+    const searchResult = await ctx.executor('web_search', searchParams, ctx.toolContext);
+    const urls = prioritizeUrls(extractUrls(searchResult), bucket).slice(0, 4);
+
+    const fetched = await Promise.all(urls.map(async (url) => {
+      try {
+        const content = await ctx.executor('web_fetch', { url, extractMode: 'text', maxChars: '6000' }, ctx.toolContext);
+        return { url, content };
+      } catch { return { url, content: '' }; }
+    }));
+    const valid = fetched.filter(f => f.content && !f.content.startsWith('Error') && f.content.length > 120);
+    if (valid.length === 0) return { angle, findings: '', sources: [] };
+
+    const sourceBlocks = valid.map((f, i) => `[Source ${i + 1}: ${f.url}]\n${f.content}`).join('\n\n---\n\n');
+    const resp = await ctx.client.chat({
+      model: ctx.model,
+      messages: [
+        { role: 'system', content: [
+          'You are a research analyst investigating ONE facet of a larger topic.',
+          'From the sources below, extract the concrete findings, data points, specs, dates, and claims relevant to THIS facet only.',
+          'Cite every claim inline with its source as [n] (matching the [Source n] blocks).',
+          'Be factual. If sources disagree, say so explicitly. Do NOT fabricate — only use what the sources say.',
+          'Output concise markdown — short paragraphs or bullets. No preamble, no conclusion. /no_think',
+        ].join('\n') },
+        { role: 'user', content: `Facet: ${angle}\n\nSources:\n${sourceBlocks}` },
+      ],
+      options: { temperature: 0.3, num_predict: 1600, ...(ctx.contextSize ? { num_ctx: ctx.contextSize } : {}) },
+    });
+    return { angle, findings: stripThinking(resp.message?.content ?? ''), sources: valid.map(f => f.url) };
+  } catch (err) {
+    console.warn(`[Research] Angle failed "${angle.slice(0, 50)}":`, err instanceof Error ? err.message : err);
+    return { angle, findings: '', sources: [] };
+  }
+}
 
 export const researchPipeline: PipelineDefinition = {
   name: 'research',
   stages: [
-    // --- STAGE 0: Extract topic, artifact type, slug ---
+    // 0. Extract topic + slug
     {
       name: 'extract_params',
       type: 'extract',
       schema: {
-        topic: { type: 'string', description: 'The research topic', required: true },
-        artifactType: {
-          type: 'string',
-          description: 'Type of research artifact to produce',
-          enum: ['memo', 'brief', 'deck', 'market', 'teardown', 'deepdive', 'report'],
-        },
-        slug: { type: 'string', description: 'URL-safe slug for output filename' },
+        topic: { type: 'string', description: 'The research topic or question', required: true },
+        slug: { type: 'string', description: 'URL-safe slug for the output filename' },
       },
       examples: [
-        { input: '[RESEARCH PIPELINE]\nArtifact type: market\nTopic: EV battery trends\nOutput slug: ev-battery-trends', output: { topic: 'EV battery trends', artifactType: 'market', slug: 'ev-battery-trends' } },
-        { input: '[RESEARCH PIPELINE]\nArtifact type: memo\nTopic: NVIDIA stock analysis\nOutput slug: nvidia-stock', output: { topic: 'NVIDIA stock analysis', artifactType: 'memo', slug: 'nvidia-stock' } },
+        { input: 'research the EV battery market and make me a PDF', output: { topic: 'EV battery market', slug: 'ev-battery-market' } },
+        { input: 'deep dive on local inference hardware in 2026', output: { topic: 'local inference hardware in 2026', slug: 'local-inference-hardware-2026' } },
       ],
     },
 
-    // --- Fill defaults ---
+    // 1. Defaults + conversational downgrade guard
     {
       name: 'defaults',
       type: 'code',
       execute: (ctx) => {
-        if (!ctx.params.artifactType) ctx.params.artifactType = 'memo';
-        if (!ctx.params.slug) {
-          ctx.params.slug = (ctx.params.topic as string)
-            .toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
-        }
-        ctx.params._searchQueries = [];
-        ctx.params._allSearchResults = '';
-        ctx.params._fetchedPages = [];
-        ctx.params._chartPaths = [];
-        ctx.params._imagePaths = [];
-        ctx.params._imageGenEnabled = !!(ctx.toolContext.config as any)?.imageGen?.enabled;
-      },
-    },
-
-    // --- Infer report type from natural language ---
-    {
-      name: 'infer_report_type',
-      type: 'code',
-      execute: (ctx) => {
-        const msg = ctx.userMessage.toLowerCase();
-
-        // Conversational downgrade: if user is mid-conversation and doesn't want a report/deck,
-        // abort the research pipeline and let dispatch re-route to web_search
+        if (!ctx.params.topic) ctx.params.topic = ctx.userMessage;
+        if (!ctx.params.slug) ctx.params.slug = slugify(ctx.params.topic as string);
+        // If we're mid-conversation and the user didn't actually ask for a report/deep-dive,
+        // abort and let dispatch re-route to the fast web_search pipeline.
         if (ctx.conversational) {
-          const hasArtifactIntent = /\b(report|deck|brief|pdf|docx|presentation|slide|deep.?dive|write.?up|memo|teardown|market|analyze|analysis)\b/i.test(msg);
-          if (!hasArtifactIntent) {
+          const wantsArtifact = /\b(report|deep.?dive|research|analy[sz]e|analysis|pdf|brief|write.?up|memo|market|teardown)\b/i.test(ctx.userMessage);
+          if (!wantsArtifact) {
             ctx.abort = true;
             ctx.answer = '__DOWNGRADE_TO_WEB_SEARCH__';
-            console.log('[Research] Conversational context, no artifact intent — downgrading to web_search');
-            return;
-          }
-        }
-
-        const currentType = ctx.params.artifactType as string;
-        if (!currentType || currentType === 'memo') {
-          if (/\b(pdf|docx)\b.*\breport\b/i.test(msg) || /\breport\b.*\b(pdf|docx)\b/i.test(msg) || /\bpdf report\b/i.test(msg)) {
-            ctx.params.artifactType = 'report';
-            console.log('[Research] Inferred artifact type: report (from message keywords)');
+            console.log('[Research] Conversational, no artifact intent — downgrading to web_search');
           }
         }
       },
     },
 
-    // --- STAGE 1: PLAN — generate search queries ---
+    // 2. Decompose the topic into 4-6 distinct facets
     {
-      name: 'plan',
+      name: 'decompose',
       type: 'llm',
-      // model omitted → defaults to ctx.model (the dispatched specialist, e.g. MiniMax)
       temperature: 0.3,
-      maxTokens: 1024,
+      maxTokens: 700,
       buildPrompt: (ctx) => ({
         system: [
-          'You are a senior research analyst planning a briefing.',
-          'Given a research topic, output ONLY a JSON array of 3-5 specific search queries.',
-          'CRITICAL: If the topic mentions multiple items to compare (e.g., "A vs B vs C"), generate at least one dedicated query for EACH item. Do not rely on a single comparison query to cover all items.',
-          'Target PRIMARY sources: official specs, benchmarks, industry reports, not just news.',
-          'Include the current year in at least 2 queries for freshness.',
-          'Output format: ["first search query here", "second search query here", "third search query here"]',
-          'Replace the placeholder text with REAL, specific search queries about the topic.',
-          'Return ONLY the JSON array, nothing else. /no_think',
+          'You are a senior research analyst scoping an investigation.',
+          'Break the topic into 4-6 DISTINCT sub-questions/facets that together give comprehensive coverage.',
+          'Each facet should be a different angle (not a paraphrase): e.g. current state, key players/options, performance/benchmarks, costs/tradeoffs, recent developments, outlook.',
+          'If the topic names multiple entities to compare, ensure each gets dedicated coverage.',
+          'Output ONLY a JSON array of facet strings. Each facet should read as a searchable research question.',
+          'Example: ["What are the current AMD options for local inference?", "How does AMD ROCm performance compare to NVIDIA CUDA?", ...]',
+          'Return ONLY the JSON array. /no_think',
         ].join('\n'),
         user: `Topic: ${ctx.params.topic}\nCurrent year: ${new Date().getFullYear()}`,
       }),
     },
 
-    // --- Parse search queries ---
+    // 3. Parse facets
     {
-      name: 'parse_queries',
+      name: 'parse_angles',
       type: 'code',
       execute: (ctx) => {
-        const raw = (ctx.stageResults.plan as string).replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        const raw = stripThinking(ctx.stageResults.decompose as string);
+        let angles: string[] = [];
         try {
-          const match = raw.match(/\[[\s\S]*\]/);
-          if (match) {
-            const queries = JSON.parse(match[0]);
-            if (Array.isArray(queries)) {
-              ctx.params._searchQueries = queries.slice(0, 5);
-              console.log(`[Research] Search queries: ${queries.slice(0, 5).join(' | ')}`);
-              return queries;
-            }
-          }
+          const m = raw.match(/\[[\s\S]*\]/);
+          if (m) { const arr = JSON.parse(m[0]); if (Array.isArray(arr)) angles = arr.filter(a => typeof a === 'string' && a.length > 5); }
         } catch { /* fall through */ }
-        // Fallback: use the topic as a single query
-        ctx.params._searchQueries = [ctx.params.topic as string];
-        return ctx.params._searchQueries;
+        if (angles.length === 0) angles = [ctx.params.topic as string];
+        ctx.params._angles = angles.slice(0, 6);
+        console.log(`[Research] Facets (${(ctx.params._angles as string[]).length}): ${(ctx.params._angles as string[]).map(a => a.slice(0, 40)).join(' | ')}`);
       },
     },
 
-    // --- STAGE 2: RETRIEVE — parallel searches ---
+    // 4. Investigate each facet in parallel (search → fetch → synthesize)
     {
-      name: 'search_all',
-      type: 'parallel_tool',
-      tool: 'web_search',
-      resolveParamsList: (ctx) => {
-        const queries = ctx.params._searchQueries as string[];
-        return queries.map(q => ({ query: q, count: '5' }));
-      },
-    },
-
-    // --- Collect search results + pick top URLs ---
-    {
-      name: 'pick_urls',
+      name: 'research_angles',
       type: 'code',
-      execute: (ctx) => {
-        const results = ctx.stageResults.search_all as string[];
-        ctx.params._allSearchResults = results.join('\n\n---\n\n');
-        const allText = ctx.params._allSearchResults as string;
-        const urlMatches = allText.match(/https?:\/\/[^\s)"\]]+/g) ?? [];
-        const unique = [...new Set(urlMatches)].slice(0, 8);
-        ctx.params._urls = unique;
-        return unique;
+      execute: async (ctx) => {
+        const angles = ctx.params._angles as string[];
+        console.log(`[Research] Investigating ${angles.length} facets in parallel...`);
+        const results = await Promise.all(angles.map(a => researchAngle(ctx, a)));
+        const withFindings = results.filter(r => r.findings.trim().length > 0);
+        ctx.params._angleResults = withFindings;
+        const allSources = [...new Set(withFindings.flatMap(r => r.sources))];
+        ctx.params._allSources = allSources;
+        console.log(`[Research] ${withFindings.length}/${angles.length} facets produced findings; ${allSources.length} unique sources`);
       },
     },
 
-    // --- Parallel page fetches ---
+    // 5. Gap check → supplementary queries
     {
-      name: 'fetch_all',
-      type: 'parallel_tool',
-      tool: 'web_fetch',
-      resolveParamsList: (ctx) => {
-        const urls = ctx.params._urls as string[];
-        return urls.map(url => ({ url, extractMode: 'text', maxChars: '4000' }));
-      },
-    },
-
-    // --- Collect fetched pages, filter failures ---
-    {
-      name: 'collect_pages',
-      type: 'code',
-      execute: (ctx) => {
-        const results = ctx.stageResults.fetch_all as string[];
-        const urls = ctx.params._urls as string[];
-        const pages: string[] = [];
-        const failedUrls: string[] = [];
-
-        for (let i = 0; i < results.length; i++) {
-          const content = results[i];
-          if (content.startsWith('Error') || content.length < 100) {
-            failedUrls.push(urls[i]);
-          } else {
-            // Extract publication date from page content if present
-            const dateMatch = content.match(
-              /(?:Published|Updated|Posted|Date|Written)[:\s]*(\w+ \d{1,2},?\s*\d{4}|\d{4}-\d{2}-\d{2})/i,
-            ) ?? content.match(
-              /(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/i,
-            );
-            const dateTag = dateMatch ? ` [Published: ${dateMatch[1]}]` : '';
-            pages.push(`[Source: ${urls[i]}${dateTag}]\n${content}`);
-          }
-        }
-
-        ctx.params._fetchedPages = pages;
-        ctx.params._failedUrlCount = failedUrls.length;
-        console.log(`[Research] Fetched ${pages.length} pages, ${failedUrls.length} failed`);
-        return pages;
-      },
-    },
-
-    // --- Supplementary search if too many fetches failed ---
-    {
-      name: 'supplementary_search',
-      type: 'parallel_tool',
-      tool: 'web_search',
-      when: (ctx) => (ctx.params._failedUrlCount as number ?? 0) >= 3,
-      resolveParamsList: (ctx) => {
-        console.log('[Research] Too many fetch failures — running supplementary search');
-        return [{ query: `${ctx.params.topic} ${new Date().getFullYear()} analysis`, count: '5' }];
-      },
-    },
-
-    // --- Supplementary fetch ---
-    {
-      name: 'supplementary_fetch',
-      type: 'parallel_tool',
-      tool: 'web_fetch',
-      when: (ctx) => !!(ctx.stageResults.supplementary_search),
-      resolveParamsList: (ctx) => {
-        const results = ctx.stageResults.supplementary_search as string[];
-        const allText = (results ?? []).join('\n');
-        const urlMatches = allText.match(/https?:\/\/[^\s)"\]]+/g) ?? [];
-        const existingUrls = new Set(ctx.params._urls as string[]);
-        const newUrls = [...new Set(urlMatches)].filter(u => !existingUrls.has(u)).slice(0, 4);
-        ctx.params._supplementaryUrls = newUrls;
-        return newUrls.map(url => ({ url, extractMode: 'text', maxChars: '4000' }));
-      },
-    },
-
-    // --- Merge supplementary pages ---
-    {
-      name: 'merge_supplementary',
-      type: 'code',
-      when: (ctx) => !!(ctx.stageResults.supplementary_fetch),
-      execute: (ctx) => {
-        const results = ctx.stageResults.supplementary_fetch as string[];
-        const urls = ctx.params._supplementaryUrls as string[];
-        const pages = ctx.params._fetchedPages as string[];
-
-        for (let i = 0; i < results.length; i++) {
-          if (!results[i].startsWith('Error') && results[i].length >= 100) {
-            pages.push(`[Source: ${urls[i]}]\n${results[i]}`);
-          }
-        }
-
-        ctx.params._fetchedPages = pages;
-        console.log(`[Research] After supplementary: ${pages.length} total pages`);
-      },
-    },
-
-    // --- STAGE 3: SYNTHESIZE — analyze and outline slides ---
-    {
-      name: 'synthesize',
+      name: 'gap_check',
       type: 'llm',
-      // model omitted → defaults to ctx.model (the dispatched specialist, e.g. MiniMax)
       temperature: 0.3,
+      maxTokens: 400,
+      buildPrompt: (ctx) => ({
+        system: [
+          'You review research coverage. Given facet findings, identify what is MISSING, thin, or unverified for a thorough report on the topic.',
+          'Output ONLY a JSON array of 0-2 additional search queries that would fill the biggest gaps. If coverage is already strong, output [].',
+          'Return ONLY the JSON array. /no_think',
+        ].join('\n'),
+        user: `Topic: ${ctx.params.topic}\n\nFindings so far:\n${(ctx.params._angleResults as AngleResult[]).map(r => `### ${r.angle}\n${r.findings.slice(0, 600)}`).join('\n\n')}`,
+      }),
+    },
+    {
+      name: 'supplementary',
+      type: 'code',
+      execute: async (ctx) => {
+        let queries: string[] = [];
+        try {
+          const m = stripThinking(ctx.stageResults.gap_check as string).match(/\[[\s\S]*\]/);
+          if (m) { const arr = JSON.parse(m[0]); if (Array.isArray(arr)) queries = arr.filter(q => typeof q === 'string' && q.length > 5).slice(0, 2); }
+        } catch { /* none */ }
+        if (queries.length === 0) { console.log('[Research] No gaps flagged'); return; }
+        console.log(`[Research] Supplementary: ${queries.join(' | ')}`);
+        const extra = await Promise.all(queries.map(q => researchAngle(ctx, q)));
+        const merged = [...(ctx.params._angleResults as AngleResult[]), ...extra.filter(r => r.findings.trim())];
+        ctx.params._angleResults = merged;
+        ctx.params._allSources = [...new Set(merged.flatMap(r => r.sources))];
+      },
+    },
+
+    // 6. Final analytical synthesis → markdown report (+ optional charts spec)
+    {
+      name: 'final_synthesis',
+      type: 'llm',
+      temperature: 0.4,
       maxTokens: 8192,
       buildPrompt: (ctx) => {
-        const type = ctx.params.artifactType as string;
-        const guide = SECTION_GUIDES[type] ?? SECTION_GUIDES.memo;
-        const pages = (ctx.params._fetchedPages as string[]).join('\n\n===\n\n');
-        const searchResults = ctx.params._allSearchResults as string;
-
+        const findings = (ctx.params._angleResults as AngleResult[])
+          .map((r, i) => `## Facet ${i + 1}: ${r.angle}\n${r.findings}\nSources: ${r.sources.join(', ')}`)
+          .join('\n\n');
+        const sources = (ctx.params._allSources as string[]);
         return {
           system: [
-            'You are a senior research analyst. Synthesize the research data into a structured slide outline.',
+            'You are a senior analyst writing the FINAL research report from facet findings. Write in MARKDOWN (never HTML).',
+            'This is ANALYSIS, not a summary. Form a clear thesis, weave findings across facets, and surface tensions.',
             '',
-            'Output a JSON object with this structure:',
-            '{',
-            '  "thesis": "One sentence thesis statement",',
-            '  "slides": [',
-            '    {',
-            '      "title": "Slide Title",',
-            '      "bullets": ["point 1", "point 2", "point 3"],',
-            '      "sources": ["https://..."],',
-            '      "needsChart": false,',
-            '      "chartDescription": ""',
-            '    }',
-            '  ],',
-            '  "chartData": [',
-            '    {',
-            '      "name": "chart_name",',
-            '      "description": "What to visualize",',
-            '      "dataPoints": "key data values from research"',
-            '    }',
-            '  ]',
-            '}',
+            'Structure:',
+            '- `# {Report Title}` (one line)',
+            '- A 2-4 sentence executive summary paragraph (no heading).',
+            '- `## {Theme}` sections (4-7) with real analytical prose. Each major claim gets an inline citation like [3] referencing the numbered Sources list.',
+            '- A `## Contradictions & Gaps` section naming where sources disagree or coverage is thin/uncertain. Do not paper over uncertainty.',
+            '- A `## Sources` section: a numbered markdown list where item [n] is the URL (and title if known). Citation numbers in the body MUST match this list.',
             '',
-            `Section guide for ${type}: ${guide}`,
+            'If a chart would materially help, insert a placeholder line `{{chart:short_name}}` where it belongs, and at the VERY END append a fenced block:',
+            '```charts',
+            '[{"name":"short_name","title":"Chart Title","description":"what it shows","data":{"labels":["A","B"],"values":[1,2]}}]',
+            '```',
+            'Only propose charts you have real numeric data for. If none, omit the charts block entirely.',
             '',
-            'Rules:',
-            ...(type === 'report' ? [
-              '- Each section "bullets" should contain 2-4 FULL PARAGRAPHS (3-5 sentences each), not short bullets',
-              '- Include specific data points, statistics, and direct quotes from the source material',
-              '- Every claim MUST cite a source URL from the fetched pages (not a homepage)',
-              '- At least 1 chart for data visualization',
-            ] : [
-              '- Max 4 bullet points per slide, max 15 words per bullet',
-              '- Every major claim needs a source URL from the research, not a homepage',
-              '- At least 2 charts. Identify data-heavy slides that benefit from visualization',
-            ]),
-            '- NEVER fabricate data — only use what is in the search results and fetched pages. If you lack data on a topic, say "data not found in sources" rather than guessing. Empty slides are better than fabricated slides.',
-            '- DATES: Use ONLY dates that appear in the source material. Each source has a [Published: date] tag — use those dates. Do NOT guess or infer release dates. If a source does not include a date, say "date not confirmed" rather than inventing one.',
-            '- Return ONLY the JSON object, no markdown or explanation',
+            'Rules: never fabricate data or sources. Use only the findings provided. Be specific (numbers, dates, names). /no_think',
           ].join('\n'),
-          user: `Topic: ${ctx.params.topic}\n\n## Search Results\n${searchResults.slice(0, 6000)}\n\n## Fetched Pages\n${pages.slice(0, 12000)}`,
+          user: `Topic: ${ctx.params.topic}\nToday: ${new Date().toISOString().split('T')[0]}\n\nNumbered sources:\n${sources.map((u, i) => `[${i + 1}] ${u}`).join('\n')}\n\nFacet findings:\n${findings}`,
         };
       },
     },
 
-    // --- Parse synthesis output ---
+    // 7. Split markdown report from the charts spec; fail loud if empty
     {
-      name: 'parse_synthesis',
+      name: 'parse_final',
       type: 'code',
       execute: (ctx) => {
-        const raw = ctx.stageResults.synthesize as string;
-        try {
-          const match = raw.match(/\{[\s\S]*\}/);
-          if (match) {
-            const parsed = JSON.parse(match[0]);
-            ctx.params._synthesis = parsed;
-            return parsed;
-          }
-        } catch { /* fall through */ }
-        // Fallback: store raw text
-        ctx.params._synthesis = { thesis: '', slides: [], chartData: [], imageData: [] };
-        ctx.params._synthesisRaw = raw;
-        return raw;
+        const raw = stripThinking(ctx.stageResults.final_synthesis as string);
+        let charts: any[] = [];
+        const chartBlock = raw.match(/```charts\s*([\s\S]*?)```/);
+        if (chartBlock) {
+          try { const arr = JSON.parse(chartBlock[1].trim()); if (Array.isArray(arr)) charts = arr.filter(c => c?.name); } catch { /* no charts */ }
+        }
+        const reportMarkdown = raw.replace(/```charts[\s\S]*?```/g, '').trim();
+        ctx.params._reportMarkdown = reportMarkdown;
+        ctx.params._charts = charts;
+        // Fail loud: never emit a blank PDF
+        if (reportMarkdown.replace(/[#*\->\s]/g, '').length < 200) {
+          ctx.abort = true;
+          ctx.answer = `I researched "${ctx.params.topic}" but couldn't gather enough reliable source material to produce a report. Try narrowing the topic or rephrasing.`;
+          console.warn('[Research] Final synthesis too thin — aborting before render');
+        }
       },
     },
 
-    // --- STAGE 4: VISUALIZE — charts + images in parallel ---
+    // 8. Generate charts (matplotlib via code_session) — optional, non-blocking
     {
       name: 'generate_visuals',
       type: 'code',
       execute: async (ctx) => {
-        const synthesis = ctx.params._synthesis as any;
+        const charts = (ctx.params._charts as any[]) ?? [];
         const slug = ctx.params.slug as string;
-        const chartData: any[] = synthesis?.chartData ?? [];
-
-        // --- Chart workstream (sequential internally) ---
-        const chartWorkstream = async (): Promise<string[]> => {
-          if (chartData.length === 0) return [];
-
-          try {
-            // Start code session
-            console.log('[Research] Charts: starting code session...');
-            const sessionResult = await ctx.executor('code_session', { action: 'start', session: 'research', runtime: 'python' }, ctx.toolContext);
-            console.log(`[Research] Charts: session started — ${sessionResult.slice(0, 100)}`);
-
-            // Generate chart code via LLM — uses the dispatched specialist model (config-driven)
-            const response = await ctx.client.chat({
-              model: ctx.model,
-              messages: [
-                {
-                  role: 'system',
-                  content: [
-                    'You are a data visualization expert. Write Python code to generate ALL the requested charts.',
-                    'Output ONLY the Python code, no markdown fences, no explanation.',
-                    '', CHART_RULES.replace(/<SLUG>/g, slug), '',
-                    'Write ONE complete Python script that generates all charts.',
-                    'Import all libraries at the top. Handle each chart in sequence.',
-                  ].join('\n'),
-                },
-                { role: 'user', content: `Charts to generate:\n${JSON.stringify(chartData, null, 2)}\n\nSlug: ${slug}` },
-              ],
-              options: { temperature: 0.2, num_predict: 4096 },
-            });
-
-            let code = (response.message?.content ?? '')
-              .replace(/<think>[\s\S]*?<\/think>/g, '')  // Strip thinking model tags
-              .replace(/^```(?:python)?\n?/m, '').replace(/\n?```$/m, '').trim();
-            console.log(`[Research] Charts: generated ${code.length} chars of Python`);
-
-            // Execute chart code
-            const runResult = await ctx.executor('code_session', { action: 'run', session: 'research', code }, ctx.toolContext);
-            console.log(`[Research] Charts: execution result — ${runResult.slice(0, 200)}`);
-
-            // Collect chart paths — only include files that actually exist
-            return chartData
-              .map((c: any) => `/console/api/files/research/${slug}/${c.name}.png`)
-              .filter(p => existsSync(join('data', 'workspaces', 'main', p.replace('/console/api/files/', ''))));
-          } catch (err) {
-            console.warn('[Research] Chart generation failed:', err instanceof Error ? `${err.message}\n${err.stack}` : err);
-            return [];
-          }
-        };
-
-        // --- Background image workstream (parallel, abstract slide backgrounds) ---
-        // --- Background selection from pre-generated library ---
-        const selectBackgrounds = (): string[] => {
-          const CATALOG_PATH = join('data', 'assets', 'backgrounds', 'catalog.json');
-          const ASSETS_DIR = join('data', 'assets', 'backgrounds');
-          const slugDir = join('data', 'workspaces', 'main', 'research', slug);
-          try {
-            if (!existsSync(CATALOG_PATH)) {
-              console.log('[Research] No background catalog found, skipping backgrounds');
-              return [];
-            }
-            const catalog = JSON.parse(readFileSync(CATALOG_PATH, 'utf-8')) as Array<{
-              filename: string; category: string; score: number;
-            }>;
-            // Prefer high-scoring backgrounds, pick 3 from different categories
-            const sorted = catalog.filter(e => e.score >= 4).sort(() => Math.random() - 0.5);
-            const picked: Array<{ filename: string; category: string }> = [];
-            const usedCategories = new Set<string>();
-            for (const bg of sorted) {
-              if (picked.length >= 3) break;
-              if (!usedCategories.has(bg.category)) {
-                picked.push(bg);
-                usedCategories.add(bg.category);
-              }
-            }
-            if (picked.length < 3) {
-              for (const bg of sorted) {
-                if (picked.length >= 3) break;
-                if (!picked.some(p => p.filename === bg.filename)) picked.push(bg);
-              }
-            }
-
-            // Copy selected backgrounds into the research slug directory for serving
-            mkdirSync(slugDir, { recursive: true });
-            const bgNames = ['bg_title', 'bg_highlight', 'bg_closing'];
-            const paths: string[] = [];
-            for (let i = 0; i < picked.length; i++) {
-              const src = join(ASSETS_DIR, picked[i].filename);
-              const dest = join(slugDir, `${bgNames[i]}.png`);
-              copyFileSync(src, dest);
-              paths.push(`/console/api/files/research/${slug}/${bgNames[i]}.png`);
-            }
-            console.log(`[Research] Selected ${paths.length} backgrounds from library (${catalog.length} available)`);
-            return paths;
-          } catch (err) {
-            console.warn('[Research] Background selection failed:', err instanceof Error ? err.message : err);
-            return [];
-          }
-        };
-
-        // Run chart generation + select backgrounds (instant from library)
-        const chartPaths = await chartWorkstream();
-        const imagePaths = selectBackgrounds();
-
-        ctx.params._chartPaths = chartPaths;
-        ctx.params._imagePaths = imagePaths;
-        console.log(`[Research] Visuals complete: ${chartPaths.length} charts, ${imagePaths.length} images`);
+        ctx.params._validCharts = [];
+        if (charts.length === 0) return;
+        try {
+          await ctx.executor('code_session', { action: 'start', session: 'research', runtime: 'python' }, ctx.toolContext);
+          const resp = await ctx.client.chat({
+            model: ctx.model,
+            messages: [
+              { role: 'system', content: ['Write ONE Python script generating ALL the requested charts. Output ONLY Python, no fences, no prose.', '', CHART_RULES.replace(/<SLUG>/g, slug)].join('\n') },
+              { role: 'user', content: `Charts:\n${JSON.stringify(charts, null, 2)}\nSlug: ${slug}` },
+            ],
+            options: { temperature: 0.2, num_predict: 3000 },
+          });
+          const code = stripThinking(resp.message?.content ?? '').replace(/^```(?:python)?\n?/m, '').replace(/\n?```$/m, '').trim();
+          await ctx.executor('code_session', { action: 'run', session: 'research', code }, ctx.toolContext);
+          ctx.params._validCharts = charts
+            .map((c: any) => c.name as string)
+            .filter((name: string) => existsSync(join('data', 'workspaces', 'main', 'research', slug, `${name}.png`)));
+          console.log(`[Research] Charts: ${(ctx.params._validCharts as string[]).length}/${charts.length} rendered`);
+        } catch (err) {
+          console.warn('[Research] Chart generation failed (continuing without charts):', err instanceof Error ? err.message : err);
+        }
       },
     },
 
-    // --- STAGE 5: BRANCH — deck vs report rendering ---
+    // 9. Deterministic render: markdown → HTML, embed charts, wrap in template
     {
-      name: 'render_branch',
-      type: 'branch',
-      decide: (ctx) => (ctx.params.artifactType === 'report') ? 'report' : 'deck',
-      branches: {
-        // ======== DECK BRANCH (existing) ========
-        deck: [
-          {
-            name: 'render_deck',
-            type: 'llm',
-            // model omitted → defaults to ctx.model (the dispatched specialist, config-driven)
-            temperature: 0.2,
-            maxTokens: 8192,
-            buildPrompt: (ctx) => {
-              const synthesis = ctx.params._synthesis as any;
-              const slug = ctx.params.slug as string;
-              const type = ctx.params.artifactType as string;
-              const chartPaths = ctx.params._chartPaths as string[];
-              const bgPaths = (ctx.params._imagePaths as string[]) ?? [];
+      name: 'render_report',
+      type: 'code',
+      execute: (ctx) => {
+        const slug = ctx.params.slug as string;
+        const validCharts = new Set(ctx.params._validCharts as string[]);
+        let md = ctx.params._reportMarkdown as string;
+        // Swap chart placeholders for <img> (filesystem path for LibreOffice) only if the file exists
+        md = md.replace(/\{\{chart:([a-z0-9_\-]+)\}\}/gi, (_m, name) => {
+          return validCharts.has(name)
+            ? `\n\n![${name}](data/workspaces/main/research/${slug}/${name}.png)\n\n`
+            : '';
+        });
+        let body = markdownToHtml(md);
+        // Style the first H1 as the report title + add a meta line
+        body = body.replace(/<h1>/, '<h1 class="report-title">');
+        const meta = `<div class="report-meta">${new Date().toLocaleDateString('en-US', { dateStyle: 'long' })} · ${(ctx.params._allSources as string[]).length} sources</div>`;
+        body = body.replace(/(<\/h1>)/, `$1${meta}`);
+        ctx.params._reportHtml = REPORT_TEMPLATE(ctx.params.topic as string, body);
+      },
+    },
 
-              // Map background images to slide roles: title, highlight (mid-deck), closing
-              const bgTitle = bgPaths.find(p => p.includes('bg_title')) ?? '';
-              const bgHighlight = bgPaths.find(p => p.includes('bg_highlight')) ?? '';
-              const bgClosing = bgPaths.find(p => p.includes('bg_closing')) ?? '';
+    // 10. HTML → PDF via LibreOffice (document tool)
+    {
+      name: 'convert_pdf',
+      type: 'tool',
+      tool: 'document',
+      resolveParams: (ctx) => ({
+        action: 'create',
+        content: ctx.params._reportHtml,
+        format: 'pdf',
+        filename: ctx.params.slug,
+      }),
+    },
 
-              // Interleave charts after their matching content slides
-              const slides = synthesis?.slides ?? [];
-              const chartDataArr = synthesis?.chartData ?? [];
-              // Track which charts have been placed
-              const placedCharts = new Set<number>();
-              const interleavedSlides: string[] = [];
-              for (let si = 0; si < slides.length; si++) {
-                interleavedSlides.push(`[CONTENT SLIDE ${si + 1}] ${JSON.stringify(slides[si])}`);
-                for (let ci = 0; ci < chartDataArr.length && ci < chartPaths.length; ci++) {
-                  if (placedCharts.has(ci)) continue;
-                  const chart = chartDataArr[ci];
-                  const slideTitle = (slides[si].title ?? '').toLowerCase();
-                  const chartName = (chart.name ?? '').replace(/_/g, ' ').toLowerCase();
-                  const chartDesc = (chart.description ?? '').toLowerCase();
-                  if (slideTitle.includes(chartName) || chartDesc.includes(slideTitle) ||
-                      chartName.includes(slideTitle) || slideTitle.includes(chartDesc.split(' ').slice(0, 3).join(' '))) {
-                    interleavedSlides.push(`[CHART SLIDE — place HERE after slide ${si + 1}] src="${chartPaths[ci]}" title="${chart.description}"`);
-                    placedCharts.add(ci);
-                  }
-                }
-              }
-              // Place any unmatched charts after the last content slide
-              for (let ci = 0; ci < chartDataArr.length && ci < chartPaths.length; ci++) {
-                if (!placedCharts.has(ci)) {
-                  interleavedSlides.push(`[CHART SLIDE — place after last content slide] src="${chartPaths[ci]}" title="${chartDataArr[ci].description}"`);
-                }
-              }
+    // 11. User-facing summary (streamed)
+    {
+      name: 'summary',
+      type: 'llm',
+      stream: true,
+      temperature: 0.4,
+      maxTokens: 400,
+      buildPrompt: (ctx) => ({
+        system: 'Write a 3-5 sentence summary of the key findings for the user. Plain prose, no markdown headers. Do NOT mention files, PDFs, or technical details — just the substance. /no_think',
+        user: `Topic: ${ctx.params.topic}\n\nReport:\n${(ctx.params._reportMarkdown as string).slice(0, 3000)}`,
+      }),
+    },
 
-              return {
-                system: [
-                  'You are a presentation designer. Generate a complete reveal.js HTML deck from the slide outline.',
-                  'Output ONLY the complete HTML document, no markdown fences, no explanation.',
-                  '', `Use this template structure:\n${DECK_TEMPLATE}`, '',
-                  SLIDE_COMPONENTS.replace(/SLUG/g, slug), '',
-                  'Replace <!-- SLIDES --> with the actual <section> elements.',
-                  'Replace TITLE in <title> with the actual title.',
-                  `Chart paths use absolute paths: /console/api/files/research/${slug}/name.png`,
-                  'Max 4 bullets per slide, max 15 words per bullet.',
-                  'Include source URLs on relevant slides using <p class="source">.',
-                  'Each chart MUST be its own standalone <section> — NEVER nest a <section> inside another <section>.',
-                  'Never duplicate a heading — each <section> has exactly one <h2>.',
-                  'CRITICAL: Follow the slide order EXACTLY. Charts are marked at their correct positions.',
-                  ...(bgTitle ? [
-                    `BACKGROUND IMAGES: Use reveal.js data-background-image attribute on key slides.`,
-                    `- Title slide: <section data-background-image="${bgTitle}" data-background-size="cover">`,
-                    ...(bgHighlight ? [`- A key insight or KPI slide (mid-deck): <section data-background-image="${bgHighlight}" data-background-size="cover">`] : []),
-                    ...(bgClosing ? [`- Final/recommendations slide: <section data-background-image="${bgClosing}" data-background-size="cover">`] : []),
-                    'Use data-background-image, NOT CSS style. This is how reveal.js handles full-bleed slide backgrounds.',
-                  ] : []),
-                ].join('\n'),
-                user: [
-                  `Artifact type: ${type}`,
-                  `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
-                  `Slides (with charts interleaved — follow this order EXACTLY):`,
-                  ...interleavedSlides,
-                ].join('\n'),
-              };
-            },
-          },
-          {
-            name: 'write_deck',
-            type: 'tool',
-            tool: 'write_file',
-            resolveParams: (ctx) => {
-              let html = ctx.stageResults.render_deck as string;
-              html = html.replace(/^```(?:html)?\n?/m, '').replace(/\n?```$/m, '').trim();
-              const slug = ctx.params.slug as string;
-              return { path: `research/${slug}.html`, content: html };
-            },
-          },
-          {
-            name: 'summary',
-            type: 'llm',
-            stream: true,
-            temperature: 0.3,
-            maxTokens: 512,
-            buildPrompt: (ctx) => {
-              const synthesis = ctx.params._synthesis as any;
-              return {
-                system: 'Write a brief 3-5 sentence summary of the research findings. Be factual and concise. Do not mention the deck or file — just summarize what was found.',
-                user: `Thesis: ${synthesis?.thesis ?? ''}\nSlides: ${JSON.stringify((synthesis?.slides ?? []).map((s: any) => s.title))}`,
-              };
-            },
-          },
-          {
-            name: 'finalize',
-            type: 'code',
-            execute: (ctx) => {
-              const summary = ctx.stageResults.summary as string;
-              const slug = ctx.params.slug as string;
-              ctx.answer = `${summary}\n\n📊 **View your deck:** /console/api/files/research/${slug}.html`;
-            },
-          },
-        ],
-
-        // ======== REPORT BRANCH (new) ========
-        report: [
-          // Render styled HTML report from synthesis data
-          {
-            name: 'render_report',
-            type: 'llm',
-            temperature: 0.3,
-            maxTokens: 8192,
-            buildPrompt: (ctx) => {
-              const synthesis = ctx.params._synthesis as any;
-              const slug = ctx.params.slug as string;
-              const chartPaths = ctx.params._chartPaths as string[];
-              // Convert web chart paths to filesystem paths for PDF rendering
-              const fsChartPaths = chartPaths.map((p: string) =>
-                p.replace('/console/api/files/', 'data/workspaces/main/'),
-              );
-
-              return {
-                system: [
-                  'You are a professional report writer. Generate a complete, styled HTML document from the research synthesis.',
-                  'Output ONLY the complete HTML document, no markdown fences, no explanation.',
-                  '',
-                  `Use this template:\n${REPORT_TEMPLATE}`,
-                  '',
-                  REPORT_COMPONENTS.replace(/ABSOLUTE_PATH/g, `data/workspaces/main/research/${slug}`),
-                  '',
-                  'Replace <!-- CONTENT --> with the full report content.',
-                  'Replace TITLE with the actual report title.',
-                  '',
-                  'CRITICAL RULES:',
-                  '- Write FULL PARAGRAPHS (3-5 sentences each), not bullet summaries',
-                  '- Every section must have substantive analysis, not just headlines',
-                  '- Include specific data points, statistics, and quotes from the source material',
-                  '- DATES: Only use dates that appear in the source material (look for [Published: date] tags). NEVER guess release dates or event dates. If a date is not in the sources, write "date not confirmed".',
-                  '- Use inline citations <sup>[1]</sup> linking to the numbered sources list',
-                  '- Include a Sources section at the end with ALL URLs from the research',
-                  '- Use tables for comparative data, callout boxes for key insights',
-                  '- Place charts inline with relevant content using absolute filesystem paths',
-                  `- Chart paths: ${JSON.stringify(fsChartPaths)}`,
-                ].join('\n'),
-                user: [
-                  `Topic: ${ctx.params.topic}`,
-                  `Today's date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`,
-                  `Thesis: ${synthesis?.thesis ?? 'N/A'}`,
-                  `Sections: ${JSON.stringify(synthesis?.slides ?? [], null, 2)}`,
-                  `Available charts: ${JSON.stringify(fsChartPaths)}`,
-                ].join('\n'),
-              };
-            },
-          },
-
-          // Write HTML to file (for preview and revision)
-          {
-            name: 'write_report_html',
-            type: 'code',
-            execute: (ctx) => {
-              let html = ctx.stageResults.render_report as string;
-              html = html.replace(/^```(?:html)?\n?/m, '').replace(/\n?```$/m, '').trim();
-              ctx.params._reportHtml = html;
-              const slug = ctx.params.slug as string;
-              const dir = join('data', 'workspaces', 'main', 'research');
-              mkdirSync(dir, { recursive: true });
-              writeFileSync(join(dir, `${slug}-report.html`), html);
-              console.log(`[Research] Report HTML written: research/${slug}-report.html`);
-            },
-          },
-
-          // Quality review — check content completeness and source citations
-          {
-            name: 'quality_review',
-            type: 'code',
-            execute: async (ctx) => {
-              const html = ctx.params._reportHtml as string;
-              if (!html || html.length < 200) {
-                console.log('[Research] Quality review: HTML too short, skipping');
-                return;
-              }
-
-              try {
-                const response = await ctx.client.chat({
-                  model: ctx.routerModel ?? ctx.model,
-                  messages: [{
-                    role: 'user',
-                    content: `Review this HTML report for quality. Be brief.
-
-${html.slice(0, 4000)}
-
-Check:
-1. Are there at least 3 substantive sections with full paragraphs (not just bullets)?
-2. Are source URLs cited (either inline or in a Sources section)?
-3. Is the content detailed enough to be useful (not just headlines)?
-4. Are dates accurate? If the report claims something was "released in April 2026" or similar, verify it matches the source dates. Dates should come from the source material, not be assumed.
-
-Respond with JSON: {"pass": true} if adequate, or {"pass": false, "fix": "brief instruction to improve"} if not.`,
-                  }],
-                  options: { temperature: 0.2, num_predict: 256 },
-                });
-
-                const raw = response.message?.content ?? '';
-                const match = raw.match(/\{[\s\S]*\}/);
-                if (!match) { console.log('[Research] Quality review: no JSON, proceeding'); return; }
-
-                const result = JSON.parse(match[0]);
-                if (result.pass) {
-                  console.log('[Research] Quality review: PASS');
-                } else {
-                  console.log(`[Research] Quality review: FAIL — ${result.fix}`);
-                  ctx.params._revisionNeeded = true;
-                  ctx.params._revisionInstructions = result.fix;
-                }
-              } catch (err) {
-                console.warn('[Research] Quality review failed:', err instanceof Error ? err.message : err);
-              }
-            },
-          },
-
-          // Revision pass (conditional — only if quality review failed)
-          {
-            name: 'revision_pass',
-            type: 'code',
-            when: (ctx) => !!(ctx.params._revisionNeeded),
-            execute: async (ctx) => {
-              const html = ctx.params._reportHtml as string;
-              const instructions = ctx.params._revisionInstructions as string;
-
-              try {
-                console.log('[Research] Running revision pass...');
-                const response = await ctx.client.chat({
-                  model: ctx.model,
-                  messages: [{
-                    role: 'user',
-                    content: `Revise this HTML report. ${instructions}\n\nOutput ONLY the complete revised HTML, no markdown fences.\n\n${html}`,
-                  }],
-                  options: { temperature: 0.3, num_predict: 8192 },
-                });
-
-                let revised = (response.message?.content ?? '').trim();
-                revised = revised.replace(/^```(?:html)?\n?/m, '').replace(/\n?```$/m, '').trim();
-
-                if (revised.length > html.length * 0.5) {
-                  ctx.params._reportHtml = revised;
-                  const slug = ctx.params.slug as string;
-                  writeFileSync(join('data', 'workspaces', 'main', 'research', `${slug}-report.html`), revised);
-                  console.log('[Research] Revision applied');
-                } else {
-                  console.log('[Research] Revision too short, keeping original');
-                }
-              } catch (err) {
-                console.warn('[Research] Revision failed:', err instanceof Error ? err.message : err);
-              }
-            },
-          },
-
-          // Convert HTML to PDF via document tool
-          {
-            name: 'convert_pdf',
-            type: 'tool',
-            tool: 'document',
-            resolveParams: (ctx) => {
-              const html = ctx.params._reportHtml as string;
-              const slug = ctx.params.slug as string;
-              return { action: 'create', content: html, format: 'pdf', filename: slug };
-            },
-          },
-
-          // Summary for the user
-          {
-            name: 'report_summary',
-            type: 'llm',
-            stream: true,
-            temperature: 0.3,
-            maxTokens: 512,
-            buildPrompt: (ctx) => {
-              const synthesis = ctx.params._synthesis as any;
-              return {
-                system: 'Write a brief 3-5 sentence summary of the research findings. Be factual and concise. Do not mention files, PDFs, or technical details — just summarize what was found.',
-                user: `Thesis: ${synthesis?.thesis ?? ''}\nSections: ${JSON.stringify((synthesis?.slides ?? []).map((s: any) => s.title))}`,
-              };
-            },
-          },
-
-          // Append [FILE:] token for delivery
-          {
-            name: 'report_finalize',
-            type: 'code',
-            execute: (ctx) => {
-              const summary = ctx.stageResults.report_summary as string;
-              const slug = ctx.params.slug as string;
-              const pdfPath = `data/media/documents/${slug}.pdf`;
-              ctx.answer = `${summary} [FILE:${pdfPath}]`;
-            },
-          },
-        ],
+    // 12. Finalize: attach the PDF
+    {
+      name: 'finalize',
+      type: 'code',
+      execute: (ctx) => {
+        const slug = ctx.params.slug as string;
+        const pdfPath = join('data', 'media', 'documents', `${slug}.pdf`);
+        const summary = stripThinking(ctx.stageResults.summary as string);
+        if (existsSync(pdfPath)) {
+          ctx.answer = `${summary} [FILE:${pdfPath}]`;
+        } else {
+          console.warn('[Research] PDF not found after convert:', pdfPath);
+          ctx.answer = `${summary}\n\n(Note: the report was generated but the PDF conversion did not produce a file.)`;
+        }
       },
     },
   ],

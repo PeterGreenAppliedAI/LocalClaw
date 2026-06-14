@@ -31,6 +31,7 @@
     "grammy": "^1.41.0",
     "json5": "^2.2.3",
     "linkedom": "^0.18.12",
+    "marked": "^18.0.5",
     "pdf-parse": "^1.1.4",
     "playwright-core": "^1.58.2",
     "qrcode-terminal": "^0.12.0",
