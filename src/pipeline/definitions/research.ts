@@ -221,7 +221,7 @@ export const researchPipeline: PipelineDefinition = {
     {
       name: 'plan',
       type: 'llm',
-      model: 'qwen3-coder:30b', // Structured output — coder model, not reasoning
+      // model omitted → defaults to ctx.model (the dispatched specialist, e.g. MiniMax)
       temperature: 0.3,
       maxTokens: 1024,
       buildPrompt: (ctx) => ({
@@ -386,7 +386,7 @@ export const researchPipeline: PipelineDefinition = {
     {
       name: 'synthesize',
       type: 'llm',
-      model: 'gemma4:26b',
+      // model omitted → defaults to ctx.model (the dispatched specialist, e.g. MiniMax)
       temperature: 0.3,
       maxTokens: 8192,
       buildPrompt: (ctx) => {
@@ -482,9 +482,9 @@ export const researchPipeline: PipelineDefinition = {
             const sessionResult = await ctx.executor('code_session', { action: 'start', session: 'research', runtime: 'python' }, ctx.toolContext);
             console.log(`[Research] Charts: session started — ${sessionResult.slice(0, 100)}`);
 
-            // Generate chart code via LLM — coder model for structured Python output
+            // Generate chart code via LLM — uses the dispatched specialist model (config-driven)
             const response = await ctx.client.chat({
-              model: 'qwen3-coder:30b',
+              model: ctx.model,
               messages: [
                 {
                   role: 'system',
@@ -591,7 +591,7 @@ export const researchPipeline: PipelineDefinition = {
           {
             name: 'render_deck',
             type: 'llm',
-            model: 'gemma4:26b',
+            // model omitted → defaults to ctx.model (the dispatched specialist, config-driven)
             temperature: 0.2,
             maxTokens: 8192,
             buildPrompt: (ctx) => {

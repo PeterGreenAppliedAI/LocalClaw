@@ -107,7 +107,7 @@ export class Orchestrator {
     this.factStore = new FactStore(defaultWorkspacePath, this.client);
 
     // Initialize graph memory (FalkorDB) — non-blocking, falls back to FactStore if unavailable
-    this.graphMemory = new GraphMemoryStore(this.client);
+    this.graphMemory = new GraphMemoryStore(this.client, { nerModel: this.config.memory?.nerModel });
     this.graphMemory.connect().then(() => {
       console.log('[Orchestrator] Graph memory connected');
     }).catch(err => {

@@ -458,10 +458,10 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       const { remoteBridge } = await import('./browser/remote-bridge.js');
       if (remoteBridge.isConnected()) {
         browserControlMode = true;
-        // Override to qwen3.6 for reasoning, strip pipeline (use ReAct), strip web_fetch
+        // Override to the configured browser-control model, strip pipeline (use ReAct), strip web_fetch
         specialistConfig = {
           ...specialistConfig,
-          model: 'qwen3.6:35b',
+          model: config.browser.controlModel,
           pipeline: undefined as any, // force ReAct, no pipeline
           maxIterations: 20,
           maxTokens: 16384,

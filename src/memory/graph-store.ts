@@ -8,6 +8,8 @@ export interface GraphMemoryConfig {
   graphName?: string;
   embeddingModel?: string;
   embeddingDims?: number;
+  /** Small fast model for NER (entity typing) + contradiction checks. */
+  nerModel?: string;
 }
 
 export interface GraphSearchResult {
@@ -26,6 +28,7 @@ const DEFAULT_CONFIG: GraphMemoryConfig = {
   graphName: 'localclaw_memory',
   embeddingModel: 'qwen3-embedding:8b',
   embeddingDims: 4096,
+  nerModel: 'phi4-mini:latest',
 };
 
 /**
@@ -162,7 +165,7 @@ export class GraphMemoryStore {
         // Ask router model: does the new fact contradict/replace the old one?
         try {
           const response = await this.client.chat({
-            model: 'phi4-mini:latest',
+            model: this.config.nerModel!,
             messages: [{
               role: 'user',
               content: `Fact A: "${existingText}"\nFact B: "${text}"\nDoes Fact B contradict, update, or replace Fact A? Answer YES or NO only.`,
@@ -240,7 +243,7 @@ export class GraphMemoryStore {
         } catch { /* best-effort */ }
 
         const nerResponse = await this.client.chat({
-          model: 'phi4-mini:latest',
+          model: this.config.nerModel!,
           messages: [{
             role: 'user',
             content: `Extract named entities from this text. Return ONLY a JSON array of objects.

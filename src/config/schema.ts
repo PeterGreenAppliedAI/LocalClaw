@@ -160,6 +160,8 @@ export const MemoryConfigSchema = z.object({
   consolidation: MemoryConsolidationSchema.optional(),
   /** Model for fact extraction from transcripts. Defaults to router model. */
   extractionModel: z.string().optional(),
+  /** Small fast model for graph NER (entity typing) + contradiction checks. Defaults to phi4-mini:latest. */
+  nerModel: z.string().default('phi4-mini:latest'),
 });
 
 export const CronConfigSchema = z.object({
@@ -227,6 +229,8 @@ export const BrowserConfigSchema = z.object({
   display: z.string().optional(),
   /** Vision model for visual browser interactions (e.g., "qwen3-vl:8b"). Falls back to config.vision.model. */
   visionModel: z.string().optional(),
+  /** Model for browser-control reasoning (extension remote-bridge mode). */
+  controlModel: z.string().default('cyankiwi/MiniMax-M2.7-AWQ-4bit'),
 });
 
 export const TTSConfigSchema = z.object({
@@ -357,7 +361,7 @@ export const LocalClawConfigSchema = z.object({
   session: SessionConfigSchema.default({}),
   tools: ToolsConfigSchema.optional(),
   reasoning: ReasoningConfigSchema.optional(),
-  browser: BrowserConfigSchema.optional(),
+  browser: BrowserConfigSchema.default({}),
   tts: TTSConfigSchema.default({}),
   stt: STTConfigSchema.default({}),
   vision: VisionConfigSchema.default({}),
