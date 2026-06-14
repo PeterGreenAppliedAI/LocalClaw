@@ -4,7 +4,7 @@
 
 LocalClaw is a local-model-first AI agent framework running entirely on personal hardware. Foreground reasoning runs on a large model (MiniMax-M2.7) served by **vLLM**; small utility/modality models run behind an **Ollama-compatible gateway**. It uses a **Router + Specialist** architecture with **deterministic pipelines** — code controls the workflow, models only extract parameters and synthesize text.
 
-9+ models across two inference backends (vLLM + Ollama gateway), 39 tools, 12 pipelines, 15 categories, 8 channel adapters (including Chrome extension with browser control), FalkorDB graph memory with 1,000+ nodes, 363 tests across 24 suites.
+9+ models across two inference backends (vLLM + Ollama gateway), 39 tools, 12 pipelines, 15 categories, 8 channel adapters (including Chrome extension with browser control), FalkorDB graph memory with 1,000+ nodes, 389 tests across 26 suites. Web search runs on a self-hosted **SearXNG** metasearch instance (no API key, no rate limit); Brave/Perplexity/Grok/Tavily remain config-selectable fallbacks.
 
 ## Design Principles
 
@@ -94,7 +94,7 @@ Post-classification layers: sticky routing (keeps follow-ups on chat), conversat
 | Category | Pipeline | Flow |
 |----------|----------|------|
 | web_search | Linear | extract → search → pick URLs → parallel fetch → synthesize → quality review → [revision] |
-| research | Complex | plan queries → parallel search → parallel fetch → synthesize → charts → branch(deck/report) → render |
+| research | Complex | decompose → per-facet research (search+fetch+synthesize) → gap-fill → analytical synthesis → claim verification (cited-source + Tier-1 cross-check) → charts → render PDF |
 | analytics | Data-driven | extract file → pandas report (code) → charts (code) → LLM interpretation |
 | exec | Linear | extract → tool → format |
 | task | Branched (5) | llm_branch → extract → tool → confirm |
@@ -105,6 +105,17 @@ Post-classification layers: sticky routing (keeps follow-ups on chat), conversat
 | code_gen | Linear | list projects → enrich → build → verify → [fix] → report |
 | heartbeat | Deterministic | fact diff (code) → LLM reasoning → task board (code) → LLM summary |
 | website | ReAct | web_fetch → browser fallback → summarize |
+
+## Research Claim Verification
+
+After the research pipeline drafts its markdown report, an evidence-verification stage (`src/pipeline/verification.ts`) checks it before rendering. Principle: **no claim should outrun its evidence.**
+
+1. **Extract** atomic, checkable claims (fast model), prioritizing corporate events / market-share over routine specs.
+2. **Cited-source check** — each claim is judged against the *cached* pages that actually mention it (research persists fetched page text, so zero new searches). Overstated/single-sourced claims are **hedged or attributed** ("according to X") — never deleted.
+3. **Tier-1 cross-check** — a bounded set of high-impact, falsifiable claims (corporate events, market-share; capped at `maxCrossChecks`) get ONE independent search each; an authoritative contradiction (e.g. "license" vs "acquisition") flips the claim to `CONTRADICTED → correct`.
+4. **Correction pass** (MiniMax) edits only the affected sentences; strikethrough/tracked-changes artifacts are stripped at render. Publishes with a `## Verification` appendix + auditable `verification.json`.
+
+Config-gated via the `verification` block (`enabled`, `crossCheck` — both default on). Known ceiling: cited-source checking can't disprove a faithfully-cited wrong fact without the Tier-1 pass; Tier-1 itself trusts a single independent source, so disputed claims are better attributed than silently rewritten.
 
 ## Memory System (FalkorDB)
 
@@ -199,7 +210,8 @@ Resource limits          CPU/memory per exec           Roadmap
 |-----------|-----------|
 | Runtime | Node.js 22+ (ESM) |
 | Language | TypeScript 5.7 (strict) |
-| AI Backend | Ollama |
+| AI Backend | vLLM (foreground reasoning) + Ollama gateway (utility/modality models) |
+| Web Search | SearXNG (self-hosted, primary) — Brave/Perplexity/Grok/Tavily selectable |
 | Graph Memory | FalkorDB (Redis wire protocol, HNSW vectors) |
 | Knowledge Store | better-sqlite3 (vector embeddings) |
 | Discord | discord.js 14 |
@@ -211,4 +223,4 @@ Resource limits          CPU/memory per exec           Roadmap
 | Scheduling | croner |
 | Config | JSON5 + Zod |
 | Chrome Extension | WXT + React + TypeScript (Manifest V3) |
-| Testing | Vitest (363 tests, 24 files) |
+| Testing | Vitest (389 tests, 26 files) |

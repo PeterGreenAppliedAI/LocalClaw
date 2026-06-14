@@ -55,8 +55,8 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 
 | Capability | Tools | Description |
 |-----------|-------|-------------|
-| Web Search | `web_search`, `web_fetch`, `browser` | Brave/Perplexity/Grok/Tavily search, Readability extraction, headless Chromium |
-| Research | `web_search`, `web_fetch`, `code_session`, `reason` | Deep research with data analysis, chart generation (matplotlib/seaborn), and inline visualization |
+| Web Search | `web_search`, `web_fetch`, `browser` | SearXNG (self-hosted, default) or Brave/Perplexity/Grok/Tavily, Readability extraction, headless Chromium |
+| Research | `web_search`, `web_fetch`, `code_session`, `reason` | Multi-facet deep research → analytical PDF report with charts and evidence verification (cited-source + independent cross-check of claims) |
 | Memory | `memory_save`, `memory_search`, `memory_get`, `memory_forget` | Per-user structured facts with categories, tags, entities, confidence scores, and interactive review via `!heartbeat` |
 | Personal | `gmail_search`, `gmail_read`, `calendar_list`, `calendar_search` | Google Calendar + Gmail read-only access — owner-only security gate |
 | Execution | `exec`, `code_session`, `read_file`, `write_file` | Allowlisted shell commands, persistent Python/Node/Bash REPL sessions, safe file I/O |
@@ -147,8 +147,10 @@ Edit `.env` with your settings:
 ```env
 OLLAMA_URL=http://127.0.0.1:11434
 DISCORD_BOT_TOKEN=your_bot_token
-BRAVE_API_KEY=your_brave_key        # optional — for web search
+BRAVE_API_KEY=your_brave_key        # optional — only if using the Brave search provider
 ```
+
+> Web search defaults to a self-hosted **SearXNG** instance (no API key, no rate limit). Set it via `tools.web.search: { provider: "searxng", baseUrl: "http://<host>:<port>" }` in config. The instance must have the JSON format enabled (`settings.yml` → `search.formats: [html, json]`). Brave/Perplexity/Grok/Tavily remain available by switching `provider`.
 
 ### Security Configuration
 
@@ -235,7 +237,7 @@ localclaw/
 │   ├── src/pages/            # Dashboard, Chat, Sessions, Tasks, Cron, Memory, Channels, Tools, Config
 │   ├── src/api/              # API client + React Query hooks
 │   └── dist/                 # Built static files (served by web adapter)
-├── test/                     # 363 tests across 24 suites
+├── test/                     # 389 tests across 26 suites
 ├── CLAUDE.md                 # AI code generation guidelines (for Claude Code)
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens
@@ -272,9 +274,9 @@ Most categories run through **deterministic pipelines** instead of letting the m
 | `task` | Branched (5) | llm_branch → extract (with task context) → tool → confirm |
 | `memory` | Branched (2) | llm_branch → extract → tool → format |
 | `cron` | Branched (4) | llm_branch → extract → tool → confirm |
-| `web_search` | Linear | extract → search → parallel fetch → synthesize |
+| `web_search` | Linear | extract → search → pick top-5 URLs → parallel fetch → synthesize → quality review |
 | `multi` | Plan | llm plan → self-reflect → execute loop (dynamic tools + visual browser) → smart select → verify → summarize |
-| `research` | Complex | plan queries → parallel search → parallel fetch → synthesize → charts → branch (deck OR report PDF) |
+| `research` | Complex | decompose → per-facet research → gap-fill → synthesize → verify claims (cited-source + Tier-1) → charts → render PDF |
 | `exec` | Linear | extract → tool → format |
 | `message` | Linear | extract → tool → confirm |
 | `website` | Linear | web_fetch → browser fallback → summarize |
@@ -284,20 +286,18 @@ Most categories run through **deterministic pipelines** instead of letting the m
 
 ### Research Flow
 
-The `research` pipeline produces polished slide decks or styled PDF reports through a fully templated workflow:
+The `research` pipeline performs real multi-facet investigation and produces a styled, **evidence-verified** PDF report:
 
-1. **Plan** — LLM generates 3-5 targeted search queries from the topic
-2. **Search** — All queries run concurrently via `parallel_tool` (5 searches at once)
-3. **Fetch** — Top 8 URLs fetched concurrently. If 3+ fail (403, timeout), a supplementary search + fetch round runs automatically
-4. **Synthesize** — LLM analyzes findings and produces a structured outline with thesis, sections, sources, and chart specifications. Report mode requests full paragraphs instead of bullet points
-5. **Visualize** — LLM generates matplotlib/seaborn chart code, executed in a Python code session
-6. **Branch** — Routes to deck (reveal.js) or report (styled PDF) based on artifact type
-7. **Render** — LLM generates the complete HTML from the outline
-8. **Quality Review** (report only) — Router model checks content completeness, source citations, and substance. If issues found, a single revision pass runs before PDF conversion
-9. **Convert** (report only) — LibreOffice headless converts styled HTML to PDF
-10. **Deliver** — Deck written to file with link, or PDF attached to the channel message via `[FILE:]` token
+1. **Decompose** — LLM breaks the topic into 4-6 distinct facets (sub-questions), not paraphrases
+2. **Per-facet research** — each facet runs its own search → fetch top distinct sources → focused synthesis, in bounded-concurrency parallel. Fetched page text is cached for verification
+3. **Gap-fill** — an LLM names missing/thin coverage; 0-2 supplementary searches fold new findings in
+4. **Synthesize** — one analytical markdown report: thesis, themed sections with inline `[n]` citations, an explicit *Contradictions & Gaps* section, chart specs, and a numbered source list
+5. **Verify claims** — extract atomic claims → check each against its cached source (hedge/attribute, never delete) → Tier-1 independent cross-check on high-impact claims (corrects contradicted facts from authoritative sources). See [ARCHITECTURE.md](ARCHITECTURE.md#research-claim-verification)
+6. **Visualize** — matplotlib chart code generated and run in a Python code session; only charts whose PNG actually rendered are embedded
+7. **Render** — deterministic markdown → HTML (the model writes markdown, code builds valid HTML), charts embedded by filesystem path, wrapped in a styled template
+8. **Convert + deliver** — LibreOffice headless → PDF, attached to the channel via a `[FILE:]` token, plus a `## Verification` appendix and an auditable `verification.json`
 
-Supports artifact types: `memo`, `brief`, `deck`, `market`, `teardown`, `deepdive`, `report` — each with a different structure guide. The `report` type produces professional CSS-styled PDFs with executive summaries, full paragraphs, data tables, and numbered source citations. Charts use a dark theme for decks and are embedded with absolute paths for PDF rendering.
+The model writes markdown (its strength) and **code** renders the HTML/PDF — avoiding the fragility of LLM-authored HTML. Verification is config-gated (`verification.enabled`, `verification.crossCheck`).
 
 ### Plan Pipeline (Autonomous Task Execution)
 
@@ -877,10 +877,11 @@ These frameworks solve similar problems but assume frontier models (GPT-4, Claud
 
 ## Roadmap
 
+**Recently shipped:** SearXNG self-hosted search (no API cost / no rate limit), two-backend inference (vLLM + Ollama gateway via `MultiBackendClient`), and the research evidence-verification layer (cited-source + Tier-1 cross-check).
+
 | Priority | Feature | Description |
 |----------|---------|-------------|
-| Next | **SearXNG integration** | Self-hosted meta-search engine replacing paid search APIs (Brave/Perplexity/Grok/Tavily). Runs in separate VM. Zero API costs, no rate limits, configurable search engines. |
-| Next | **Provider abstraction (vLLM/OpenAI-compat)** | LLM client trait supporting Ollama, vLLM, LM Studio, and any OpenAI-compatible endpoint. Enables multi-backend routing. |
+| Next | **Weekly research newsletter** | Cron-scheduled research run → delivered digest (inline summary + attached PDF) over a channel, riding on the verified research pipeline. |
 | Planned | **qwen3-coder-next:80b** | Test larger coding model against qwen3-coder:30b for OpenCode builds. Better quality, slower throughput. |
 | Planned | **nemotron3:33b video pipeline** | Multimodal video/meeting summarization. New pipeline for watch → transcribe → summarize → extract actions. |
 | Backlog | **MCP client support** | Consume external MCP servers as tools (Jira, Notion, GitHub, etc.) without building custom tool factories. |

@@ -203,11 +203,10 @@ src/
     registry.ts             #   Pipeline registry
     types.ts                #   Stage types, PipelineContext, SubDispatchResult
     extractor.ts            #   LLM-based parameter extraction with JSON repair
-    search-buckets.ts       #   Topic→curated-domain buckets + anchors; site: filters for web_search
+    verification.ts         #   Research claim verification (extract → cited-source check → Tier-1 cross-check → patch-set)
     definitions/            #   Pipeline definitions per category
       plan.ts               #     Plan pipeline (foreman handoffs, skill check, reflection)
       research.ts           #     Research pipeline (decompose → per-facet research → verify → PDF)
-    verification.ts         #   Evidence verification: claim extraction, entailment judge, patch-set, appendix
       analytics.ts          #     Analytics pipeline (file upload → pandas → charts → LLM interpretation)
       heartbeat.ts          #     Deterministic heartbeat (task board + memory, no LLM date reasoning)
       cron.ts, task.ts, memory.ts, web-search.ts, exec.ts, message.ts, website.ts
@@ -462,7 +461,7 @@ System operations (heartbeat, cron) should never match or save user-facing skill
 - **Framework:** Vitest (`npm test` / `vitest run`)
 - **Type checking:** `npx tsc --noEmit`
 - **CI:** GitHub Actions runs type check + tests + build on every push/PR to main
-- **Current:** 363 tests across 24 files
+- **Current:** 389 tests across 26 files
 - **What needs tests** (Tier 2+ per code_rubric):
   - Auth/authz logic (owner-only tier, security filtering)
   - Networking (Ollama client, web fetch, SSRF checks)
