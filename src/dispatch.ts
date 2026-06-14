@@ -286,22 +286,12 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       && Date.now() - cachedCompaction.cachedAt < COMPACTION_CACHE_TTL_MS;
 
     if (cacheValid) {
-      // Use cached compaction result (fast path) — turn count unchanged, so not stale
+      // Use cached compaction result (fast path). The entry is EXACT for this turn count
+      // (turn-count gated), so there is nothing to refresh — the prewarm after the previous
+      // response already built this. No async refresh here: it would cache an obsolete turn
+      // count and block the post-append prewarm (the only one that matters for the next msg).
       history = cachedCompaction!.messages;
       console.log(`[Dispatch] Using cached compaction (${Math.round((Date.now() - cachedCompaction!.cachedAt) / 1000)}s old, ${currentTurnCount} turns)`);
-
-      // Schedule async refresh if not already pending
-      if (!pendingCompactions.has(compactionKey)) {
-        pendingCompactions.add(compactionKey);
-        buildCompactedHistory(compactionParams).then(result => {
-          compactionCache.set(compactionKey, { messages: result.messages, cachedAt: Date.now(), turnCount: currentTurnCount });
-          if (result.compacted) console.log(`[Dispatch] Async compaction refreshed (budget: ${budget.historyBudget} tokens)`);
-        }).catch(err => {
-          console.warn('[Dispatch] Async compaction failed:', err instanceof Error ? err.message : err);
-        }).finally(() => {
-          pendingCompactions.delete(compactionKey);
-        });
-      }
     } else {
       // No valid cache — run synchronously (first message, expired, or new turns appended)
       try {
