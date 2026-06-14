@@ -536,6 +536,12 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Fix:** Deleted `search-buckets.ts` + its test. `web_search` and `research` now run plain queries with **recency/freshness filtering only** — `freshness=month` is forced when the query signals recency (research applies the same `wantsFreshness` check per angle and on the topic). URLs are taken in result order (no bucket re-prioritization).
 **Status:** Buckets gone; recency filter retained.
 
+### Per-domain source-diversity cap — tried and reverted (June 2026)
+**What was tried:** Research capped fetches at ≤2 per domain run-wide (+ distinct domains within a facet, exact-URL dedup), to stop runs leaning on one source. It raised the source count (12→16) and the automated quality score (rel 4→5, comp 3→4).
+**Why reverted:** Side-by-side, the *capped* report was visibly **worse** — less well-rounded. Root cause: a single genuinely comprehensive survey source (an "enterprise guide" page) had been the backbone of the good run, legitimately informing many facets (ASIC ecosystem, vendors, market size, DGX Spark). The cap throttled exactly that source, forcing reliance on thinner specialized pages — trading breadth for scattered depth. The original "all from one source" complaint was really **cosmetic log noise** (the same URL re-found across facets, already harmless via the `seen`-style dedup), not a quality problem. The automated judge rewarded source count; the human judged substance and preferred the uncapped run.
+**Lesson:** Don't cap how much a comprehensive source can contribute. Diversity-by-fetch-cap is the wrong mechanism; a great survey should be allowed to anchor a report. Recency bias + Brave freshness-code mapping (from the same commit) were kept — only the cap was rolled back.
+**Status:** Reverted to plain top-3 URLs per facet in result order.
+
 ### web_search over-trigger (June 2026)
 **Problem:** Conversational text containing bare "search"/"latest"/"news" (e.g. "uses brave for search") classified as web_search and ran the full pipeline.
 **Fix:** Tightened the keyword hint to require intent ("search for/the web/online", "web search", google, look up, find out about); dropped bare search/latest/news. Router-prompt nudge for the model layer (not unit-testable — model layer has 0 corpus cases; needs live verification). Also: web_search forces `freshness=month` when the query signals recency, and the quality judge gained a recency check (was scoring a 2019-2023 retrospective 5/5/5 on a "recent" query).

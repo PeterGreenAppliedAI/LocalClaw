@@ -70,35 +70,6 @@ function extractUrls(text: string): string[] {
 function wantsFreshness(text: string): boolean {
   return /\b(recent|latest|newest|current|today|this year|2026|2025|now|upcoming)\b/i.test(text);
 }
-function hostname(u: string): string {
-  try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; }
-}
-
-const MAX_PER_DOMAIN = 2;       // across the whole run — forces source diversity
-const URLS_PER_FACET = 3;
-
-/**
- * Pick URLs for a facet that diversify sources: distinct domains within the facet,
- * no domain used more than MAX_PER_DOMAIN times across the whole run, and no exact URL
- * refetched. Mutates the shared domain/url trackers synchronously (no await between
- * read and write, so concurrent facets don't race).
- */
-function pickDiverseUrls(candidates: string[], domainCount: Map<string, number>, seen: Set<string>): string[] {
-  const picked: string[] = [];
-  const facetDomains = new Set<string>();
-  for (const u of candidates) {
-    if (picked.length >= URLS_PER_FACET) break;
-    if (seen.has(u)) continue;
-    const h = hostname(u);
-    if (facetDomains.has(h)) continue;                       // one per domain within a facet
-    if ((domainCount.get(h) ?? 0) >= MAX_PER_DOMAIN) continue; // cap per domain run-wide
-    seen.add(u);
-    facetDomains.add(h);
-    domainCount.set(h, (domainCount.get(h) ?? 0) + 1);
-    picked.push(u);
-  }
-  return picked;
-}
 
 interface AngleResult { angle: string; findings: string; sources: string[]; }
 
@@ -120,22 +91,19 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 async function researchAngle(ctx: PipelineContext, angle: string): Promise<AngleResult> {
   const label = angle.slice(0, 45);
   try {
-    // Plain facet query (no source bucket — it over-constrained queries). Research is always
+    // Plain facet query (no source bucket — it over-constrained queries). Research is
     // recency-biased: default to a 1-year window, tighten to a month when the ask signals "latest".
     const recency = wantsFreshness(angle) || wantsFreshness(ctx.params.topic as string);
     const searchParams: Record<string, unknown> = {
       query: angle,
-      count: '10',
+      count: '6',
       freshness: recency ? 'month' : 'year',
     };
 
     const searchResult = await ctx.executor('web_search', searchParams, ctx.toolContext);
-    // Diversify: distinct domains, ≤2 per domain across the whole run, no refetch.
-    const domainCount = ctx.params._domainCount as Map<string, number>;
-    const seen = ctx.params._seenUrls as Set<string>;
-    const urls = pickDiverseUrls(extractUrls(searchResult), domainCount, seen);
+    const urls = extractUrls(searchResult).slice(0, 3);
     if (urls.length === 0) {
-      console.warn(`[Research] Facet "${label}": no usable search results (${searchResult.slice(0, 80)})`);
+      console.warn(`[Research] Facet "${label}": no search results (${searchResult.slice(0, 80)})`);
       return { angle, findings: '', sources: [] };
     }
 
@@ -256,9 +224,6 @@ export const researchPipeline: PipelineDefinition = {
       execute: async (ctx) => {
         const angles = ctx.params._angles as string[];
         console.log(`[Research] Investigating ${angles.length} facets (max 3 concurrent)...`);
-        // Shared across facets so sources stay diverse: cap each domain run-wide, never refetch a URL.
-        ctx.params._domainCount = new Map<string, number>();
-        ctx.params._seenUrls = new Set<string>();
         // Bounded concurrency: 3 facets at a time avoids bursting Brave / fetch rate limits.
         const results = await mapLimit(angles, 3, a => researchAngle(ctx, a));
         const withFindings = results.filter(r => r.findings.trim().length > 0);
