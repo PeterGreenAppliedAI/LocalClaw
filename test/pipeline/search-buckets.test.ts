@@ -27,8 +27,15 @@ describe('search-buckets', () => {
       expect(detectBucket('RTX 5090 laptop benchmarks')).toBe('hardware');
     });
 
-    it('does not let hardware steal finance (NVIDIA stock) or pure-AI queries', () => {
+    it('routes Apple Silicon inference queries to hardware', () => {
+      expect(detectBucket('Apple M4 Max for local inference')).toBe('hardware');
+      expect(detectBucket('Mac Studio for running LLMs')).toBe('hardware');
+      expect(detectBucket('MLX vs llama.cpp on M3 Ultra')).toBe('hardware');
+    });
+
+    it('does not let hardware steal finance (NVIDIA/Apple stock) or pure-AI queries', () => {
       expect(detectBucket('NVIDIA stock earnings Q2')).toBe('finance');
+      expect(detectBucket('Apple stock price today')).toBe('finance');
       expect(detectBucket('how does transformer inference work')).toBe('ai_tech');
     });
 

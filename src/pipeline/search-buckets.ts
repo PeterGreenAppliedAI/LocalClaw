@@ -42,9 +42,9 @@ const SOURCE_BUCKETS: Record<string, string[]> = {
   ],
 
   hardware: [
-    'servethehome.com', 'anandtech.com',   // anchors — deep coverage of new AI hardware (DGX Spark, Strix Halo, RTX)
-    'nvidia.com', 'amd.com',
-    'tomshardware.com', 'techpowerup.com',
+    'servethehome.com', 'anandtech.com',   // anchors — deep coverage of new AI hardware (DGX Spark, Strix Halo, RTX, Apple Silicon)
+    'nvidia.com', 'amd.com', 'apple.com',
+    'tomshardware.com', 'techpowerup.com', 'macrumors.com',
     'newegg.com', 'pcworld.com', 'phoronix.com',
   ],
 
@@ -78,7 +78,7 @@ const BUCKET_PATTERNS: Array<{ pattern: RegExp; bucket: string }> = [
   // hardware MUST precede ai_tech — "GPU/hardware for inference" else gets stolen by ai_tech's "inference".
   // Product lines (rtx/radeon/ryzen/dgx/strix...) are unambiguous hardware; bare "nvidia/amd" stay out
   // (they collide with finance "stock"). "hardware" word + components route here.
-  { pattern: /\b(gpu|hardware|rtx|radeon|geforce|ryzen|threadripper|epyc|strix|dgx|instinct|tensor core|vram|npu|workstation|server|rack|nvme|motherboard)\b/i, bucket: 'hardware' },
+  { pattern: /\b(gpu|hardware|rtx|radeon|geforce|ryzen|threadripper|epyc|strix|dgx|instinct|tensor core|vram|npu|workstation|server|rack|nvme|motherboard|apple silicon|mac studio|mac mini|macbook|mlx|unified memory|m[1-4] (pro|max|ultra))\b/i, bucket: 'hardware' },
   { pattern: /\b(ai|llm|model|ollama|anthropic|openai|transformer|inference|training|neural|deep learning|machine learning|gpt|claude|gemma|qwen|llama)\b/i, bucket: 'ai_tech' },
   { pattern: /\b(health|medical|symptom|disease|treatment|doctor|hospital|diagnosis|medication|clinical)\b/i, bucket: 'health' },
   { pattern: /\b(event|conference|meetup|workshop|hackathon|networking|summit|expo)\b/i, bucket: 'events' },
