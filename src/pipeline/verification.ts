@@ -259,7 +259,8 @@ export function correctionPrompt(reportMarkdown: string, patch: PatchSet, claimT
     system: [
       'You are revising a research report to fix overstated or unsupported claims.',
       'Edit ONLY the sentences affected by the instructions below. Preserve all other text, headings, the `## Sources` list, and any `{{chart:...}}` placeholders VERBATIM.',
-      'Do not add new factual claims. Do not change the structure. Keep markdown formatting and the existing [n] citation numbers.',
+      'Hedge CONCISELY: use at most ONE hedge per sentence (a single "According to <source>, …" OR one "reportedly"). Never stack qualifiers or repeat "reportedly" within a sentence. Keep the prose clean and readable.',
+      'Do not add new factual claims. Do not delete claims. Do not change the structure. Keep markdown formatting and the existing [n] citation numbers.',
       'Return the FULL corrected report in markdown. /no_think',
     ].join('\n'),
     user: `Fix these claims:\n${items}\n\n---\nREPORT:\n${reportMarkdown}`,
