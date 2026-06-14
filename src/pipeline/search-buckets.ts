@@ -13,7 +13,8 @@ const ANCHOR_COUNT = 2;
 
 const SOURCE_BUCKETS: Record<string, string[]> = {
   ai_tech: [
-    'anthropic.com', 'openai.com', 'ollama.com', 'huggingface.co',
+    'huggingface.co', 'anthropic.com',   // anchors — model registry + frontier lab, always included
+    'openai.com', 'ollama.com',
     'arxiv.org', 'github.com', 'news.ycombinator.com',
     'deepmind.google', 'ai.meta.com', 'nvidia.com/blog',
     'lilianweng.github.io', 'jalammar.github.io', 'colah.github.io',
