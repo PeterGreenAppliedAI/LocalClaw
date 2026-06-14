@@ -14,6 +14,7 @@ import type {
   AgentBindingSchema,
   MemoryConfigSchema,
   MemoryConsolidationSchema,
+  VerificationConfigSchema,
   CronConfigSchema,
   SessionConfigSchema,
   ToolsConfigSchema,
@@ -37,6 +38,7 @@ import type {
 } from './schema.js';
 
 export type LocalClawConfig = z.infer<typeof LocalClawConfigSchema>;
+export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
 export type OllamaConfig = z.infer<typeof OllamaConfigSchema>;
 export type RouterConfig = z.infer<typeof RouterConfigSchema>;
 export type RouterCategory = z.infer<typeof RouterCategorySchema>;

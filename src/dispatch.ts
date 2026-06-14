@@ -1064,7 +1064,7 @@ async function runPipelineDispatch(
 
   const ctx: PipelineContext = {
     userMessage: pipelineMessage,
-    params: {},
+    params: { _verification: config.verification },
     stageResults: {},
     steps: [],
     client,

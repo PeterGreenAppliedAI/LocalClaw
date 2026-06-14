@@ -19,7 +19,8 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage/Chrome Exte
 - **Router** — phi4:14b, single-word classification into categories: `chat`, `web_search`, `memory`, `exec`, `cron`, `message`, `website`, `multi`, `config`, `task`, `research`, `personal`. Pre-model overrides for high-confidence patterns (PDF reports, calendar queries, bare URLs → website). Fallback to `defaultCategory` on timeout/parse failure. Implemented in `src/router/classifier.ts`.
 - **Pipeline engine** — `src/pipeline/executor.ts`. Deterministic stage-based workflows: extract, tool, parallel_tool, llm, code, branch, llm_branch, loop. Most categories use pipelines instead of letting the model decide the workflow.
 - **Plan pipeline** — `src/pipeline/definitions/plan.ts`. LLM decomposes goals into specialist sub-tasks, self-reflects, executes via foreman handoffs with write-through artifacts. Used by `multi` category.
-- **Research pipeline** — `src/pipeline/definitions/research.ts`. Parallel search + fetch + synthesis + charts. Branches to reveal.js deck or styled PDF report with quality review.
+- **Research pipeline** — `src/pipeline/definitions/research.ts`. Decompose → per-facet parallel search + fetch + synthesis → analytical markdown report → **evidence verification** → deterministic markdown→HTML→PDF render with charts.
+- **Evidence verification** — `src/pipeline/verification.ts` + stages in research.ts. After the draft, extract atomic claims (fast model), check each against its **cited (cached) source** — no independent search — and attribute/qualify/remove overstated or single-sourced claims via a MiniMax correction pass. Publishes with a `## Verification` appendix + auditable `verification.json`. Config-gated via `verification` block (enabled by default). Catches *overstatement*; does NOT independently disprove a wrong source (Tier-1 cross-check is a deferred Phase 2).
 - **Analytics pipeline** — `src/pipeline/definitions/analytics.ts`. File upload → pandas report (code) → matplotlib charts (code) → LLM executive interpretation. Code computes all numbers; model only interprets. Auto-routed when data files (.csv, .xlsx, .json) are uploaded.
 - **Tool-loop engine** — `runToolLoop()` in `src/tool-loop/engine.ts`. ReAct-style loop with native Ollama tool calls + regex fallback parser. Includes hallucination detection, drift detection, error learning hints.
 - **Dispatch pipeline** — `src/dispatch.ts` routes classified messages to specialists/pipelines. Handles 6-layer security enforcement, tool stripping, context isolation.
@@ -205,7 +206,8 @@ src/
     search-buckets.ts       #   Topic→curated-domain buckets + anchors; site: filters for web_search
     definitions/            #   Pipeline definitions per category
       plan.ts               #     Plan pipeline (foreman handoffs, skill check, reflection)
-      research.ts           #     Research pipeline (parallel search, charts, deck/report branch)
+      research.ts           #     Research pipeline (decompose → per-facet research → verify → PDF)
+    verification.ts         #   Evidence verification: claim extraction, entailment judge, patch-set, appendix
       analytics.ts          #     Analytics pipeline (file upload → pandas → charts → LLM interpretation)
       heartbeat.ts          #     Deterministic heartbeat (task board + memory, no LLM date reasoning)
       cron.ts, task.ts, memory.ts, web-search.ts, exec.ts, message.ts, website.ts

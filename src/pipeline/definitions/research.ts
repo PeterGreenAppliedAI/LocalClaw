@@ -1,7 +1,13 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PipelineDefinition, PipelineContext } from '../types.js';
 import { markdownToHtml } from '../../utils/markdown-to-html.js';
+import type { VerificationConfig } from '../../config/types.js';
+import {
+  type Claim, type VerificationResult,
+  extractClaimsPrompt, parseClaims, entailmentPrompt, parseVerdict,
+  buildPatchSet, correctionPrompt, diffClaimSets, verificationSection, needsCorrection,
+} from '../verification.js';
 
 /**
  * Research pipeline — REAL research, not a search.
@@ -121,6 +127,11 @@ async function researchAngle(ctx: PipelineContext, angle: string): Promise<Angle
       return { angle, findings: '', sources: [] };
     }
 
+    // Cache the raw fetched text so the verification stage can check claims against the
+    // exact pages they were built from — no re-fetch, no extra search.
+    const sourceText = ctx.params._sourceText as Record<string, string> | undefined;
+    if (sourceText) for (const f of valid) if (!sourceText[f.url]) sourceText[f.url] = f.content;
+
     const sourceBlocks = valid.map((f, i) => `[Source ${i + 1}: ${f.url}]\n${f.content}`).join('\n\n---\n\n');
     const resp = await ctx.client.chat({
       model: ctx.model,
@@ -224,6 +235,8 @@ export const researchPipeline: PipelineDefinition = {
       execute: async (ctx) => {
         const angles = ctx.params._angles as string[];
         console.log(`[Research] Investigating ${angles.length} facets (max 3 concurrent)...`);
+        // url → raw page text, shared across facets so verification can reuse fetched pages.
+        ctx.params._sourceText = {};
         // Bounded concurrency: 3 facets at a time avoids bursting Brave / fetch rate limits.
         const results = await mapLimit(angles, 3, a => researchAngle(ctx, a));
         const withFindings = results.filter(r => r.findings.trim().length > 0);
@@ -323,6 +336,139 @@ export const researchPipeline: PipelineDefinition = {
           ctx.answer = `I researched "${ctx.params.topic}" but couldn't gather enough reliable source material to produce a report. Try narrowing the topic or rephrasing.`;
           console.warn('[Research] Final synthesis too thin — aborting before render');
         }
+      },
+    },
+
+    // 7b. Extract atomic, checkable claims from the draft (fast model)
+    {
+      name: 'extract_claims',
+      type: 'code',
+      when: (ctx) => (ctx.params._verification as VerificationConfig | undefined)?.enabled !== false,
+      execute: async (ctx) => {
+        const vcfg = ctx.params._verification as VerificationConfig | undefined;
+        const maxClaims = vcfg?.maxClaims ?? 12;
+        const model = vcfg?.extractorModel || ctx.routerModel || ctx.model;
+        try {
+          const { system, user } = extractClaimsPrompt(ctx.params._reportMarkdown as string, maxClaims);
+          const resp = await ctx.client.chat({
+            model,
+            messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+            options: { temperature: 0.1, num_predict: 2000 },
+          });
+          const claims = parseClaims(resp.message?.content ?? '', maxClaims);
+          ctx.params._claims = claims;
+          console.log(`[Verify] extracted ${claims.length} checkable claim(s)`);
+        } catch (err) {
+          console.warn('[Verify] claim extraction failed (skipping verification):', err instanceof Error ? err.message : err);
+          ctx.params._claims = [];
+        }
+      },
+    },
+
+    // 7c. Check each claim against its cited (cached) source — no independent search
+    {
+      name: 'verify_claims',
+      type: 'code',
+      when: (ctx) => ((ctx.params._claims as Claim[] | undefined)?.length ?? 0) > 0,
+      execute: async (ctx) => {
+        const claims = ctx.params._claims as Claim[];
+        const sources = (ctx.params._allSources as string[]) ?? [];
+        const sourceText = (ctx.params._sourceText as Record<string, string>) ?? {};
+        const vcfg = ctx.params._verification as VerificationConfig | undefined;
+        const model = vcfg?.judgeModel || ctx.model;
+        const results = await mapLimit(claims, 3, async (claim): Promise<VerificationResult> => {
+          const url = claim.citation && sources[claim.citation - 1] ? sources[claim.citation - 1] : undefined;
+          let text = url ? sourceText[url] : undefined;
+          // On-demand fetch only if the cited page wasn't already cached during research
+          if (url && !text) {
+            try {
+              const c = await ctx.executor('web_fetch', { url, extractMode: 'text', maxChars: '6000' }, ctx.toolContext);
+              if (c && !c.startsWith('Error') && c.length > 120) text = c;
+            } catch { /* leave undefined */ }
+          }
+          if (!text) {
+            return { claim_id: claim.claim_id, claim: claim.claim, verdict: 'UNSUPPORTED', cited_source: url, supported_elements: [], unsupported_elements: [], reason: 'No cited source available to check against.', recommended_action: 'attribute' };
+          }
+          try {
+            const { system, user } = entailmentPrompt(claim, url ?? 'cited source', text);
+            const resp = await ctx.client.chat({
+              model,
+              messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+              options: { temperature: 0.2, num_predict: 600 },
+            });
+            return parseVerdict(resp.message?.content ?? '', claim, url);
+          } catch (err) {
+            console.warn(`[Verify] judge failed for ${claim.claim_id}:`, err instanceof Error ? err.message : err);
+            return { claim_id: claim.claim_id, claim: claim.claim, verdict: 'AMBIGUOUS', cited_source: url, supported_elements: [], unsupported_elements: [], reason: 'Judge error — left as drafted.', recommended_action: 'keep' };
+          }
+        });
+        ctx.params._verifications = results;
+        console.log(`[Verify] ${results.length} checked, ${results.filter(needsCorrection).length} need correction`);
+        // Auditable artifact alongside the report/charts
+        try {
+          const dir = join('data', 'workspaces', 'main', 'research', ctx.params.slug as string);
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(join(dir, 'verification.json'), JSON.stringify({ topic: ctx.params.topic, generated: new Date().toISOString(), results }, null, 2));
+        } catch (err) {
+          console.warn('[Verify] could not write verification.json:', err instanceof Error ? err.message : err);
+        }
+      },
+    },
+
+    // 7d. Correction pass — only runs when claims need fixing (attribute / qualify / remove)
+    {
+      name: 'correction_pass',
+      type: 'code',
+      when: (ctx) => (ctx.params._verifications as VerificationResult[] | undefined)?.some(needsCorrection) ?? false,
+      execute: async (ctx) => {
+        const results = ctx.params._verifications as VerificationResult[];
+        const claims = ctx.params._claims as Claim[];
+        const vcfg = ctx.params._verification as VerificationConfig | undefined;
+        const md = ctx.params._reportMarkdown as string;
+        const patch = buildPatchSet(results);
+        const claimText: Record<string, string> = {};
+        for (const c of claims) claimText[c.claim_id] = c.claim;
+        try {
+          const { system, user } = correctionPrompt(md, patch, claimText);
+          const resp = await ctx.client.chat({
+            model: vcfg?.judgeModel || ctx.model,
+            messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+            options: { temperature: 0.3, num_predict: 8192, ...(ctx.contextSize ? { num_ctx: ctx.contextSize } : {}) },
+          });
+          const corrected = stripThinking(resp.message?.content ?? '').trim();
+          // Guard: only accept a revision that preserves the bulk of the report
+          if (corrected.length > md.length * 0.5) {
+            ctx.params._reportMarkdown = corrected;
+            console.log(`[Verify] applied ${Object.keys(patch).length} correction(s)`);
+            // Re-extract + diff to catch claims newly introduced by the revision
+            const maxClaims = vcfg?.maxClaims ?? 12;
+            const { system: s2, user: u2 } = extractClaimsPrompt(corrected, maxClaims);
+            const re = await ctx.client.chat({
+              model: vcfg?.extractorModel || ctx.routerModel || ctx.model,
+              messages: [{ role: 'system', content: s2 }, { role: 'user', content: u2 }],
+              options: { temperature: 0.1, num_predict: 2000 },
+            });
+            ctx.params._addedUnverified = diffClaimSets(claims, parseClaims(re.message?.content ?? '', maxClaims));
+          } else {
+            console.warn('[Verify] correction output too short — keeping original draft');
+          }
+        } catch (err) {
+          console.warn('[Verify] correction pass failed (keeping original):', err instanceof Error ? err.message : err);
+        }
+      },
+    },
+
+    // 7e. Append the verification appendix to the published report
+    {
+      name: 'verification_append',
+      type: 'code',
+      when: (ctx) => ((ctx.params._verifications as VerificationResult[] | undefined)?.length ?? 0) > 0,
+      execute: (ctx) => {
+        const section = verificationSection(
+          ctx.params._verifications as VerificationResult[],
+          (ctx.params._addedUnverified as string[]) ?? [],
+        );
+        if (section) ctx.params._reportMarkdown = `${ctx.params._reportMarkdown as string}\n${section}`;
       },
     },
 

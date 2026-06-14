@@ -164,6 +164,22 @@ export const MemoryConfigSchema = z.object({
   nerModel: z.string().default('phi4-mini:latest'),
 });
 
+export const VerificationConfigSchema = z.object({
+  /**
+   * Verify research claims against their cited sources before publishing.
+   * Default OFF: the MVP over-removes true-but-misattributed claims (citation→source
+   * mismatch) and degraded report accuracy. Re-enable once the precision fixes land
+   * (attribute-don't-remove + broader-corpus checking). See DECISIONS.md.
+   */
+  enabled: z.boolean().default(false),
+  /** Fast model for atomic-claim extraction. Defaults to the pipeline's router model. */
+  extractorModel: z.string().optional(),
+  /** Model for the entailment judge (claim vs. cited source). Defaults to the research specialist. */
+  judgeModel: z.string().optional(),
+  /** Max claims verified per report (highest-impact first). */
+  maxClaims: z.number().int().positive().default(12),
+});
+
 export const CronConfigSchema = z.object({
   enabled: z.boolean().default(false),
   store: z.string().default('data/cron.json'),
@@ -359,6 +375,7 @@ export const LocalClawConfigSchema = z.object({
   channels: z.record(z.string(), ChannelConfigSchema).default({}),
   agents: AgentsConfigSchema.default({}),
   memory: MemoryConfigSchema.default({}),
+  verification: VerificationConfigSchema.default({}),
   cron: CronConfigSchema.default({}),
   session: SessionConfigSchema.default({}),
   tools: ToolsConfigSchema.optional(),
