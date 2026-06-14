@@ -20,7 +20,7 @@ export function createWebSearchTool(config?: WebSearchConfig): LocalClawTool {
       properties: {
         query: { type: 'string', description: 'The search query' },
         count: { type: 'number', description: 'Number of results to return (default 5)' },
-        freshness: { type: 'string', description: 'Time filter', enum: ['day', 'week', 'month'] },
+        freshness: { type: 'string', description: 'Time filter', enum: ['day', 'week', 'month', 'year'] },
       },
       required: ['query'],
     },
@@ -120,7 +120,12 @@ async function searchBrave(
   apiKey: string,
 ): Promise<SearchResult[]> {
   const params = new URLSearchParams({ q: query, count: String(count) });
-  if (freshness) params.set('freshness', freshness);
+  // Brave expects coded freshness values (pd/pw/pm/py), not friendly names — map so the filter
+  // is actually honored instead of silently ignored.
+  if (freshness) {
+    const code = { day: 'pd', week: 'pw', month: 'pm', year: 'py' }[freshness] ?? freshness;
+    params.set('freshness', code);
+  }
   const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
 
   const MAX_ATTEMPTS = 3;

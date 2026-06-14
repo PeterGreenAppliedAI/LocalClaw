@@ -40,14 +40,18 @@ export const webSearchPipeline: PipelineDefinition = {
         const query = ctx.params.query as string;
         const p: Record<string, unknown> = { query };
         if (ctx.params.count) p.count = ctx.params.count;
-        // Freshness: trust the extractor if set, else force a recency window when the
-        // query signals "recent" — prevents evergreen/historical pages answering a "latest" ask.
+        // Recency-biased by default: trust the extractor if it set freshness, else use a 1-year
+        // window, tightening to a month when the query explicitly signals "latest/recent". A year
+        // still surfaces evergreen pages while filtering genuinely stale results.
         if (ctx.params.freshness) {
           p.freshness = ctx.params.freshness;
         } else if (/\b(recent|latest|newest|just (released|announced|launched|dropped)|this (week|month|year)|right now|currently|up.?to.?date|2026)\b/i.test(query)) {
           p.freshness = 'month';
           ctx.params.freshness = 'month';
           console.log('[WebSearch] Recency query detected — forcing freshness=month');
+        } else {
+          p.freshness = 'year';
+          ctx.params.freshness = 'year';
         }
         return p;
       },
