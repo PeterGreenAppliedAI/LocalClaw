@@ -101,6 +101,7 @@ const NEW_TOPIC_PATTERNS = [
   /\b(find|get|check|show)\b.*\b(me|my|a|some|the)\b/i,      // "find me a recipe", "get my tasks"
   /\b(what'?s|what is) (the|my)\b/i,                           // "what's the weather", "what's my schedule"
   /\b(can you|could you|please) (search|find|look|check)\b/i,  // "can you search for..."
+  /\b(create|make|write|generate|build|produce|put together|draft|prepare)\b.*\b(report|deck|presentation|brief|analysis|write-?up|summary|document|pdf|slides?)\b/i,  // "create a report on X" → research/task
 ];
 
 /** Messages that open with a greeting are starting a new conversation, not following up */
@@ -130,8 +131,10 @@ function isLikelyFollowUp(message: string, previousCategory?: string): boolean {
   // Only stick on conversation-oriented categories — tool specialists finish in one turn
   if (previousCategory && !STICKY_CATEGORIES.has(previousCategory)) return false;
   // Explicit task commands break sticky regardless of message length
-  // These are imperative actions ("Build X", "Create X"), not conversational ("I build things")
-  const isImperativeTask = /^(build|create|make|generate|write|scaffold|implement|search for|run|execute|send|schedule)\b/i.test(trimmed);
+  // These are imperative actions ("Build X", "Create X"), not conversational ("I build things").
+  // Strip a leading polite prefix first so "Can you create X" / "Please make X" still register.
+  const dePolited = trimmed.replace(/^(can|could|would|will) you\s+|^please\s+|^i (?:need|want|'?d like)(?: you)? to\s+/i, '');
+  const isImperativeTask = /^(build|create|make|generate|write|scaffold|implement|produce|draft|prepare|search for|run|execute|send|schedule)\b/i.test(dePolited);
   if (isImperativeTask) return false;
   // Long conversational messages without imperative task — keep sticky
   if (trimmed.length > 200) return true;

@@ -65,3 +65,5 @@
 {"message": "I wonder if you could create a harness with open source models", "expected": "chat", "layer": "override", "note": "'I wonder' → chat override, not multi"}
 {"message": "what if we used a different model for routing", "expected": "chat", "layer": "override", "note": "'what if' → chat override"}
 {"message": "do you think local models can match cloud quality", "expected": "chat", "layer": "override", "note": "'do you think' → chat override"}
+{"message": "Can you create a report on the state of local inference in 2026", "expected": "research", "layer": "model", "context": {"previousCategory": "chat"}, "note": "polite report request must break sticky, not be absorbed as chat follow-up"}
+{"message": "could you make a deck on the EV market", "expected": "research", "layer": "model", "context": {"previousCategory": "chat"}, "note": "polite imperative breaks sticky → model classifies"}
