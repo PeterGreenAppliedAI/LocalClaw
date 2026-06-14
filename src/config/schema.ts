@@ -5,6 +5,19 @@ export const OllamaConfigSchema = z.object({
   keepAlive: z.string().default('30m'),
 });
 
+/** An OpenAI-compatible inference backend (e.g. vLLM). Additive — Ollama path is unchanged. */
+export const VllmBackendSchema = z.object({
+  url: z.string(),
+  apiKey: z.string().optional(),
+  /** Exact model ids this backend serves, e.g. "cyankiwi/MiniMax-M2.7-AWQ-4bit" */
+  models: z.array(z.string()).default([]),
+});
+
+export const InferenceConfigSchema = z.object({
+  /** Extra OpenAI-compatible backends. Chat calls whose model matches route here; everything else stays on Ollama. */
+  backends: z.array(VllmBackendSchema).default([]),
+});
+
 export const RouterCategorySchema = z.object({
   description: z.string().optional(),
   keywords: z.array(z.string()).optional(),
@@ -22,6 +35,8 @@ export const SpecialistConfigSchema = z.object({
   model: z.string(),
   systemPrompt: z.string().optional(),
   maxTokens: z.number().default(4096),
+  /** Input context window override (compaction budget + num_ctx). Falls back to session.contextSize. Set high for big-context models like MiniMax. */
+  contextSize: z.number().optional(),
   temperature: z.number().default(0.7),
   /** Sampling: top-K candidates (Ollama default: 40). Lower = more focused. */
   topK: z.number().optional(),
@@ -278,10 +293,17 @@ export const VoiceConfigSchema = z.object({
 export const HeartbeatConfigSchema = z.object({
   enabled: z.boolean().default(false),
   schedule: z.string().default('0 */2 * * *'), // every 2 hours
+  /** Model used for heartbeat reasoning (memory diff, task summary, user model). */
+  model: z.string().default('qwen3.6:35b'),
   delivery: z.object({
     channel: z.string().default('discord'),
     target: z.string(), // Discord channel ID or user ID for DMs
   }),
+});
+
+/** Briefing reasoning config. Timing is fixed (8am/1:15pm/5pm); model is configurable. */
+export const BriefingConfigSchema = z.object({
+  model: z.string().default('qwen3.6:35b'),
 });
 
 // --- Fact / Memory schemas ---
@@ -324,6 +346,8 @@ export const LocalClawConfigSchema = z.object({
   ownerId: z.string().optional(),
   timezone: z.string().default('America/New_York'),
   ollama: OllamaConfigSchema.default({}),
+  inference: InferenceConfigSchema.default({}),
+  briefing: BriefingConfigSchema.default({}),
   router: RouterConfigSchema.default({}),
   specialists: z.record(z.string(), SpecialistConfigSchema).default({}),
   channels: z.record(z.string(), ChannelConfigSchema).default({}),

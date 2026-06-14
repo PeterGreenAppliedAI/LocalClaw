@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline';
 import { loadConfig } from './config/loader.js';
 import { OllamaClient } from './ollama/client.js';
+import { createInferenceClient } from './ollama/multi-backend.js';
 import { ToolRegistry } from './tools/registry.js';
 import { dispatchMessage } from './dispatch.js';
 import { Orchestrator } from './orchestrator.js';
@@ -100,7 +101,7 @@ async function runOrchestrator(config: ReturnType<typeof loadConfig>) {
 }
 
 async function runRepl(config: ReturnType<typeof loadConfig>) {
-  const client = new OllamaClient(config.ollama.url, config.ollama.keepAlive);
+  const client = createInferenceClient(config.ollama.url, config.ollama.keepAlive, config.inference?.backends);
   const registry = new ToolRegistry();
   await registerAllTools(registry, config);
 

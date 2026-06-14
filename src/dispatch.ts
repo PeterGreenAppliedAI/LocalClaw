@@ -252,7 +252,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
     // Build workspace context for budget estimation (frozen per session)
     const wsCtx = getCachedWorkspaceContext(sessionKey, workspacePath, 'minimal');
     const budget = computeBudget({
-      contextSize: config.session.contextSize,
+      contextSize: tempSpecialist?.contextSize ?? config.session.contextSize,
       systemPrompt: tempSpecialist?.systemPrompt ?? '',
       workspaceContext: wsCtx,
       currentMessage: message,
@@ -827,7 +827,7 @@ RULES:
       topP: specialist.topP,
       repeatPenalty: specialist.repeatPenalty,
       systemPrompt,
-      contextSize: config.session.contextSize,
+      contextSize: specialist.contextSize ?? config.session.contextSize,
     },
     tools: toolDefs,
     executor,
@@ -1278,7 +1278,8 @@ async function runAsBareChat(
   ];
 
   const options: Record<string, unknown> = { temperature, num_predict: maxTokens };
-  if (config.session.contextSize) options.num_ctx = config.session.contextSize;
+  const effectiveContextSize = specialist?.contextSize ?? config.session.contextSize;
+  if (effectiveContextSize) options.num_ctx = effectiveContextSize;
   if (specialist?.topK !== undefined) options.top_k = specialist.topK;
   if (specialist?.topP !== undefined) options.top_p = specialist.topP;
   if (specialist?.repeatPenalty !== undefined) options.repeat_penalty = specialist.repeatPenalty;

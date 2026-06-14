@@ -4,6 +4,7 @@ import { Cron } from 'croner';
 import type { LocalClawConfig } from './config/types.js';
 import type { ChannelAdapterConfig, InboundMessage } from './channels/types.js';
 import { OllamaClient } from './ollama/client.js';
+import { createInferenceClient } from './ollama/multi-backend.js';
 import { ToolRegistry } from './tools/registry.js';
 import { ChannelRegistry } from './channels/registry.js';
 import { SessionStore } from './sessions/store.js';
@@ -68,7 +69,7 @@ export class Orchestrator {
 
   constructor(config: LocalClawConfig) {
     this.config = config;
-    this.client = new OllamaClient(config.ollama.url, config.ollama.keepAlive);
+    this.client = createInferenceClient(config.ollama.url, config.ollama.keepAlive, config.inference?.backends);
     this.toolRegistry = new ToolRegistry();
     this.channelRegistry = new ChannelRegistry();
     this.sessionStore = new SessionStore(config.session.transcriptDir);

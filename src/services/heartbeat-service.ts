@@ -47,6 +47,7 @@ export async function runHeartbeat(deps: HeartbeatDeps): Promise<void> {
   const { config, client, factStore, graphMemory, taskStore, cronService, channelRegistry, toolRegistry } = deps;
   const hb = config.heartbeat;
   if (!hb) return;
+  const heartbeatModel = hb.model ?? 'qwen3.6:35b';
 
   console.log('[Heartbeat] Running...');
 
@@ -220,7 +221,7 @@ export async function runHeartbeat(deps: HeartbeatDeps): Promise<void> {
 
         try {
           const response = await client.chat({
-            model: 'qwen3.6:35b',
+            model: heartbeatModel,
             messages: [{ role: 'user', content: diffPrompt }],
             options: { temperature: 0.3, num_predict: 8192 },
           });
@@ -300,7 +301,7 @@ export async function runHeartbeat(deps: HeartbeatDeps): Promise<void> {
 
           try {
             const taskResponse = await client.chat({
-              model: 'qwen3.6:35b',
+              model: heartbeatModel,
               messages: [{ role: 'user', content: [
                 'Summarize these pre-analyzed tasks in 2-3 concise bullet points.',
                 'Urgency labels are AUTHORITATIVE — do not override or reinterpret them.',
@@ -342,7 +343,7 @@ export async function runHeartbeat(deps: HeartbeatDeps): Promise<void> {
           const turnSummary = recentTurns.slice(0, 10).map(t => `${t.role}: ${t.text.slice(0, 100)}`).join('\n');
 
           const modelResponse = await client.chat({
-            model: 'qwen3.6:35b',
+            model: heartbeatModel,
             messages: [{
               role: 'user',
               content: `You are analyzing a user's behavior from their recent conversations. Read the interactions below and fill in SPECIFIC observations about this person.
