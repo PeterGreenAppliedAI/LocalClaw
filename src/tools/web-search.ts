@@ -9,6 +9,7 @@ const searchCache = new Map<string, CacheEntry<SearchResult[]>>();
 export function createWebSearchTool(config?: WebSearchConfig): LocalClawTool {
   const provider = config?.provider ?? 'brave';
   const cacheTtl = config?.cacheTtlMs ?? 15 * 60 * 1000;
+  const baseUrl = config?.baseUrl;
 
   return {
     name: 'web_search',
@@ -39,8 +40,12 @@ export function createWebSearchTool(config?: WebSearchConfig): LocalClawTool {
       const cached = readCache(searchCache, cacheKey);
       if (cached) return formatResults(cached, query);
 
+      // searxng is self-hosted — no API key, just a base URL.
+      if (provider === 'searxng' && !baseUrl) {
+        return 'Error: searxng provider requires a baseUrl (e.g. "http://host:8080") in web search config.';
+      }
       const apiKey = resolveApiKey(provider, config);
-      if (!apiKey) {
+      if (!apiKey && provider !== 'searxng') {
         return `Error: No API key configured for ${provider}. Set the appropriate env var.`;
       }
 
@@ -48,16 +53,19 @@ export function createWebSearchTool(config?: WebSearchConfig): LocalClawTool {
       try {
         switch (provider) {
           case 'brave':
-            results = await searchBrave(query, count, freshness, apiKey);
+            results = await searchBrave(query, count, freshness, apiKey!);
             break;
           case 'perplexity':
-            results = await searchPerplexity(query, count, apiKey);
+            results = await searchPerplexity(query, count, apiKey!);
             break;
           case 'grok':
-            results = await searchGrok(query, count, apiKey);
+            results = await searchGrok(query, count, apiKey!);
             break;
           case 'tavily':
-            results = await searchTavily(query, count, apiKey);
+            results = await searchTavily(query, count, apiKey!);
+            break;
+          case 'searxng':
+            results = await searchSearxng(query, count, freshness, baseUrl!);
             break;
           default:
             return `Error: Unknown search provider "${provider}"`;
@@ -267,4 +275,43 @@ async function searchTavily(
     url: r.url,
     snippet: r.content,
   }));
+}
+
+// Self-hosted SearXNG metasearch — no API key, no rate limit. Requires the instance's
+// settings.yml to enable the JSON format (search.formats: [html, json]).
+async function searchSearxng(
+  query: string,
+  count: number,
+  freshness: string | undefined,
+  baseUrl: string,
+): Promise<SearchResult[]> {
+  const params = new URLSearchParams({ q: query, format: 'json', language: 'en', safesearch: '0' });
+  // SearXNG time_range only accepts day/month/year (NO week — per the search API docs).
+  // Map our freshness vocabulary onto valid values; skip anything unrecognized.
+  const timeRange = { day: 'day', week: 'month', month: 'month', year: 'year' }[freshness ?? ''];
+  if (timeRange) params.set('time_range', timeRange);
+
+  const url = `${baseUrl.replace(/\/+$/, '')}/search?${params}`;
+  const res = await fetch(url, {
+    headers: { 'Accept': 'application/json', 'User-Agent': 'LocalClaw/1.0' },
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!res.ok) {
+    if (res.status === 403) throw new Error('SearXNG 403 — enable the JSON format in settings.yml (search.formats: [html, json])');
+    throw new Error(`SearXNG: ${res.status} ${res.statusText}`);
+  }
+
+  const data = await res.json() as {
+    results?: Array<{ title?: string; url?: string; content?: string }>;
+  };
+
+  return (data.results ?? [])
+    .filter(r => r.url)
+    .slice(0, count)
+    .map(r => ({
+      title: r.title ?? r.url ?? '',
+      url: r.url ?? '',
+      snippet: r.content ?? '',
+    }));
 }

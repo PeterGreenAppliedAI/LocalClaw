@@ -201,8 +201,10 @@ export const SessionConfigSchema = z.object({
 });
 
 export const WebSearchConfigSchema = z.object({
-  provider: z.enum(['brave', 'perplexity', 'grok', 'tavily']).default('brave'),
+  provider: z.enum(['brave', 'perplexity', 'grok', 'tavily', 'searxng']).default('brave'),
   apiKey: z.string().optional(),
+  /** Base URL for self-hosted providers (searxng), e.g. "http://192.168.1.239:8080". No API key needed. */
+  baseUrl: z.string().optional(),
   cacheTtlMs: z.number().default(15 * 60 * 1000),
 });
 

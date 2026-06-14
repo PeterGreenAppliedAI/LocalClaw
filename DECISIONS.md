@@ -385,6 +385,11 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Cleaner fix (NOT yet done):** Strengthen the chat system prompt so it doesn't promise tool actions in the first place — if it needs to search, it should signal a re-route, not narrate intent. Pairs naturally with the research-pipeline work.
 **Status:** Band-aid active (catches it post-hoc and does the search); prompt-level fix deferred.
 
+### SearXNG self-hosted search provider (June 2026)
+**Problem:** Brave's free tier (~1 req/sec, 2000/month) forced a serialized throttle + 429 backoff and capped the research/verification search budget (bounded Tier-1 cross-checks, sequential facet searches). The rate limit was the recurring bottleneck across the whole research/verification build-out.
+**Fix:** Added a `searxng` provider to `src/tools/web-search.ts` (+ `provider` enum and a `baseUrl` field in `WebSearchConfigSchema`). SearXNG is a self-hosted metasearch engine — no API key, no rate limit. Calls `GET {baseUrl}/search?format=json`, maps our `freshness` (day/week/month/year) → SearXNG `time_range` (same vocabulary), slices to `count`. Requires the instance's `settings.yml` to enable the JSON format (`search.formats: [html, json]`) — returns a clear 403 error otherwise. Purely additive; Brave/Tavily/etc. paths unchanged. Runtime config points at the LAN instance (gitignored).
+**Status:** Live. With no rate limit, the Brave throttle is effectively bypassed and the Tier-1/facet search budgets can be widened if desired.
+
 ### web_search recall depth + freshness effectiveness (June 2026)
 **Problem:** Broad multi-vendor survey queries via web_search (single query, now top-5 fetches) can still miss product-specific pages (e.g. missed the DGX Spark article in an Apple/NVIDIA/AMD survey — it ranked below the comparison pieces).
 **Mitigations done:** fetch 3→5 pages; freshness forcing on recency-signalling queries.
