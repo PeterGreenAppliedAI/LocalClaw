@@ -5,8 +5,8 @@ import { markdownToHtml } from '../../utils/markdown-to-html.js';
 import type { VerificationConfig } from '../../config/types.js';
 import {
   type Claim, type VerificationResult,
-  extractClaimsPrompt, parseClaims, entailmentPrompt, parseVerdict,
-  buildPatchSet, correctionPrompt, diffClaimSets, verificationSection, needsCorrection,
+  extractClaimsPrompt, parseClaims, pickRelevantSources, entailmentPrompt, parseVerdict,
+  buildPatchSet, correctionPrompt, verificationSection, needsCorrection,
 } from '../verification.js';
 
 /**
@@ -365,7 +365,8 @@ export const researchPipeline: PipelineDefinition = {
       },
     },
 
-    // 7c. Check each claim against its cited (cached) source — no independent search
+    // 7c. Check each claim against the cached sources that actually mention it (broader corpus,
+    //     not the single — often mis-numbered — cited URL). No independent search.
     {
       name: 'verify_claims',
       type: 'code',
@@ -377,29 +378,31 @@ export const researchPipeline: PipelineDefinition = {
         const vcfg = ctx.params._verification as VerificationConfig | undefined;
         const model = vcfg?.judgeModel || ctx.model;
         const results = await mapLimit(claims, 3, async (claim): Promise<VerificationResult> => {
-          const url = claim.citation && sources[claim.citation - 1] ? sources[claim.citation - 1] : undefined;
-          let text = url ? sourceText[url] : undefined;
-          // On-demand fetch only if the cited page wasn't already cached during research
-          if (url && !text) {
+          const citedUrl = claim.citation && sources[claim.citation - 1] ? sources[claim.citation - 1] : undefined;
+          // Top cached pages that mention the claim's tokens, plus the cited page if any.
+          const candidateUrls = pickRelevantSources(claim, sourceText, 3, citedUrl);
+          let candidates = candidateUrls.map(u => ({ url: u, text: sourceText[u] })).filter(c => c.text);
+          // Fallback: nothing cached matched — fetch the cited page on demand.
+          if (candidates.length === 0 && citedUrl) {
             try {
-              const c = await ctx.executor('web_fetch', { url, extractMode: 'text', maxChars: '6000' }, ctx.toolContext);
-              if (c && !c.startsWith('Error') && c.length > 120) text = c;
-            } catch { /* leave undefined */ }
+              const c = await ctx.executor('web_fetch', { url: citedUrl, extractMode: 'text', maxChars: '6000' }, ctx.toolContext);
+              if (c && !c.startsWith('Error') && c.length > 120) candidates = [{ url: citedUrl, text: c }];
+            } catch { /* leave empty */ }
           }
-          if (!text) {
-            return { claim_id: claim.claim_id, claim: claim.claim, verdict: 'UNSUPPORTED', cited_source: url, supported_elements: [], unsupported_elements: [], reason: 'No cited source available to check against.', recommended_action: 'attribute' };
+          if (candidates.length === 0) {
+            return { claim_id: claim.claim_id, claim: claim.claim, verdict: 'AMBIGUOUS', cited_source: citedUrl, supported_elements: [], unsupported_elements: [], reason: 'No cached source available to check against — left as drafted.', recommended_action: 'keep' };
           }
           try {
-            const { system, user } = entailmentPrompt(claim, url ?? 'cited source', text);
+            const { system, user } = entailmentPrompt(claim, candidates);
             const resp = await ctx.client.chat({
               model,
               messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
               options: { temperature: 0.2, num_predict: 600 },
             });
-            return parseVerdict(resp.message?.content ?? '', claim, url);
+            return parseVerdict(resp.message?.content ?? '', claim, citedUrl);
           } catch (err) {
             console.warn(`[Verify] judge failed for ${claim.claim_id}:`, err instanceof Error ? err.message : err);
-            return { claim_id: claim.claim_id, claim: claim.claim, verdict: 'AMBIGUOUS', cited_source: url, supported_elements: [], unsupported_elements: [], reason: 'Judge error — left as drafted.', recommended_action: 'keep' };
+            return { claim_id: claim.claim_id, claim: claim.claim, verdict: 'AMBIGUOUS', cited_source: citedUrl, supported_elements: [], unsupported_elements: [], reason: 'Judge error — left as drafted.', recommended_action: 'keep' };
           }
         });
         ctx.params._verifications = results;
@@ -415,7 +418,7 @@ export const researchPipeline: PipelineDefinition = {
       },
     },
 
-    // 7d. Correction pass — only runs when claims need fixing (attribute / qualify / remove)
+    // 7d. Correction pass — only runs when claims need hedging/attribution
     {
       name: 'correction_pass',
       type: 'code',
@@ -436,19 +439,10 @@ export const researchPipeline: PipelineDefinition = {
             options: { temperature: 0.3, num_predict: 8192, ...(ctx.contextSize ? { num_ctx: ctx.contextSize } : {}) },
           });
           const corrected = stripThinking(resp.message?.content ?? '').trim();
-          // Guard: only accept a revision that preserves the bulk of the report
-          if (corrected.length > md.length * 0.5) {
+          // Guard: only accept a revision that preserves the bulk of the report (no mass deletion)
+          if (corrected.length > md.length * 0.7) {
             ctx.params._reportMarkdown = corrected;
             console.log(`[Verify] applied ${Object.keys(patch).length} correction(s)`);
-            // Re-extract + diff to catch claims newly introduced by the revision
-            const maxClaims = vcfg?.maxClaims ?? 12;
-            const { system: s2, user: u2 } = extractClaimsPrompt(corrected, maxClaims);
-            const re = await ctx.client.chat({
-              model: vcfg?.extractorModel || ctx.routerModel || ctx.model,
-              messages: [{ role: 'system', content: s2 }, { role: 'user', content: u2 }],
-              options: { temperature: 0.1, num_predict: 2000 },
-            });
-            ctx.params._addedUnverified = diffClaimSets(claims, parseClaims(re.message?.content ?? '', maxClaims));
           } else {
             console.warn('[Verify] correction output too short — keeping original draft');
           }
@@ -464,10 +458,7 @@ export const researchPipeline: PipelineDefinition = {
       type: 'code',
       when: (ctx) => ((ctx.params._verifications as VerificationResult[] | undefined)?.length ?? 0) > 0,
       execute: (ctx) => {
-        const section = verificationSection(
-          ctx.params._verifications as VerificationResult[],
-          (ctx.params._addedUnverified as string[]) ?? [],
-        );
+        const section = verificationSection(ctx.params._verifications as VerificationResult[]);
         if (section) ctx.params._reportMarkdown = `${ctx.params._reportMarkdown as string}\n${section}`;
       },
     },
