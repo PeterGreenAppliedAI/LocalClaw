@@ -1,6 +1,6 @@
 import type { LocalClawTool } from './types.js';
 import type { WebSearchConfig } from '../config/types.js';
-import { readCache, writeCache, type CacheEntry } from './web-shared.js';
+import { readCache, writeCache, normalizeCacheKey, type CacheEntry } from './web-shared.js';
 
 type SearchResult = { title: string; url: string; snippet: string };
 
@@ -34,7 +34,8 @@ export function createWebSearchTool(config?: WebSearchConfig): LocalClawTool {
       const freshness = params.freshness as string | undefined;
 
       // Cache check
-      const cacheKey = `${provider}:${query}:${count}:${freshness ?? ''}`;
+      // Case-insensitive on the query (readCache no longer normalizes internally)
+      const cacheKey = `${provider}:${normalizeCacheKey(query)}:${count}:${freshness ?? ''}`;
       const cached = readCache(searchCache, cacheKey);
       if (cached) return formatResults(cached, query);
 

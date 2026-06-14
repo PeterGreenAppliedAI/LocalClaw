@@ -3,7 +3,7 @@ import type { WebFetchConfig } from '../config/types.js';
 import { assertPublicUrl, assertPublicRedirect } from './ssrf.js';
 import { LocalClawError } from '../errors.js';
 import { extractReadableContent, htmlToMarkdown, truncateText } from './web-fetch-utils.js';
-import { readCache, writeCache, type CacheEntry } from './web-shared.js';
+import { readCache, writeCache, normalizeUrlKey, type CacheEntry } from './web-shared.js';
 
 const fetchCache = new Map<string, CacheEntry<string>>();
 const FETCH_CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -31,11 +31,17 @@ export function createWebFetchTool(config?: WebFetchConfig): LocalClawTool {
       const url = params.url as string;
       if (!url) return 'Error: url parameter is required';
 
-      // SSRF protection — always validate before anything else
-      await assertPublicUrl(url);
+      // SSRF protection — always validate before anything else.
+      // Return a tool-style error (not throw) so the model sees a clean observation.
+      try {
+        await assertPublicUrl(url);
+      } catch (err) {
+        if (err instanceof LocalClawError && err.code === 'SSRF_BLOCKED') return `Error: ${err.message}`;
+        throw err;
+      }
 
-      // Cache check after validation
-      const cacheKey = `${url}:${(params.extractMode as string) ?? 'text'}:${(params.maxChars as number) ?? maxChars}`;
+      // Cache check after validation. URL key preserves case (paths/queries are case-sensitive).
+      const cacheKey = `${normalizeUrlKey(url)}:${(params.extractMode as string) ?? 'text'}:${(params.maxChars as number) ?? maxChars}`;
       const cached = readCache(fetchCache, cacheKey);
       if (cached) {
         console.log(`[web_fetch] Cache hit: ${url.slice(0, 60)}`);
@@ -78,9 +84,11 @@ export function createWebFetchTool(config?: WebFetchConfig): LocalClawTool {
         const contentType = res.headers.get('content-type') ?? '';
         const body = await res.text();
 
-        // Non-HTML: return raw (truncated)
+        // Non-HTML: return raw (truncated) — cache it too, same as HTML results
         if (!contentType.includes('html')) {
-          return truncateText(body, limit);
+          const raw = truncateText(body, limit);
+          writeCache(fetchCache, cacheKey, raw, FETCH_CACHE_TTL);
+          return raw;
         }
 
         // HTML: extract with Readability

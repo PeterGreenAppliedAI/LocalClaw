@@ -25,7 +25,7 @@ import { logDispatch, logRouterClassification } from './metrics.js';
  * On first message needing compaction: runs synchronously (unavoidable).
  * On subsequent messages: uses cached result, schedules fresh compaction async.
  */
-const compactionCache = new Map<string, { messages: OllamaMessage[]; cachedAt: number }>();
+const compactionCache = new Map<string, { messages: OllamaMessage[]; cachedAt: number; turnCount: number }>();
 const COMPACTION_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const pendingCompactions = new Set<string>(); // prevent overlapping compactions
 
@@ -261,6 +261,10 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
 
     const compactionKey = `${agentId}:${sessionKey}`;
     const cachedCompaction = compactionCache.get(compactionKey);
+    // Turn count gates cache validity: a cached compaction is only safe to reuse if
+    // NO new turns were appended since it was built. Otherwise it omits the most recent
+    // exchange. Cheap read (meta.json), not the full transcript.
+    const currentTurnCount = sessionStore.getMetadata(agentId, sessionKey)?.turnCount ?? 0;
     const compactionParams = {
       store: sessionStore, client, agentId, sessionKey,
       budgetTokens: budget.historyBudget,
@@ -271,16 +275,20 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       senderId: params.sourceContext?.senderId,
     };
 
-    if (cachedCompaction && Date.now() - cachedCompaction.cachedAt < COMPACTION_CACHE_TTL_MS) {
-      // Use cached compaction result (fast path)
-      history = cachedCompaction.messages;
-      console.log(`[Dispatch] Using cached compaction (${Math.round((Date.now() - cachedCompaction.cachedAt) / 1000)}s old)`);
+    const cacheValid = cachedCompaction
+      && cachedCompaction.turnCount === currentTurnCount
+      && Date.now() - cachedCompaction.cachedAt < COMPACTION_CACHE_TTL_MS;
+
+    if (cacheValid) {
+      // Use cached compaction result (fast path) — turn count unchanged, so not stale
+      history = cachedCompaction!.messages;
+      console.log(`[Dispatch] Using cached compaction (${Math.round((Date.now() - cachedCompaction!.cachedAt) / 1000)}s old, ${currentTurnCount} turns)`);
 
       // Schedule async refresh if not already pending
       if (!pendingCompactions.has(compactionKey)) {
         pendingCompactions.add(compactionKey);
         buildCompactedHistory(compactionParams).then(result => {
-          compactionCache.set(compactionKey, { messages: result.messages, cachedAt: Date.now() });
+          compactionCache.set(compactionKey, { messages: result.messages, cachedAt: Date.now(), turnCount: currentTurnCount });
           if (result.compacted) console.log(`[Dispatch] Async compaction refreshed (budget: ${budget.historyBudget} tokens)`);
         }).catch(err => {
           console.warn('[Dispatch] Async compaction failed:', err instanceof Error ? err.message : err);
@@ -289,11 +297,11 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
         });
       }
     } else {
-      // No cache — must run synchronously (first message or cache expired)
+      // No valid cache — run synchronously (first message, expired, or new turns appended)
       try {
         const compacted = await buildCompactedHistory(compactionParams);
         history = compacted.messages;
-        compactionCache.set(compactionKey, { messages: compacted.messages, cachedAt: Date.now() });
+        compactionCache.set(compactionKey, { messages: compacted.messages, cachedAt: Date.now(), turnCount: currentTurnCount });
         if (compacted.compacted) {
           console.log(`[Dispatch] History compacted (budget: ${budget.historyBudget} tokens)`);
         }
