@@ -125,53 +125,95 @@ export function parseClaims(raw: string, maxClaims: number): Claim[] {
   return claims;
 }
 
+// --- Source relevance (broader-corpus checking) ---
+
+const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'from', 'have', 'has', 'are', 'was', 'were', 'will', 'can', 'approximately', 'about', 'into', 'than', 'between', 'their', 'these', 'those', 'which']);
+
+/** Claim tokens worth matching: words ≥4 chars + any token containing a digit (512gb, 92%, $20b, q4). */
+function claimTokens(text: string): Set<string> {
+  const toks = text.toLowerCase().match(/[a-z0-9$%.]+/g) ?? [];
+  return new Set(toks.filter(t => (/\d/.test(t) || t.length >= 4) && !STOP.has(t)));
+}
+
+/**
+ * Rank cached sources by how many of the claim's distinctive tokens they contain, and return
+ * the top-k URLs. The report's [n] citations are unreliable (the model synthesizes across
+ * sources), so we check a claim against the pages that actually mention it — not one cited URL.
+ * `mustInclude` (the cited URL) is always kept if present.
+ */
+export function pickRelevantSources(claim: Claim, sourceText: Record<string, string>, k = 3, mustInclude?: string): string[] {
+  const tokens = claimTokens(claim.claim);
+  const scored = Object.entries(sourceText).map(([url, text]) => {
+    const lower = text.toLowerCase();
+    let score = 0;
+    for (const t of tokens) if (lower.includes(t)) score++;
+    return { url, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  const picked = scored.filter(s => s.score > 0).slice(0, k).map(s => s.url);
+  if (mustInclude && sourceText[mustInclude] && !picked.includes(mustInclude)) {
+    picked.unshift(mustInclude);
+    if (picked.length > k) picked.pop();
+  }
+  return picked;
+}
+
 // --- Entailment judging ---
 
-export function entailmentPrompt(claim: Claim, sourceUrl: string, sourceText: string): { system: string; user: string } {
+export function entailmentPrompt(claim: Claim, sources: Array<{ url: string; text: string }>): { system: string; user: string } {
+  const blocks = sources.map((s, i) => `[Source ${i + 1}: ${s.url}]\n${s.text.slice(0, 3500)}`).join('\n\n---\n\n');
   return {
     system: [
-      'You are a strict fact-checker. Decide whether the SOURCE TEXT actually supports the CLAIM.',
+      'You are a strict fact-checker. Decide whether ANY of the SOURCES below supports the CLAIM.',
       'Judge ONLY from the source text provided — do not use outside knowledge.',
       'Verdicts:',
-      '- VERIFIED: the source clearly states the claim.',
-      '- PARTIALLY_VERIFIED: the source supports part of the claim but not all of it.',
-      '- UNSUPPORTED: the source does not state the claim (even if plausible).',
+      '- VERIFIED: a source clearly states the claim.',
+      '- PARTIALLY_VERIFIED: a source supports part of the claim but not all of it.',
+      '- UNSUPPORTED: none of the sources state the claim (even if plausible).',
       '- VENDOR_CLAIM: the figure/spec is the vendor\'s own marketing number, not an independent measurement.',
-      '- AMBIGUOUS: the source is unclear or could be read either way.',
-      'recommended_action: keep (VERIFIED, independent) | attribute (true but single/vendor source → "according to X") | qualify (PARTIALLY_VERIFIED) | remove (UNSUPPORTED).',
+      '- AMBIGUOUS: the sources are unclear or could be read either way.',
+      'recommended_action: keep (VERIFIED) | attribute (true but single/vendor source → "according to X") | qualify (partly supported, ambiguous, or not found → hedge the certainty). NEVER delete.',
+      'In "source_url" put the URL of the source that supports the claim (empty if none).',
       'Return ONLY this JSON object:',
-      '{"verdict":"...","supported_elements":["..."],"unsupported_elements":["..."],"evidence_sentence":"<exact sentence from source or empty>","reason":"<one sentence>","recommended_action":"keep|attribute|qualify|remove"}',
+      '{"verdict":"...","source_url":"<supporting url or empty>","supported_elements":["..."],"unsupported_elements":["..."],"evidence_sentence":"<exact sentence from a source or empty>","reason":"<one sentence>","recommended_action":"keep|attribute|qualify"}',
       'Return ONLY JSON. /no_think',
     ].join('\n'),
-    user: `CLAIM: ${claim.claim}\n\nSOURCE (${sourceUrl}):\n${sourceText.slice(0, 6000)}`,
+    user: `CLAIM: ${claim.claim}\n\nSOURCES:\n${blocks}`,
   };
 }
 
 const VALID_VERDICTS: Verdict[] = ['VERIFIED', 'PARTIALLY_VERIFIED', 'UNSUPPORTED', 'VENDOR_CLAIM', 'AMBIGUOUS'];
 const VALID_ACTIONS: ClaimAction[] = ['keep', 'attribute', 'qualify', 'remove'];
 
-/** Default action for a verdict when the judge doesn't give a usable one. */
+/**
+ * Default action for a verdict. We never auto-REMOVE: a claim absent from its cited page
+ * is usually true-but-misattributed (the report synthesizes across sources), so deletion
+ * loses real information. Unsupported → hedge/attribute, never delete.
+ */
 export function verdictToAction(verdict: Verdict): ClaimAction {
   switch (verdict) {
     case 'VERIFIED': return 'keep';
     case 'VENDOR_CLAIM': return 'attribute';
     case 'PARTIALLY_VERIFIED': return 'qualify';
-    case 'AMBIGUOUS': return 'attribute';
-    case 'UNSUPPORTED': return 'remove';
+    case 'AMBIGUOUS': return 'qualify';
+    case 'UNSUPPORTED': return 'qualify';
   }
 }
 
-export function parseVerdict(raw: string, claim: Claim, citedSource?: string): VerificationResult {
+export function parseVerdict(raw: string, claim: Claim, fallbackSource?: string): VerificationResult {
   const o = parseJsonLoose<Record<string, unknown>>(raw) ?? {};
   const verdict = VALID_VERDICTS.includes(o.verdict as Verdict) ? (o.verdict as Verdict) : 'AMBIGUOUS';
-  const action = VALID_ACTIONS.includes(o.recommended_action as ClaimAction)
+  let action = VALID_ACTIONS.includes(o.recommended_action as ClaimAction)
     ? (o.recommended_action as ClaimAction)
     : verdictToAction(verdict);
+  // Never auto-delete — downgrade any 'remove' to a hedge.
+  if (action === 'remove') action = 'qualify';
+  const supportingUrl = typeof o.source_url === 'string' && o.source_url.trim() ? o.source_url.trim() : fallbackSource;
   return {
     claim_id: claim.claim_id,
     claim: claim.claim,
     verdict,
-    cited_source: citedSource,
+    cited_source: supportingUrl,
     supported_elements: Array.isArray(o.supported_elements) ? o.supported_elements.filter((e): e is string => typeof e === 'string') : [],
     unsupported_elements: Array.isArray(o.unsupported_elements) ? o.unsupported_elements.filter((e): e is string => typeof e === 'string') : [],
     evidence_sentence: typeof o.evidence_sentence === 'string' && o.evidence_sentence.trim() ? o.evidence_sentence.trim() : undefined,
@@ -198,13 +240,14 @@ function instructionFor(v: VerificationResult): string {
   const src = v.cited_source ? ` (source: ${v.cited_source})` : '';
   switch (v.recommended_action) {
     case 'attribute':
-      return `Attribute this claim to its source${src} — phrase it as "According to <source>, …" rather than stating it as established fact.`;
+      return `Attribute this claim to its source${src} — phrase it as "According to <source>, …" rather than stating it as established fact. Do NOT delete the claim.`;
     case 'qualify':
-      return `The source only partly supports this. Keep what is supported (${v.supported_elements.join('; ') || 'the supported part'}) and remove or qualify the unsupported part (${v.unsupported_elements.join('; ') || 'the rest'}).`;
-    case 'remove':
-      return `The cited source does not support this claim${src}. Remove it, or replace it with a statement the source actually supports.`;
+      if (v.unsupported_elements.length > 0) {
+        return `Partly supported: keep what is supported (${v.supported_elements.join('; ') || 'the supported part'}) and hedge or soften the unsupported part (${v.unsupported_elements.join('; ')}). Do NOT delete the whole claim.`;
+      }
+      return `This claim could not be confirmed on the available source(s)${src}. Hedge the certainty (e.g. "reportedly", "according to secondary reporting") rather than stating it as established fact. Do NOT delete it.`;
     default:
-      return `Review this claim against its source${src} and qualify as needed.`;
+      return `Hedge this claim's certainty against its source${src}. Do NOT delete it.`;
   }
 }
 
@@ -223,31 +266,19 @@ export function correctionPrompt(reportMarkdown: string, patch: PatchSet, claimT
   };
 }
 
-/** Claim texts in `after` that aren't present in `before` (newly introduced by revision). */
-export function diffClaimSets(before: Claim[], after: Claim[]): string[] {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-  const seen = new Set(before.map(c => norm(c.claim)));
-  return after.filter(c => !seen.has(norm(c.claim))).map(c => c.claim);
-}
-
 /** Markdown appendix summarizing what verification did, for the published report. */
-export function verificationSection(results: VerificationResult[], addedUnverified: string[]): string {
+export function verificationSection(results: VerificationResult[]): string {
   if (results.length === 0) return '';
   const corrected = results.filter(needsCorrection);
   const lines: string[] = ['', '## Verification', ''];
   if (corrected.length === 0) {
     lines.push(`All ${results.length} checkable claims were verified against their cited sources.`);
   } else {
-    lines.push(`${results.length} claims checked against their cited sources; ${corrected.length} adjusted:`);
+    lines.push(`${results.length} claims checked against their cited sources; ${corrected.length} hedged or attributed:`);
     lines.push('');
     for (const v of corrected) {
       lines.push(`- **${v.verdict}** — ${v.claim} _(${v.recommended_action})_`);
     }
-  }
-  if (addedUnverified.length > 0) {
-    lines.push('');
-    lines.push('_Claims introduced during revision that could not be re-verified:_');
-    for (const c of addedUnverified) lines.push(`- ${c}`);
   }
   return lines.join('\n');
 }

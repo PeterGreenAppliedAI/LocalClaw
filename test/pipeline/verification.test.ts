@@ -6,7 +6,7 @@ import {
   verdictToAction,
   needsCorrection,
   buildPatchSet,
-  diffClaimSets,
+  pickRelevantSources,
   verificationSection,
   type Claim,
   type VerificationResult,
@@ -55,12 +55,35 @@ describe('parseClaims', () => {
 });
 
 describe('verdictToAction', () => {
-  it('maps verdicts to default actions', () => {
+  it('maps verdicts to default actions and NEVER auto-removes', () => {
     expect(verdictToAction('VERIFIED')).toBe('keep');
     expect(verdictToAction('VENDOR_CLAIM')).toBe('attribute');
     expect(verdictToAction('PARTIALLY_VERIFIED')).toBe('qualify');
-    expect(verdictToAction('UNSUPPORTED')).toBe('remove');
-    expect(verdictToAction('AMBIGUOUS')).toBe('attribute');
+    expect(verdictToAction('UNSUPPORTED')).toBe('qualify'); // hedge, not delete
+    expect(verdictToAction('AMBIGUOUS')).toBe('qualify');
+  });
+});
+
+describe('pickRelevantSources', () => {
+  const sources = {
+    'https://guide.example/hardware': 'The Mac Studio M3 Ultra can be configured with up to 512GB unified memory at 819 GB/s.',
+    'https://blog.example/cloud': 'This post is about cloud AI versus local AI and CUDA tooling. No Apple specifics.',
+    'https://news.example/market': 'NVIDIA holds roughly 92% of the discrete GPU market in 2025.',
+  };
+  const claim: Claim = { claim_id: 'c1', claim: 'The Mac Studio M3 Ultra can be configured with up to 512GB unified memory.', claim_type: 'product_spec', time_sensitive: false, entities: ['Apple'], requires_verification: true };
+
+  it('ranks the source that actually mentions the claim first', () => {
+    const picked = pickRelevantSources(claim, sources, 2);
+    expect(picked[0]).toBe('https://guide.example/hardware');
+  });
+
+  it('always keeps the cited URL even if low-scoring', () => {
+    const picked = pickRelevantSources(claim, sources, 1, 'https://blog.example/cloud');
+    expect(picked).toContain('https://blog.example/cloud');
+  });
+
+  it('returns [] when no source shares tokens with the claim', () => {
+    expect(pickRelevantSources(claim, { 'https://x/y': 'completely unrelated content about gardening' }, 3)).toEqual([]);
   });
 });
 
@@ -97,30 +120,23 @@ describe('parseVerdict', () => {
 });
 
 describe('buildPatchSet', () => {
-  it('includes only claims needing correction, with an instruction', () => {
+  it('includes only claims needing correction, hedging never deleting', () => {
     const results: VerificationResult[] = [
       { claim_id: 'a', claim: 'A', verdict: 'VERIFIED', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'keep' },
-      { claim_id: 'b', claim: 'B', verdict: 'UNSUPPORTED', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'remove', cited_source: 'https://blog.example/x' },
+      { claim_id: 'b', claim: 'B', verdict: 'UNSUPPORTED', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'qualify', cited_source: 'https://blog.example/x' },
       { claim_id: 'c', claim: 'C', verdict: 'VENDOR_CLAIM', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'attribute' },
     ];
     const patch = buildPatchSet(results);
     expect(Object.keys(patch)).toEqual(['b', 'c']); // 'a' (kept) excluded
     expect(patch.b.verdict).toBe('UNSUPPORTED');
-    expect(patch.b.instruction).toMatch(/does not support/i);
+    expect(patch.b.instruction).toMatch(/hedge|do not delete/i);
     expect(patch.c.instruction).toMatch(/according to/i);
   });
-});
 
-describe('diffClaimSets', () => {
-  it('detects claims present after revision but not before', () => {
-    const before: Claim[] = [{ claim_id: '1', claim: 'NVIDIA acquired Groq in December 2025.', claim_type: 'corporate_event', time_sensitive: true, entities: [], requires_verification: true }];
-    const after: Claim[] = [
-      { claim_id: '1', claim: 'According to the blog, NVIDIA acquired Groq in December 2025.', claim_type: 'corporate_event', time_sensitive: true, entities: [], requires_verification: true },
-      { claim_id: '2', claim: 'The deal was worth exactly $20 billion in cash.', claim_type: 'financial', time_sensitive: true, entities: [], requires_verification: true },
-    ];
-    // claim 1 normalizes to a superset; the brand-new financial claim is flagged
-    const added = diffClaimSets(before, after);
-    expect(added).toContain('The deal was worth exactly $20 billion in cash.');
+  it('coerces a judge-returned remove action into a hedge (never deletes)', () => {
+    const claim: Claim = { claim_id: 'x', claim: 'Some unsupported claim', claim_type: 'financial', time_sensitive: true, entities: [], requires_verification: true };
+    const v = parseVerdict(JSON.stringify({ verdict: 'UNSUPPORTED', recommended_action: 'remove' }), claim);
+    expect(v.recommended_action).toBe('qualify');
   });
 });
 
@@ -129,21 +145,21 @@ describe('verificationSection', () => {
     const results: VerificationResult[] = [
       { claim_id: 'a', claim: 'A', verdict: 'VERIFIED', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'keep' },
     ];
-    const md = verificationSection(results, []);
+    const md = verificationSection(results);
     expect(md).toContain('## Verification');
     expect(md).toMatch(/1 checkable claims were verified/);
   });
 
-  it('lists corrected claims and revision-added unverified claims', () => {
+  it('lists hedged/attributed claims', () => {
     const results: VerificationResult[] = [
       { claim_id: 'a', claim: 'Overstated throughput claim', verdict: 'PARTIALLY_VERIFIED', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'qualify' },
     ];
-    const md = verificationSection(results, ['A brand new claim added in revision']);
+    const md = verificationSection(results);
     expect(md).toContain('PARTIALLY_VERIFIED');
-    expect(md).toContain('A brand new claim added in revision');
+    expect(md).toMatch(/hedged or attributed/);
   });
 
   it('returns empty string when no claims were checked', () => {
-    expect(verificationSection([], [])).toBe('');
+    expect(verificationSection([])).toBe('');
   });
 });

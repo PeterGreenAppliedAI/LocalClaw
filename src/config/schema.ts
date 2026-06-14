@@ -166,12 +166,10 @@ export const MemoryConfigSchema = z.object({
 
 export const VerificationConfigSchema = z.object({
   /**
-   * Verify research claims against their cited sources before publishing.
-   * Default OFF: the MVP over-removes true-but-misattributed claims (citation→source
-   * mismatch) and degraded report accuracy. Re-enable once the precision fixes land
-   * (attribute-don't-remove + broader-corpus checking). See DECISIONS.md.
+   * Verify research claims against the cached sources that actually mention them before
+   * publishing. Hedges/attributes overstated or single-sourced claims (never deletes).
    */
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   /** Fast model for atomic-claim extraction. Defaults to the pipeline's router model. */
   extractorModel: z.string().optional(),
   /** Model for the entailment judge (claim vs. cited source). Defaults to the research specialist. */
