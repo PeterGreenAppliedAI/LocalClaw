@@ -267,12 +267,24 @@ function buildConfig(state: WizardState): string {
     heartbeatBlock = `  heartbeat: {
     enabled: true,
     schedule: "0 */2 * * *",
+    model: "${state.models.backgroundModel}",
     delivery: {
       channel: "${state.services.heartbeat.channel}",
       target: "${state.services.heartbeat.target ?? ''}",
     },
   },`;
   }
+
+  // Inference backends (OpenAI-compatible, e.g. vLLM) + briefing model
+  const inferenceBlock = state.models.inferenceBackends.length
+    ? `  inference: {
+    backends: [
+${state.models.inferenceBackends.map(b => `      { url: "${b.url}", models: [${b.models.map(m => `"${m}"`).join(', ')}] },`).join('\n')}
+    ],
+  },
+`
+    : '';
+  const briefingBlock = `  briefing: { model: "${state.models.backgroundModel}" },`;
 
   // Reasoning block
   let reasoningBlock = '';
@@ -338,6 +350,8 @@ ${ownerIdLine}
     url: "\${OLLAMA_URL}",
     keepAlive: "30m",
   },
+
+${inferenceBlock}${briefingBlock}
 
   router: {
     model: "${state.models.routerModel}",

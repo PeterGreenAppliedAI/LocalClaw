@@ -229,8 +229,8 @@ export const BrowserConfigSchema = z.object({
   display: z.string().optional(),
   /** Vision model for visual browser interactions (e.g., "qwen3-vl:8b"). Falls back to config.vision.model. */
   visionModel: z.string().optional(),
-  /** Model for browser-control reasoning (extension remote-bridge mode). */
-  controlModel: z.string().default('cyankiwi/MiniMax-M2.7-AWQ-4bit'),
+  /** Model for browser-control reasoning (extension remote-bridge mode). Falls back to the dispatched specialist's model. */
+  controlModel: z.string().optional(),
 });
 
 export const TTSConfigSchema = z.object({

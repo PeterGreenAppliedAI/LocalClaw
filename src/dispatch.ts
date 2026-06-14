@@ -461,7 +461,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
         // Override to the configured browser-control model, strip pipeline (use ReAct), strip web_fetch
         specialistConfig = {
           ...specialistConfig,
-          model: config.browser.controlModel,
+          model: config.browser.controlModel ?? specialistConfig.model,
           pipeline: undefined as any, // force ReAct, no pipeline
           maxIterations: 20,
           maxTokens: 16384,

@@ -95,7 +95,7 @@ export async function runBriefing(deps: BriefingDeps): Promise<void> {
 
     console.log(`[Briefing] Context: calendar=${calendar.length} chars, tasks=${taskBoardEnriched.length} chars, memory=${memory.length} chars`);
 
-    const briefingModel = config.briefing?.model ?? 'qwen3.6:35b';
+    const briefingModel = config.briefing.model;
     const timeFrames: Record<string, string> = {
       morning: "Focus on today's schedule. What should the user prepare for? Flag early meetings, deadlines, or things that need attention before the day gets busy.",
       afternoon: "Focus on what's left today. Anything urgent that hasn't been addressed? Any prep needed for tomorrow?",

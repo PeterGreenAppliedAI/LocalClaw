@@ -7,6 +7,10 @@ export interface ModelsStepResult {
   specialistModel: string;
   /** Per-category model overrides. Categories not listed use specialistModel. */
   categoryModels: Record<string, string>;
+  /** OpenAI-compatible backends (e.g. vLLM). Chat calls whose model matches route here. */
+  inferenceBackends: Array<{ url: string; models: string[] }>;
+  /** Model for background reasoning (briefing + heartbeat). Defaults to specialistModel. */
+  backgroundModel: string;
 }
 
 export async function runModelsStep(models: OllamaModel[]): Promise<ModelsStepResult> {
@@ -25,6 +29,22 @@ export async function runModelsStep(models: OllamaModel[]): Promise<ModelsStepRe
   printInfo(`Suggested specialist model: ${suggestedSpecialist}`);
   const specialistModel = await askText('Default specialist model', suggestedSpecialist);
   printSuccess(`Default specialist model: ${specialistModel}`);
+
+  // OpenAI-compatible backends (vLLM) — for large models like MiniMax served outside Ollama.
+  // The specialist model can point at a backend model id; calls matching it route there.
+  const inferenceBackends: Array<{ url: string; models: string[] }> = [];
+  const addBackend = await askYesNo('Add an OpenAI-compatible backend (e.g. vLLM for a large model)?', false);
+  if (addBackend) {
+    let more = true;
+    while (more) {
+      const url = await askText('  Backend URL (OpenAI-compatible, e.g. http://10.0.0.15:8000)', 'http://localhost:8000');
+      const modelsCsv = await askText('  Model id(s) served here (comma-separated, e.g. cyankiwi/MiniMax-M2.7-AWQ-4bit)', specialistModel);
+      const backendModels = modelsCsv.split(',').map(m => m.trim()).filter(Boolean);
+      inferenceBackends.push({ url, models: backendModels });
+      printSuccess(`  Backend ${url} → ${backendModels.join(', ')}`);
+      more = await askYesNo('  Add another backend?', false);
+    }
+  }
 
   // Per-category overrides
   const categoryModels: Record<string, string> = {};
@@ -52,5 +72,9 @@ export async function runModelsStep(models: OllamaModel[]): Promise<ModelsStepRe
     }
   }
 
-  return { routerModel, specialistModel, categoryModels };
+  // Background reasoning model (briefing + heartbeat) — defaults to the specialist model
+  const backgroundModel = await askText('Model for background jobs (briefing + heartbeat)', specialistModel);
+  printSuccess(`Background jobs model: ${backgroundModel}`);
+
+  return { routerModel, specialistModel, categoryModels, inferenceBackends, backgroundModel };
 }

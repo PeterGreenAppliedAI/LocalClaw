@@ -47,7 +47,7 @@ export async function runHeartbeat(deps: HeartbeatDeps): Promise<void> {
   const { config, client, factStore, graphMemory, taskStore, cronService, channelRegistry, toolRegistry } = deps;
   const hb = config.heartbeat;
   if (!hb) return;
-  const heartbeatModel = hb.model ?? 'qwen3.6:35b';
+  const heartbeatModel = hb.model;
 
   console.log('[Heartbeat] Running...');
 
