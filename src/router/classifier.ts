@@ -31,9 +31,9 @@ const KEYWORD_HINTS: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(remember|recall|we (discussed|talked)|last time|yesterday)\b/i, category: 'memory' },
   { pattern: /\b(tell|send|notify|message|announce)\b/i, category: 'message' },
   { pattern: /\b(homework|assignment|syllabus|lecture)\b/i, category: 'website' },
-  // Broad web_search last — only explicit search actions, not conversational questions
-  // "what is" and "who is" removed: they're questions, not search intent, and break sticky for casual chat
-  { pattern: /\b(search|google|look up|find out|latest|news)\b/i, category: 'web_search' },
+  // web_search last — require search INTENT, not mere mention. Bare "search"/"latest"/"news"
+  // dropped: they match conversational text ("uses brave for search", "latest version of node").
+  { pattern: /\b(search (for|the web|online)|web search|google|look up|find out about)\b/i, category: 'web_search' },
 ];
 
 const VALID_CATEGORIES = new Set([

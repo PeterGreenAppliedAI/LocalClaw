@@ -54,7 +54,10 @@
 {"message": "hi", "expected": "chat", "layer": "fallback", "context": {"previousCategory": "memory"}, "note": "greeting breaks sticky, falls to default"}
 {"message": "tell me about your architecture", "expected": "message", "layer": "keyword", "note": "KNOWN ISSUE: 'tell' keyword matches message — should be chat"}
 {"message": "I just found out something interesting", "expected": "chat", "layer": "fallback", "note": "'found out' should NOT trigger web_search"}
-{"message": "I'm using the latest version of node", "expected": "web_search", "layer": "keyword", "note": "KNOWN ISSUE: 'latest' keyword matches web_search — should be chat"}
+{"message": "I'm using the latest version of node", "expected": "chat", "layer": "fallback", "note": "'latest' no longer forces web_search — conversational statement falls to chat"}
+{"message": "for localclaw everything is local just uses brave for search", "expected": "chat", "layer": "fallback", "note": "mentions 'search' in passing (own setup) — must NOT route web_search"}
+{"message": "the latest AI paper was interesting", "expected": "chat", "layer": "fallback", "note": "'latest' mention, not a search request — chat"}
+{"message": "did you see the news about the merger", "expected": "chat", "layer": "fallback", "note": "'news' mention, not a search request — chat"}
 {"message": "tell me about the trade-offs", "expected": "message", "layer": "keyword", "note": "KNOWN ISSUE: 'tell' keyword matches message — should be chat"}
 {"message": "configure the heartbeat schedule", "expected": "config", "layer": "keyword", "note": "configure → config"}
 {"message": "update my settings", "expected": "config", "layer": "keyword", "note": "settings → config"}

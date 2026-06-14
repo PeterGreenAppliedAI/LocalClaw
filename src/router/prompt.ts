@@ -15,6 +15,10 @@ export function buildRouterPrompt(message: string, config: RouterConfig): string
 Categories:
 ${categoryList}
 
+Rules:
+- Choose web_search ONLY when the user is actively asking you to look something up now (e.g. "search for X", "what's the latest on Y").
+- Statements that merely mention searching/news, or describe the user's own setup/tools, are chat — e.g. "everything is local just uses brave for search" → chat; "the latest version of node" → chat.
+
 User message: ${message}
 Category:`;
 }
