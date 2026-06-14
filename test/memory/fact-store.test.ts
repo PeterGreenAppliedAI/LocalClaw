@@ -95,6 +95,43 @@ describe('FactStore.writeFactsBatch', () => {
   });
 });
 
+describe('FactStore char bound (importance-aware)', () => {
+  it('never evicts imp>=4 identity/critical facts when over the char bound', async () => {
+    const store = new FactStore(workspacePath);
+
+    // Flood the store with low-importance (imp 2) filler to blow past MAX_FACTS_CHARS (20000)
+    const filler: FactInput[] = [];
+    for (let i = 0; i < 250; i++) {
+      filler.push({
+        text: `Low importance context fact number ${i} with extra padding text to consume characters quickly ${'x'.repeat(60)}`,
+        category: 'context',
+        confidence: 0.9, // HIGH confidence — old logic kept these and dropped identity facts
+        importance: 2,
+      });
+    }
+    await store.writeFactsBatch(filler, 'u_bound');
+
+    // Two critical identity facts with only MODERATE confidence — old logic would evict these first
+    await store.writeFact({ text: "Peter's wife's name is Nicole", category: 'stable', confidence: 0.6, importance: 5 }, 'u_bound');
+    await store.writeFact({ text: "Peter's father is in critical care", category: 'stable', confidence: 0.6, importance: 5 }, 'u_bound');
+
+    store.rebuildFacts('u_bound');
+
+    const factsJson: FactEntry[] = JSON.parse(
+      readFileSync(join(workspacePath, 'memory', 'u_bound', 'facts', 'facts.json'), 'utf-8'),
+    );
+
+    // The char bound must have trimmed SOME low-importance facts...
+    expect(factsJson.length).toBeLessThan(252);
+    // ...but BOTH imp-5 identity facts must survive despite low confidence.
+    const texts = factsJson.map(f => f.text);
+    expect(texts).toContain("Peter's wife's name is Nicole");
+    expect(texts).toContain("Peter's father is in critical care");
+    // No protected fact should ever be dropped.
+    expect(factsJson.filter(f => (f.importance ?? 2) >= 4).length).toBe(2);
+  });
+});
+
 describe('FactStore.rebuildFacts', () => {
   it('generates facts.json and facts.md', async () => {
     const store = new FactStore(workspacePath);

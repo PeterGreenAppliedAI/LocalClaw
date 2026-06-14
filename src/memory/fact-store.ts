@@ -46,8 +46,11 @@ export class FactStore {
   private readonly client?: OllamaClient;
   private factsCache = new Map<string, { entries: FactEntry[]; loadedAt: number }>();
   private static readonly CACHE_TTL_MS = 30_000;
-  /** Max chars for facts.md per user — model-independent hard limit */
-  private static readonly MAX_FACTS_CHARS = 3000;
+  /** Max chars for facts.md per user. Raised from 3000 (a small-context relic that
+   *  silently evicted ~92 facts). Identity/critical tiers (imp 4-5) are never trimmed. */
+  private static readonly MAX_FACTS_CHARS = 20000;
+  /** Importance tiers at or above this are never evicted by the char bound. */
+  private static readonly PROTECTED_IMPORTANCE = 4;
   /** Embedding similarity threshold — above this, reject as duplicate */
   private static readonly EMBEDDING_DEDUP_THRESHOLD = 0.85;
   private migrating = false;
@@ -254,7 +257,7 @@ export class FactStore {
     writeFileSync(join(factsDir, 'facts.md'), this.formatFactsMd(bounded));
 
     if (bounded.length < allEntries.length) {
-      console.log(`[FactStore] Char bound: trimmed ${allEntries.length - bounded.length} low-confidence facts to stay under ${FactStore.MAX_FACTS_CHARS} chars`);
+      console.log(`[FactStore] Char bound: trimmed ${allEntries.length - bounded.length} low-importance facts to stay under ${FactStore.MAX_FACTS_CHARS} chars (imp>=${FactStore.PROTECTED_IMPORTANCE} protected)`);
     }
 
     // Invalidate cache
@@ -585,17 +588,22 @@ export class FactStore {
     let md = this.formatFactsMd(entries);
     if (md.length <= FactStore.MAX_FACTS_CHARS) return entries;
 
-    // Sort by confidence ascending — drop lowest first
-    const sorted = [...entries].sort((a, b) => a.confidence - b.confidence);
-    const kept = [...entries];
+    // Eviction order: lowest IMPORTANCE first, then lowest confidence as tiebreak.
+    // Identity/critical tiers (imp >= PROTECTED_IMPORTANCE) are never evicted — a
+    // spouse's name must not be dropped to make room for an ephemeral context fact.
+    const evictable = entries
+      .filter(e => (e.importance ?? 2) < FactStore.PROTECTED_IMPORTANCE)
+      .sort((a, b) => (a.importance ?? 2) - (b.importance ?? 2) || a.confidence - b.confidence);
 
-    while (md.length > FactStore.MAX_FACTS_CHARS && sorted.length > 0) {
-      const lowest = sorted.shift()!;
-      const idx = kept.findIndex(e => e.hash === lowest.hash);
+    const kept = [...entries];
+    while (md.length > FactStore.MAX_FACTS_CHARS && evictable.length > 0) {
+      const drop = evictable.shift()!;
+      const idx = kept.findIndex(e => e.hash === drop.hash);
       if (idx !== -1) kept.splice(idx, 1);
       md = this.formatFactsMd(kept);
     }
 
+    // If still over bound with only protected facts left, keep them — never drop identity/critical.
     return kept;
   }
 
