@@ -28,6 +28,10 @@ export class MediaDebouncer {
    * When the batch timer fires, it calls onBatchReady with the combined message.
    */
   tryBatch(msg: InboundMessage, onBatchReady: (batchedMsg: InboundMessage) => void): boolean {
+    // A released batch is still media-only — without this guard it would be
+    // re-collected and re-fired forever (infinite loop). Let it pass through.
+    if ((msg as { _debounced?: boolean })._debounced) return false;
+
     // Only debounce media-only messages (attachments but no meaningful text)
     const isMediaOnly = msg.attachments?.length && (!msg.content?.trim() || msg.content.trim().length < 5);
     if (!isMediaOnly) return false;
@@ -42,6 +46,7 @@ export class MediaDebouncer {
       existing.timer = setTimeout(() => {
         this.pending.delete(key);
         existing.msg.attachments = existing.attachments;
+        (existing.msg as { _debounced?: boolean })._debounced = true;
         console.log(`[MediaDebouncer] Batch: ${existing.attachments.length} attachment(s) from ${msg.senderId}`);
         onBatchReady(existing.msg);
       }, this.windowMs);
@@ -51,6 +56,7 @@ export class MediaDebouncer {
         const p = this.pending.get(key);
         if (!p) return;
         this.pending.delete(key);
+        (p.msg as { _debounced?: boolean })._debounced = true;
         console.log(`[MediaDebouncer] Batch: ${p.attachments.length} attachment(s) from ${msg.senderId}`);
         onBatchReady(p.msg);
       }, this.windowMs);
