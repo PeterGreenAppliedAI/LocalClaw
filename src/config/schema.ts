@@ -176,6 +176,11 @@ export const VerificationConfigSchema = z.object({
   judgeModel: z.string().optional(),
   /** Max claims verified per report (highest-impact first). */
   maxClaims: z.number().int().positive().default(12),
+  /** Tier-1 independent cross-check: one fresh search per high-impact claim to catch
+   *  faithfully-cited wrong facts (dates, deals, figures). Bounded by maxCrossChecks. */
+  crossCheck: z.boolean().default(true),
+  /** Max claims escalated to an independent search (keeps the search budget bounded). */
+  maxCrossChecks: z.number().int().nonnegative().default(4),
 });
 
 export const CronConfigSchema = z.object({

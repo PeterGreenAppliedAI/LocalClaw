@@ -8,8 +8,13 @@ import {
   buildPatchSet,
   pickRelevantSources,
   verificationSection,
+  shouldEscalate,
+  tier1Query,
+  parseTier1,
+  applyTier1,
   type Claim,
   type VerificationResult,
+  type Tier1Result,
 } from '../../src/pipeline/verification.js';
 
 describe('parseJsonLoose', () => {
@@ -61,6 +66,66 @@ describe('verdictToAction', () => {
     expect(verdictToAction('PARTIALLY_VERIFIED')).toBe('qualify');
     expect(verdictToAction('UNSUPPORTED')).toBe('qualify'); // hedge, not delete
     expect(verdictToAction('AMBIGUOUS')).toBe('qualify');
+    expect(verdictToAction('CONTRADICTED')).toBe('correct'); // Tier-1 only
+  });
+});
+
+describe('Tier-1 independent cross-check', () => {
+  const corporate: Claim = { claim_id: 't1', claim: "NVIDIA acquired Groq's LPU technology for $20 billion in December 2024.", claim_type: 'corporate_event', time_sensitive: true, entities: ['NVIDIA', 'Groq'], requires_verification: true };
+  const spec: Claim = { claim_id: 't2', claim: 'The RTX 5090 has 32GB VRAM.', claim_type: 'product_spec', time_sensitive: false, entities: ['NVIDIA'], requires_verification: true };
+  const noEntity: Claim = { claim_id: 't3', claim: 'The market grew 20% last year.', claim_type: 'market_share', time_sensitive: true, entities: [], requires_verification: true };
+
+  it('escalates high-impact claims with entities, not specs or entity-less claims', () => {
+    expect(shouldEscalate(corporate)).toBe(true);
+    expect(shouldEscalate(spec)).toBe(false);       // product_spec not escalated
+    expect(shouldEscalate(noEntity)).toBe(false);   // needs an entity to target
+  });
+
+  it('builds a query from entities + key terms, WITHOUT the contested number/date', () => {
+    const q = tier1Query(corporate);
+    expect(q).toContain('nvidia');
+    expect(q).toContain('groq');
+    expect(q).not.toMatch(/\$20|billion|2024/i); // contested value excluded so search finds the truth
+  });
+
+  it('parseTier1 defaults to SILENT on garbage and reads a CONTRADICTED verdict', () => {
+    expect(parseTier1('junk').status).toBe('SILENT');
+    const t = parseTier1(JSON.stringify({ status: 'CONTRADICTED', source_url: 'https://nvidia.com/news', evidence: 'NVIDIA licensed Groq tech in December 2025.', reason: 'Different date and it was a license.' }));
+    expect(t.status).toBe('CONTRADICTED');
+    expect(t.evidence).toMatch(/December 2025/);
+  });
+
+  it('applyTier1 CONTRADICTED escalates the claim to a correction', () => {
+    const v: VerificationResult = { claim_id: 't1', claim: corporate.claim, verdict: 'VERIFIED', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'keep' };
+    const t: Tier1Result = { status: 'CONTRADICTED', source_url: 'https://nvidia.com/news', evidence: 'NVIDIA licensed Groq tech in December 2025.' };
+    const out = applyTier1(v, t);
+    expect(out.verdict).toBe('CONTRADICTED');
+    expect(out.recommended_action).toBe('correct');
+    expect(needsCorrection(out)).toBe(true);
+    expect(out.tier1?.evidence).toMatch(/December 2025/);
+  });
+
+  it('applyTier1 CONFIRMED un-hedges a previously qualified claim', () => {
+    const v: VerificationResult = { claim_id: 't1', claim: corporate.claim, verdict: 'AMBIGUOUS', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'qualify' };
+    const out = applyTier1(v, { status: 'CONFIRMED' });
+    expect(out.recommended_action).toBe('keep');
+  });
+
+  it('applyTier1 SILENT leaves the cited-source verdict untouched', () => {
+    const v: VerificationResult = { claim_id: 't1', claim: corporate.claim, verdict: 'AMBIGUOUS', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'qualify' };
+    const out = applyTier1(v, { status: 'SILENT' });
+    expect(out.recommended_action).toBe('qualify');
+    expect(out.tier1?.status).toBe('SILENT');
+  });
+
+  it('a corrected claim renders in the appendix with its independent evidence', () => {
+    const results: VerificationResult[] = [
+      { claim_id: 't1', claim: 'NVIDIA acquired Groq in December 2024.', verdict: 'CONTRADICTED', supported_elements: [], unsupported_elements: [], reason: '', recommended_action: 'correct', tier1: { status: 'CONTRADICTED', evidence: 'It was a license in December 2025.' } },
+    ];
+    const md = verificationSection(results);
+    expect(md).toContain('CONTRADICTED');
+    expect(md).toMatch(/independent source/i);
+    expect(md).toContain('December 2025');
   });
 });
 
@@ -156,7 +221,7 @@ describe('verificationSection', () => {
     ];
     const md = verificationSection(results);
     expect(md).toContain('PARTIALLY_VERIFIED');
-    expect(md).toMatch(/hedged or attributed/);
+    expect(md).toMatch(/hedged, or attributed/);
   });
 
   it('returns empty string when no claims were checked', () => {

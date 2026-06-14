@@ -15,9 +15,13 @@ export type Verdict =
   | 'PARTIALLY_VERIFIED'
   | 'UNSUPPORTED'
   | 'VENDOR_CLAIM'
-  | 'AMBIGUOUS';
+  | 'AMBIGUOUS'
+  | 'CONTRADICTED';   // set by the Tier-1 independent cross-check
 
-export type ClaimAction = 'keep' | 'attribute' | 'qualify' | 'remove';
+export type ClaimAction = 'keep' | 'attribute' | 'qualify' | 'remove' | 'correct';
+
+/** Outcome of an independent (Tier-1) cross-check against a freshly-searched source. */
+export type Tier1Status = 'CONFIRMED' | 'CONTRADICTED' | 'SILENT';
 
 /** Claim types worth verifying. Opinions / explanations / forecasts are skipped. */
 export const VERIFIABLE_TYPES = new Set([
@@ -50,6 +54,15 @@ export interface VerificationResult {
   evidence_sentence?: string;
   reason: string;
   recommended_action: ClaimAction;
+  /** Independent cross-check result, when the claim was escalated to Tier-1. */
+  tier1?: { status: Tier1Status; source_url?: string; evidence?: string; reason?: string };
+}
+
+export interface Tier1Result {
+  status: Tier1Status;
+  source_url?: string;
+  evidence?: string;
+  reason?: string;
 }
 
 /** Patch-set sent to the corrector: only failed claims, each with an edit instruction. */
@@ -182,13 +195,14 @@ export function entailmentPrompt(claim: Claim, sources: Array<{ url: string; tex
   };
 }
 
-const VALID_VERDICTS: Verdict[] = ['VERIFIED', 'PARTIALLY_VERIFIED', 'UNSUPPORTED', 'VENDOR_CLAIM', 'AMBIGUOUS'];
-const VALID_ACTIONS: ClaimAction[] = ['keep', 'attribute', 'qualify', 'remove'];
+const VALID_VERDICTS: Verdict[] = ['VERIFIED', 'PARTIALLY_VERIFIED', 'UNSUPPORTED', 'VENDOR_CLAIM', 'AMBIGUOUS', 'CONTRADICTED'];
+const VALID_ACTIONS: ClaimAction[] = ['keep', 'attribute', 'qualify', 'remove', 'correct'];
 
 /**
  * Default action for a verdict. We never auto-REMOVE: a claim absent from its cited page
  * is usually true-but-misattributed (the report synthesizes across sources), so deletion
- * loses real information. Unsupported → hedge/attribute, never delete.
+ * loses real information. Unsupported → hedge/attribute, never delete. CONTRADICTED only
+ * comes from the Tier-1 independent check, which has authoritative evidence to correct with.
  */
 export function verdictToAction(verdict: Verdict): ClaimAction {
   switch (verdict) {
@@ -197,6 +211,7 @@ export function verdictToAction(verdict: Verdict): ClaimAction {
     case 'PARTIALLY_VERIFIED': return 'qualify';
     case 'AMBIGUOUS': return 'qualify';
     case 'UNSUPPORTED': return 'qualify';
+    case 'CONTRADICTED': return 'correct';
   }
 }
 
@@ -227,6 +242,81 @@ export function needsCorrection(v: VerificationResult): boolean {
   return v.recommended_action !== 'keep';
 }
 
+// --- Tier-1 independent cross-check ---
+// Cited-source verification can't disprove a faithfully-cited wrong fact (e.g. a wrong
+// acquisition date). For a small set of high-impact, falsifiable claims we run ONE
+// independent search against fresh sources to catch outright contradictions.
+
+/** High-impact, falsifiable claim types where being wrong actually matters (dates, deals, figures). */
+const ESCALATE_TYPES = new Set(['corporate_event', 'financial', 'market_share']);
+
+export function shouldEscalate(claim: Claim): boolean {
+  return ESCALATE_TYPES.has(claim.claim_type) && claim.entities.length > 0;
+}
+
+/**
+ * Build an independent search query from the claim's entities + key non-numeric terms —
+ * deliberately WITHOUT the contested value (date/figure), so the search finds the
+ * authoritative source rather than echoes of the possibly-wrong number.
+ */
+const MAGNITUDE = new Set(['billion', 'million', 'trillion', 'thousand', 'percent']);
+
+export function tier1Query(claim: Claim): string {
+  const terms = [...claimTokens(claim.claim)]
+    .filter(t => !/[\d$%]/.test(t) && !MAGNITUDE.has(t))
+    .slice(0, 5);
+  const entities = claim.entities.map(e => e.toLowerCase());
+  return [...new Set([...entities, ...terms])].join(' ').trim();
+}
+
+export function tier1JudgePrompt(claim: Claim, sources: Array<{ url: string; text: string }>): { system: string; user: string } {
+  const blocks = sources.map((s, i) => `[Source ${i + 1}: ${s.url}]\n${s.text.slice(0, 3500)}`).join('\n\n---\n\n');
+  return {
+    system: [
+      'You are independently fact-checking ONE claim against freshly-retrieved sources.',
+      'Focus on the SPECIFIC falsifiable detail in the claim — a date, a dollar figure, a percentage, or a characterization (e.g. "acquisition" vs "license").',
+      'Status:',
+      '- CONFIRMED: a source states the same specific detail as the claim.',
+      '- CONTRADICTED: a source states a DIFFERENT specific detail (e.g. a different date or that it was a license, not an acquisition). Quote it.',
+      '- SILENT: the sources do not address the specific detail.',
+      'Be conservative: only CONTRADICTED when a source clearly states a conflicting fact. Judge ONLY from the sources.',
+      'Return ONLY this JSON: {"status":"CONFIRMED|CONTRADICTED|SILENT","source_url":"<url or empty>","evidence":"<exact conflicting/confirming sentence or empty>","reason":"<one sentence>"}',
+      'Return ONLY JSON. /no_think',
+    ].join('\n'),
+    user: `CLAIM: ${claim.claim}\n\nSOURCES:\n${blocks}`,
+  };
+}
+
+const VALID_TIER1: Tier1Status[] = ['CONFIRMED', 'CONTRADICTED', 'SILENT'];
+
+export function parseTier1(raw: string): Tier1Result {
+  const o = parseJsonLoose<Record<string, unknown>>(raw) ?? {};
+  const status = VALID_TIER1.includes(o.status as Tier1Status) ? (o.status as Tier1Status) : 'SILENT';
+  return {
+    status,
+    source_url: typeof o.source_url === 'string' && o.source_url.trim() ? o.source_url.trim() : undefined,
+    evidence: typeof o.evidence === 'string' && o.evidence.trim() ? o.evidence.trim() : undefined,
+    reason: typeof o.reason === 'string' ? o.reason : undefined,
+  };
+}
+
+/**
+ * Fold a Tier-1 result into a claim's verification result.
+ * CONTRADICTED → escalate to a correction with the independent evidence.
+ * CONFIRMED → if the cited-source pass had only hedged it, we can keep it (un-hedge).
+ * SILENT → leave the cited-source verdict untouched.
+ */
+export function applyTier1(v: VerificationResult, t: Tier1Result): VerificationResult {
+  const next: VerificationResult = { ...v, tier1: t };
+  if (t.status === 'CONTRADICTED') {
+    next.verdict = 'CONTRADICTED';
+    next.recommended_action = 'correct';
+  } else if (t.status === 'CONFIRMED' && (v.recommended_action === 'qualify' || v.recommended_action === 'attribute')) {
+    next.recommended_action = 'keep';
+  }
+  return next;
+}
+
 export function buildPatchSet(results: VerificationResult[]): PatchSet {
   const patch: PatchSet = {};
   for (const v of results) {
@@ -239,6 +329,11 @@ export function buildPatchSet(results: VerificationResult[]): PatchSet {
 function instructionFor(v: VerificationResult): string {
   const src = v.cited_source ? ` (source: ${v.cited_source})` : '';
   switch (v.recommended_action) {
+    case 'correct': {
+      const ev = v.tier1?.evidence ? ` Independent evidence: "${v.tier1.evidence}"` : '';
+      const url = v.tier1?.source_url ? ` (${v.tier1.source_url})` : src;
+      return `An independent source CONTRADICTS this claim${url}. Correct the claim to match the independent evidence${ev} — fix the specific wrong detail (e.g. a date, figure, or "acquisition" vs "license"). Keep the rest of the sentence.`;
+    }
     case 'attribute':
       return `Attribute this claim to its source${src} — phrase it as "According to <source>, …" rather than stating it as established fact. Do NOT delete the claim.`;
     case 'qualify':
@@ -271,14 +366,17 @@ export function correctionPrompt(reportMarkdown: string, patch: PatchSet, claimT
 export function verificationSection(results: VerificationResult[]): string {
   if (results.length === 0) return '';
   const corrected = results.filter(needsCorrection);
+  const crossChecked = results.filter(v => v.tier1).length;
   const lines: string[] = ['', '## Verification', ''];
+  const checkedNote = crossChecked > 0 ? ` (${crossChecked} cross-checked against independent sources)` : '';
   if (corrected.length === 0) {
-    lines.push(`All ${results.length} checkable claims were verified against their cited sources.`);
+    lines.push(`All ${results.length} checkable claims were verified against their cited sources${checkedNote}.`);
   } else {
-    lines.push(`${results.length} claims checked against their cited sources; ${corrected.length} hedged or attributed:`);
+    lines.push(`${results.length} claims checked${checkedNote}; ${corrected.length} corrected, hedged, or attributed:`);
     lines.push('');
     for (const v of corrected) {
-      lines.push(`- **${v.verdict}** — ${v.claim} _(${v.recommended_action})_`);
+      const note = v.recommended_action === 'correct' && v.tier1?.evidence ? ` — independent source: "${v.tier1.evidence}"` : '';
+      lines.push(`- **${v.verdict}** — ${v.claim} _(${v.recommended_action})_${note}`);
     }
   }
   return lines.join('\n');

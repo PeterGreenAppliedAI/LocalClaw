@@ -6,6 +6,7 @@ import type { VerificationConfig } from '../../config/types.js';
 import {
   type Claim, type VerificationResult,
   extractClaimsPrompt, parseClaims, pickRelevantSources, entailmentPrompt, parseVerdict,
+  shouldEscalate, tier1Query, tier1JudgePrompt, parseTier1, applyTier1,
   buildPatchSet, correctionPrompt, verificationSection, needsCorrection,
 } from '../verification.js';
 
@@ -418,7 +419,61 @@ export const researchPipeline: PipelineDefinition = {
       },
     },
 
-    // 7d. Correction pass — only runs when claims need hedging/attribution
+    // 7c-2. Tier-1 independent cross-check — one fresh search per high-impact claim to catch
+    //       faithfully-cited wrong facts (e.g. a wrong acquisition date). Bounded + throttled.
+    {
+      name: 'tier1_crosscheck',
+      type: 'code',
+      when: (ctx) => {
+        const vcfg = ctx.params._verification as VerificationConfig | undefined;
+        return (vcfg?.crossCheck ?? true) && (vcfg?.maxCrossChecks ?? 4) > 0
+          && ((ctx.params._verifications as VerificationResult[] | undefined)?.length ?? 0) > 0;
+      },
+      execute: async (ctx) => {
+        const vcfg = ctx.params._verification as VerificationConfig | undefined;
+        const cap = vcfg?.maxCrossChecks ?? 4;
+        const model = vcfg?.judgeModel || ctx.model;
+        const byId = new Map((ctx.params._claims as Claim[]).map(c => [c.claim_id, c]));
+        const results = ctx.params._verifications as VerificationResult[];
+        const escalate = results.filter(v => { const c = byId.get(v.claim_id); return c && shouldEscalate(c); }).slice(0, cap);
+        if (escalate.length === 0) { console.log('[Verify] Tier-1: no high-impact claims to cross-check'); return; }
+        let contradicted = 0;
+        const updated = await mapLimit(escalate, 2, async (v): Promise<VerificationResult> => {
+          const claim = byId.get(v.claim_id)!;
+          try {
+            const searchParams: Record<string, unknown> = { query: tier1Query(claim), count: '5' };
+            if (claim.time_sensitive) searchParams.freshness = 'year';
+            const searchResult = await ctx.executor('web_search', searchParams, ctx.toolContext);
+            const fetched: Array<{ url: string; text: string }> = [];
+            for (const url of extractUrls(searchResult).slice(0, 2)) {
+              try {
+                const c = await ctx.executor('web_fetch', { url, extractMode: 'text', maxChars: '6000' }, ctx.toolContext);
+                if (c && !c.startsWith('Error') && c.length > 120) fetched.push({ url, text: c });
+              } catch { /* skip */ }
+            }
+            if (fetched.length === 0) return v;
+            const { system, user } = tier1JudgePrompt(claim, fetched);
+            const resp = await ctx.client.chat({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], options: { temperature: 0.1, num_predict: 400 } });
+            const t1 = parseTier1(resp.message?.content ?? '');
+            if (t1.status === 'CONTRADICTED') contradicted++;
+            return applyTier1(v, t1);
+          } catch (err) {
+            console.warn(`[Verify] Tier-1 failed for ${v.claim_id}:`, err instanceof Error ? err.message : err);
+            return v;
+          }
+        });
+        const upById = new Map(updated.map(u => [u.claim_id, u]));
+        ctx.params._verifications = results.map(r => upById.get(r.claim_id) ?? r);
+        console.log(`[Verify] Tier-1: ${escalate.length} cross-checked, ${contradicted} contradicted`);
+        try {
+          const dir = join('data', 'workspaces', 'main', 'research', ctx.params.slug as string);
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(join(dir, 'verification.json'), JSON.stringify({ topic: ctx.params.topic, generated: new Date().toISOString(), results: ctx.params._verifications }, null, 2));
+        } catch { /* ignore */ }
+      },
+    },
+
+    // 7d. Correction pass — only runs when claims need hedging/attribution/correction
     {
       name: 'correction_pass',
       type: 'code',
