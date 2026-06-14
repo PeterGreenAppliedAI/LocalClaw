@@ -74,11 +74,15 @@ describe('Tier-1 independent cross-check', () => {
   const corporate: Claim = { claim_id: 't1', claim: "NVIDIA acquired Groq's LPU technology for $20 billion in December 2024.", claim_type: 'corporate_event', time_sensitive: true, entities: ['NVIDIA', 'Groq'], requires_verification: true };
   const spec: Claim = { claim_id: 't2', claim: 'The RTX 5090 has 32GB VRAM.', claim_type: 'product_spec', time_sensitive: false, entities: ['NVIDIA'], requires_verification: true };
   const noEntity: Claim = { claim_id: 't3', claim: 'The market grew 20% last year.', claim_type: 'market_share', time_sensitive: true, entities: [], requires_verification: true };
+  const price: Claim = { claim_id: 't4', claim: 'The RTX 4090 is priced at approximately $2,500.', claim_type: 'financial', time_sensitive: true, entities: ['NVIDIA'], requires_verification: true };
+  const share: Claim = { claim_id: 't5', claim: 'NVIDIA holds ~92% of the discrete GPU market.', claim_type: 'market_share', time_sensitive: true, entities: ['NVIDIA'], requires_verification: true };
 
-  it('escalates high-impact claims with entities, not specs or entity-less claims', () => {
+  it('escalates only stable high-impact corporate/market claims with entities', () => {
     expect(shouldEscalate(corporate)).toBe(true);
+    expect(shouldEscalate(share)).toBe(true);
     expect(shouldEscalate(spec)).toBe(false);       // product_spec not escalated
     expect(shouldEscalate(noEntity)).toBe(false);   // needs an entity to target
+    expect(shouldEscalate(price)).toBe(false);      // volatile product price (financial) not escalated
   });
 
   it('builds a query from entities + key terms, WITHOUT the contested number/date', () => {

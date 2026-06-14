@@ -247,8 +247,14 @@ export function needsCorrection(v: VerificationResult): boolean {
 // acquisition date). For a small set of high-impact, falsifiable claims we run ONE
 // independent search against fresh sources to catch outright contradictions.
 
-/** High-impact, falsifiable claim types where being wrong actually matters (dates, deals, figures). */
-const ESCALATE_TYPES = new Set(['corporate_event', 'financial', 'market_share']);
+/**
+ * High-impact, STABLE, falsifiable claim types worth an independent search: acquisitions,
+ * IPOs, launches (corporate_event) and share figures (market_share). Deliberately excludes
+ * `financial` — the extractor tags volatile product *prices* as financial, which waste the
+ * cross-check budget and return junk (stock-ticker pages). Corporate events are exactly the
+ * Groq-acquisition / Cerebras-IPO class we want to catch.
+ */
+const ESCALATE_TYPES = new Set(['corporate_event', 'market_share']);
 
 export function shouldEscalate(claim: Claim): boolean {
   return ESCALATE_TYPES.has(claim.claim_type) && claim.entities.length > 0;
