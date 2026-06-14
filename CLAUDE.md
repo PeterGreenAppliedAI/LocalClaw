@@ -13,6 +13,8 @@ Channel (Discord/Telegram/Slack/Web/Gmail/WhatsApp/MS Graph/iMessage/Chrome Exte
         -> Response back to channel
 ```
 
+**Inference backends (additive multi-backend):** A `MultiBackendClient` (`src/ollama/multi-backend.ts`, extends `OllamaClient`) routes each `chat`/`chatStream` call by model id. Foreground reasoning models (MiniMax-M2.7) route to an **OpenAI-compatible vLLM** endpoint via `OpenAICompatClient` (`src/ollama/openai-client.ts`); everything else (router phi4, NER phi4-mini, embedding, vision qwen3.6:27b) stays on the **Ollama gateway**. `embed()` always uses Ollama. Configured via `inference.backends[]` in config. The OpenAI client translates Ollama↔OpenAI shapes: `options.*`→top-level params, tool-call `arguments` string→object, `tool_call_id` stitching, SSE streaming, `usage`→`eval_count`/`prompt_eval_count`. Purely additive — the Ollama path is unchanged.
+
 **Key components:**
 - **Router** — phi4:14b, single-word classification into categories: `chat`, `web_search`, `memory`, `exec`, `cron`, `message`, `website`, `multi`, `config`, `task`, `research`, `personal`. Pre-model overrides for high-confidence patterns (PDF reports, calendar queries, bare URLs → website). Fallback to `defaultCategory` on timeout/parse failure. Implemented in `src/router/classifier.ts`.
 - **Pipeline engine** — `src/pipeline/executor.ts`. Deterministic stage-based workflows: extract, tool, parallel_tool, llm, code, branch, llm_branch, loop. Most categories use pipelines instead of letting the model decide the workflow.
@@ -60,10 +62,13 @@ Memory uses a **dual-backend** architecture: **FalkorDB graph database** (primar
 - JSONL index + facts.json, used when FalkorDB is unavailable
 - Still handles heartbeat diffing, review candidates, removed.jsonl tracking
 - Embedding dedup (cosine > 0.85) + hash + substring checks
+- **Char bound is importance-aware** (`enforceCharBound`): `MAX_FACTS_CHARS=20000`; eviction drops lowest *importance* first, then confidence as tiebreak. Tiers imp≥4 (identity/critical) are NEVER evicted. (Fixed a bug where a confidence-only trim at a 3000-char cap silently deleted identity facts like a spouse's name.)
 
 **Importance tiers on FactEntry:**
 - 5=critical (health/family, never expires), 4=identity (job/projects, never expires)
 - 3=preference (90 days), 2=context (30 days), 1=ephemeral (7 days)
+
+**Graph provenance edges (now wired):** `addFact(input, senderId, sourceSession)` — callers pass the session key so `(:Fact)-[:EXTRACTED_FROM]->(:Turn)` links to the conversation it came from. Contradiction check creates `(:Fact)-[:SUPERSEDES]->(:Fact)` (new→old) after the new node exists, setting `superseded=true`. (Both edge types were defined but never created until the session-key + edge-creation wiring landed.)
 
 **Known limitation:** Multi-signal scoring uses fixed linear weights. A reranker (cross-encoder or LLM-based) may be needed if wrong facts consistently surface over correct ones. Monitor auto-injection quality before adding complexity.
 
@@ -197,6 +202,7 @@ src/
     registry.ts             #   Pipeline registry
     types.ts                #   Stage types, PipelineContext, SubDispatchResult
     extractor.ts            #   LLM-based parameter extraction with JSON repair
+    search-buckets.ts       #   Topic→curated-domain buckets + anchors; site: filters for web_search
     definitions/            #   Pipeline definitions per category
       plan.ts               #     Plan pipeline (foreman handoffs, skill check, reflection)
       research.ts           #     Research pipeline (parallel search, charts, deck/report branch)
@@ -216,6 +222,7 @@ src/
     register-all.ts         #   registerAllTools() — wires all tools
     ssrf.ts                 #   SSRF protection for URL-fetching tools
     document.ts             #   LibreOffice headless document creation/conversion
+    document-templates.ts   #   HTML templates (report/memo/invoice/letter/simple) for document tool
     gmail-read.ts           #   Gmail search + read (OAuth2, read-only)
     calendar-read.ts        #   Google Calendar list + search (OAuth2, read-only)
     memory-forget.ts        #   Remove facts by text match
@@ -243,6 +250,8 @@ src/
 
   ollama/                   # LLM inference
     client.ts               #   OllamaClient (REST API wrapper, single retry on connection failure)
+    openai-client.ts        #   OpenAICompatClient — vLLM /v1/chat/completions, Ollama<->OpenAI translation
+    multi-backend.ts        #   MultiBackendClient (extends OllamaClient) — routes by model id; createInferenceClient()
     types.ts                #   OllamaMessage, OllamaTool, OllamaToolCall
 
   skills/                   # Self-improving procedural memory
@@ -451,7 +460,7 @@ System operations (heartbeat, cron) should never match or save user-facing skill
 - **Framework:** Vitest (`npm test` / `vitest run`)
 - **Type checking:** `npx tsc --noEmit`
 - **CI:** GitHub Actions runs type check + tests + build on every push/PR to main
-- **Current:** 347 tests across 23 files
+- **Current:** 363 tests across 24 files
 - **What needs tests** (Tier 2+ per code_rubric):
   - Auth/authz logic (owner-only tier, security filtering)
   - Networking (Ollama client, web fetch, SSRF checks)

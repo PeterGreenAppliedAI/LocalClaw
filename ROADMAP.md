@@ -1,6 +1,6 @@
 # LocalClaw Roadmap
 
-LocalClaw is a local-model-first AI agent framework running on personal infrastructure (DGX Spark, Mac Mini, A5000). It handles Discord, Telegram, WhatsApp, and Web with a Router + Specialist architecture on Ollama. 48 models, 39 tools, 12 pipelines, FalkorDB graph memory, autonomous heartbeats and briefings.
+LocalClaw is a local-model-first AI agent framework running on personal infrastructure (DGX Spark, A5000, gateway). It handles Discord, Telegram, WhatsApp, and Web with a Router + Specialist architecture. Foreground reasoning runs on MiniMax-M2.7 via **vLLM**; small/modality models run on an Ollama-compatible gateway, routed by a `MultiBackendClient`. 39 tools, 12 pipelines, FalkorDB graph memory, autonomous heartbeats and briefings. 363 tests.
 
 ---
 
@@ -23,9 +23,12 @@ LocalClaw is a local-model-first AI agent framework running on personal infrastr
 - **LLM-as-Judge Quality Scoring** — Post-dispatch quality check for pipeline categories, scores to JSONL
 - **Security Hardening** — Path traversal fixes (relative() check), scoped tool executor, session agentId sanitization, Telegram allowFrom, web API warning
 - **Orchestrator Decomposition** — 2,019 → 1,347 lines. Extracted: heartbeat service, briefing service, rate limiter, media debouncer, command router, text utilities, media extraction, training collector
-- **Latency Optimization** — Parallel memory + router (800-1500ms saved), async compaction cache, tool-loop streaming with status events, web-fetch page caching, expanded pre-model overrides
-- **Routing Test Corpus** — 347 tests covering pre-model overrides, keyword fallback, sticky routing, speculative language, security
+- **Latency Optimization** — Parallel memory + router (800-1500ms saved), turn-count-gated async compaction with prewarm, tool-loop streaming with status events, web-fetch page caching, expanded pre-model overrides
+- **Routing Test Corpus** — 363 tests covering pre-model overrides, keyword fallback, sticky routing, speculative language, security, search buckets
 - **Media Burst Handling** — Vision queue (sequential, not parallel), 3-second media debounce, video file path, rate limiter adjustment
+- **Multi-Backend Inference (vLLM)** — MultiBackendClient routes by model id; MiniMax-M2.7 on vLLM (OpenAI-compatible) for foreground reasoning, Ollama gateway for small/modality models. OpenAICompatClient handles the format translation. Per-specialist contextSize; 128K context. OpenCode also routes to MiniMax via vLLM provider.
+- **Memory Integrity** — Importance-aware FactStore char bound (never evicts imp 4-5), graph provenance edges (EXTRACTED_FROM + SUPERSEDES) wired.
+- **Search Source Buckets** — Topic→curated-domain buckets with anchors; real_estate + civic (NYC/NY Open Data); web_search freshness forcing + recency-aware quality judge; over-trigger fix.
 
 ---
 
@@ -35,7 +38,7 @@ LocalClaw is a local-model-first AI agent framework running on personal infrastr
 |----------|---------|-------------|
 | Next | **SearXNG integration** | Self-hosted meta-search engine replacing paid Brave API. Zero cost, no rate limits |
 | Next | **Firecrawl integration** | Self-hosted web fetching between web_fetch (basic) and browser (heavy). Handles JS rendering without full Chromium |
-| Next | **Provider abstraction** | LLM client trait supporting Ollama, vLLM, LM Studio, and any OpenAI-compatible endpoint. Enables multi-backend routing |
+| ✅ Done | **Provider abstraction** | MultiBackendClient + OpenAICompatClient — routes by model id across Ollama gateway + vLLM. Adding LM Studio / other OpenAI-compatible endpoints is now config-only (`inference.backends[]`) |
 | Planned | **Proactive actions** | Agent initiates actions based on observations (heartbeat findings, memory patterns) instead of just reporting. Human-in-the-loop confirmation gate |
 | Planned | **Cross-channel sessions** | Map user IDs across Discord/Telegram/WhatsApp to shared sessions. Continue conversations across platforms |
 | Planned | **Rebrand** | Rename from LocalClaw to new identity (plan exists, 357 references mapped across 80 files) |

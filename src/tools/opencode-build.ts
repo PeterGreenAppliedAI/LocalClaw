@@ -77,7 +77,11 @@ Returns a session ID and summary of what was built.`,
 
       try {
         const client = await getClient(config);
-        const [providerID, modelID] = model.includes('/') ? model.split('/', 2) : ['ollama', model];
+        // Split on the FIRST slash only — model ids can contain slashes
+        // (e.g. "vllm/cyankiwi/MiniMax-M2.7-AWQ-4bit"). split('/', 2) would drop the tail.
+        const slash = model.indexOf('/');
+        const providerID = slash === -1 ? 'ollama' : model.slice(0, slash);
+        const modelID = slash === -1 ? model : model.slice(slash + 1);
 
         let sessionId: string;
         let projectDir: string;

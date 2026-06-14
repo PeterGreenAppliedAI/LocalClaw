@@ -2,9 +2,9 @@
 
 ## Overview
 
-LocalClaw is a local-model-first AI agent framework running entirely on personal hardware via Ollama. It uses a **Router + Specialist** architecture with **deterministic pipelines** — code controls the workflow, models only extract parameters and synthesize text.
+LocalClaw is a local-model-first AI agent framework running entirely on personal hardware. Foreground reasoning runs on a large model (MiniMax-M2.7) served by **vLLM**; small utility/modality models run behind an **Ollama-compatible gateway**. It uses a **Router + Specialist** architecture with **deterministic pipelines** — code controls the workflow, models only extract parameters and synthesize text.
 
-9 models, 39 tools, 12 pipelines, 15 categories, 8 channel adapters (including Chrome extension with browser control), FalkorDB graph memory with 1,000+ nodes, 347 tests across 23 suites.
+9+ models across two inference backends (vLLM + Ollama gateway), 39 tools, 12 pipelines, 15 categories, 8 channel adapters (including Chrome extension with browser control), FalkorDB graph memory with 1,000+ nodes, 363 tests across 24 suites.
 
 ## Design Principles
 
@@ -43,19 +43,42 @@ Pipeline (deterministic)          OR          ReAct Loop (model-driven)
 Response → channel (thinking stripped) → transcript (thinking preserved)
 ```
 
-## Multi-Model Strategy
+## Multi-Model Strategy (two backends)
 
-| Role | Model | Why |
-|------|-------|-----|
-| Router | phi4:14b | Fast classification (~50ms), few-shot, 200 tokens/decision |
-| Specialists | qwen3-coder:30b | Reliable tool sequencing, native tool calling |
-| Chat | gemma4:26b (MoE) | 3.8B active / 25.2B total. Fast tok/s, clean output |
-| Briefing | qwen3.6:35b | Better reasoning, respects pre-labeled data |
-| Analytics | gemma4:26b | Interpretation-only (code computes all numbers) |
-| Fact Extraction | phi4:14b | Dense, no thinking overhead, reliable JSON |
-| NER | phi4-mini | Entity typing with bootstrapped graph context |
-| Embedding | qwen3-embedding:8b | 4096-dim vectors for memory search |
-| Vision | qwen3-vl:8b | Image analysis |
+Foreground reasoning runs on **MiniMax-M2.7** via **vLLM** (192K context) on the DGX Spark.
+Small utility + modality models run on the **A5000 node behind an OpenAI-compatible gateway**
+(Ollama wire protocol). A `MultiBackendClient` routes each call by model id — purely additive,
+so the Ollama path is unchanged. See "Inference Routing" below.
+
+| Role | Model | Backend | Why |
+|------|-------|---------|-----|
+| Chat + all foreground specialists (web_search, exec, memory, multi, research, analytics, image, code_gen, etc.) | MiniMax-M2.7-AWQ-4bit | vLLM / Spark | Strong multi-step reasoning + tool sequencing; 192K context |
+| Reasoning (`reason` tool) | MiniMax-M2.7 | vLLM / Spark | One model for foreground reasoning — no separate reasoning model |
+| Router | phi4:14b | gateway / A5000 | Fast classification (~50ms), few-shot |
+| Fact Extraction | phi4:14b | gateway / A5000 | Dense, reliable JSON |
+| NER | phi4-mini | gateway / A5000 | Entity typing with bootstrapped graph context |
+| Embedding | qwen3-embedding:8b | gateway / A5000 | 4096-dim vectors for memory search |
+| Vision | qwen3.6:27b (multimodal) | gateway / A5000 | Image analysis |
+| Briefing + Heartbeat reasoning | qwen3.6:27b | gateway / A5000 | Background reasoning, keeps the Spark free for foreground |
+| Voice fast-path | qwen2.5:7b | gateway / A5000 | Small + fast for voice-originated messages |
+
+**Context:** `session.contextSize` raised to 128K (was 32K). Per-specialist `contextSize` override
+in the schema lets small-context models stay low. MiniMax ignores `num_ctx` (vLLM serves 192K at launch),
+so the value mainly drives the compaction budget.
+
+## Inference Routing
+
+```
+client.chat({ model })
+  model matches inference.backends[].models  → OpenAICompatClient → vLLM /v1/chat/completions
+  everything else (phi4, qwen3.6:27b, embedding) → OllamaClient → gateway /api/chat
+embed() always → Ollama gateway
+```
+
+`OpenAICompatClient` (src/ollama/openai-client.ts) translates Ollama↔OpenAI: maps `options.*` to
+top-level params, JSON-parses tool-call arguments (vLLM returns a string, Ollama an object), stitches
+`tool_call_id`s onto tool-result messages, SSE streaming, `usage`→token counts. `MultiBackendClient`
+(src/ollama/multi-backend.ts) extends OllamaClient and routes by model id — a drop-in replacement.
 
 ## Router Classification (4-tier)
 
@@ -188,4 +211,4 @@ Resource limits          CPU/memory per exec           Roadmap
 | Scheduling | croner |
 | Config | JSON5 + Zod |
 | Chrome Extension | WXT + React + TypeScript (Manifest V3) |
-| Testing | Vitest (347 tests, 23 files) |
+| Testing | Vitest (363 tests, 24 files) |

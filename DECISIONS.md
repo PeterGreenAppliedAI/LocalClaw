@@ -4,6 +4,38 @@ A log of significant decisions, failed experiments, and why things are the way t
 
 ---
 
+## Multi-Backend Inference & MiniMax Swap (June 2026)
+
+### vLLM backend, additive (June 2026)
+**Decision:** Add OpenAI-compatible inference (vLLM serving MiniMax-M2.7) alongside Ollama, not replace it.
+**How:** `MultiBackendClient extends OllamaClient` routes `chat`/`chatStream` to `OpenAICompatClient` when the model id matches `inference.backends[].models`, else falls through to Ollama. `embed`/`generate`/`listModels` always use Ollama. Drop-in — every `client: OllamaClient` call site is unchanged.
+**Translation handled in OpenAICompatClient:** `options.{temperature,top_p,num_predict}`→top-level; tool-call `arguments` string→object (vLLM returns a JSON string, Ollama an object); `tool_call_id` stitched onto tool-result messages (OpenAI requires it, the ReAct engine doesn't emit it); SSE streaming; `usage`→`eval_count`/`prompt_eval_count`.
+**Status:** Active.
+
+### Model split: foreground on Spark, utility on A5000 (June 2026)
+**Decision:** MiniMax-M2.7 (vLLM, Spark) for all foreground specialists + chat + multi + the `reason` tool. qwen3.6:27b (A5000 gateway) for vision + briefing + heartbeat (background). phi4/phi4-mini/qwen3-embedding stay on the gateway (router/NER/extraction/embedding). qwen2.5:7b stays for the voice fast-path; whisper/flux unchanged.
+**Why:** MiniMax reasons far better than qwen3-coder:30b/gemma4:26b; the hardware split keeps the Spark free for foreground while the A5000 handles small/modality models. Vision can't move to MiniMax (text-only) — qwen3.6:27b is multimodal and covers it.
+**Gotcha:** the `reason` tool's model lives in its own `reasoning` config block and was missed in the first swap pass — it pointed at a non-existent `nemotron-3-nano:30b` and hung every forced-reasoning pass on a timeout loop. Fixed to MiniMax. Lesson: model strings live in several config blocks (specialists, reasoning, vision, voice, briefing, heartbeat, opencode) — swap them all.
+**Deferred:** OpenCode `defaultModel` stays `ollama/qwen3-coder:30b` — its `provider/model` slash-split collides with MiniMax's slashed id (`cyankiwi/MiniMax-...`); needs its own provider wiring.
+**Status:** Active.
+
+### Context window raised to 128K (June 2026)
+**Decision:** `session.contextSize` 32K→131072; added optional per-specialist `contextSize` override.
+**Why:** 32K forced compaction every message. MiniMax serves 192K. The global value drives the compaction budget (safe to raise — router/vision/embedding set their own `num_ctx`; MiniMax ignores `num_ctx` since vLLM fixes context at launch). Per-specialist override is the lever to *lower* context for any future small-context Ollama specialist.
+**Status:** Active.
+
+## Memory Integrity (June 2026)
+
+### FactStore importance-aware char bound (June 2026)
+**Problem:** Root-caused a real data loss — the user's wife's name (and other imp-4/5 family facts) lived in USER.md + historical raw extractions but were absent from facts.json and the graph. `enforceCharBound` capped facts.json at 3000 chars (~12 facts) and evicted the *lowest-confidence* facts, ignoring importance — so a critical identity fact with moderate confidence got dropped before an ephemeral high-confidence one. Logs showed "trimmed 92 low-confidence facts."
+**Fix:** Eviction orders by importance first, confidence as tiebreak; imp≥4 never evicted; `MAX_FACTS_CHARS` 3000→20000.
+**Status:** Active. Backfill of historical facts into the graph deliberately NOT automated — the raw set contains time-sensitive/sensitive personal facts (a pregnancy, a hospitalization, a pet's death) and contradictions; re-asserting them as current is a user decision.
+
+### Graph provenance edges wired (June 2026)
+**Problem:** `EXTRACTED_FROM` and `SUPERSEDES` were defined in the schema but never created (live graph showed 0 of each). `addFact`'s `sourceSession` was optional and no caller passed it; the contradiction check set `superseded=true` but created no edge.
+**Fix:** Session key threaded through all `addFact` callers (heartbeat, !save, memory_save); SUPERSEDES edge created (new→old) after the new Fact node exists.
+**Status:** Active.
+
 ## Model Evaluations
 
 ### Gemma4:26b for chat (May 2026)
@@ -441,10 +473,14 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Measured:** Routing 0-4ms (sticky) with memory priming 235-2900ms in parallel. Previously sequential (additive).
 **Status:** Active.
 
-### Async compaction cache (June 2026)
-**Problem:** History compaction (fact extraction + LLM summary) ran synchronously on every message once history exceeded 50% budget. 300-1000ms blocking.
-**Fix:** Cache compaction results per session (5-min TTL). First message: synchronous (unavoidable). Subsequent messages: use cached result, schedule fresh compaction async in background. Prevents overlapping compactions via `pendingCompactions` set.
-**Status:** Active.
+### Async compaction cache → turn-count gated + prewarm (June 2026)
+**Problem:** History compaction ran synchronously every message once history exceeded budget (300-1000ms blocking).
+**v1:** Cache compaction per session (5-min TTL), serve cached + refresh async.
+**v2 (review fix):** TTL-only cache could serve history MISSING the previous exchange. Gated cache validity on SessionStore `turnCount` — reuse only if no new turns since it was built.
+**v3 (review fix):** Turn-count gate made the cache miss after every exchange (each response appends 2 turns). Added a **prewarm**: after appending turns, build+cache compaction in the background keyed to the new turn count, so the next message hits a warm, correct cache.
+**v4 (review fix):** Removed the cache-hit async refresh entirely — with turn-count gating a cache entry is exact for its turn count (can't drift) and turn count only increases, so the refresh cached an obsolete count and raced the prewarm for the `pendingCompactions` lock. Deleting it fixed the race by removing the path.
+**Reset:** `clearSession` resets metadata `turnCount` to 0; `clearCompactionCache()` clears the entry on `!reset`/`!new` so a fresh session can't reuse old compacted history.
+**Status:** Active. (Note: with the 128K context raise, compaction's expensive LLM summary rarely fires at all now.)
 
 ### Tool-loop streaming (June 2026)
 **Problem:** Tool-loop specialists used non-streaming `client.chat()`. User saw "thinking..." for 2-5 seconds with no feedback.
@@ -452,9 +488,20 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Rule:** Tool-loop model calls stay non-streaming (prevents leaking JSON/function calls). Only stream user-facing natural language.
 **Status:** Active.
 
-### Web-fetch page caching (June 2026)
+### Web-fetch page caching + URL key case (June 2026)
 **Problem:** Same pages fetched repeatedly across conversations. No caching.
-**Fix:** In-memory cache with 1-hour TTL. SSRF validation runs BEFORE cache check (reviewer feedback). Cache key includes URL + extractMode + maxChars. Only successful content cached. Web search already had caching — now web-fetch matches.
+**Fix:** In-memory cache with 1-hour TTL. SSRF validation runs BEFORE cache check, and returns a tool-style `Error:` (not throw). Cache key includes URL + extractMode + maxChars. Non-HTML responses cached too.
+**Review fix:** `normalizeCacheKey` lowercased all keys — fine for search queries, wrong for URLs (`/Foo` vs `/foo` collide). Split into `normalizeCacheKey` (queries, lowercase) vs `normalizeUrlKey` (URLs, trim only); `readCache`/`writeCache` now use keys verbatim and callers normalize.
+**Status:** Active.
+
+### Search source buckets + civic data (June 2026)
+**Problem:** Web searches picked random sources; no domain prioritization. Real-estate/property queries matched no bucket. NYC Open Data (a cross-domain civic catalog, not just housing) never surfaced.
+**Fix:** `src/pipeline/search-buckets.ts` — topic→curated-domain buckets add `site:` filters. New `real_estate` bucket (pattern ordered BEFORE finance so "off-market"/"market" don't get hijacked). **Anchor convention:** first 2 domains of a bucket are always included; the rest sampled — guarantees high-value sources (civic open data for real_estate, huggingface.co for ai_tech) appear reliably instead of ~14% of the time. Civic domains (`data.cityofnewyork.us`, `data.ny.gov`) spread non-anchor into health/finance/events/news per actual Open Data category breadth.
+**Status:** Active.
+
+### web_search over-trigger (June 2026)
+**Problem:** Conversational text containing bare "search"/"latest"/"news" (e.g. "uses brave for search") classified as web_search and ran the full pipeline.
+**Fix:** Tightened the keyword hint to require intent ("search for/the web/online", "web search", google, look up, find out about); dropped bare search/latest/news. Router-prompt nudge for the model layer (not unit-testable — model layer has 0 corpus cases; needs live verification). Also: web_search forces `freshness=month` when the query signals recency, and the quality judge gained a recency check (was scoring a 2019-2023 retrospective 5/5/5 on a "recent" query).
 **Status:** Active.
 
 ### Expanded pre-model overrides (June 2026)

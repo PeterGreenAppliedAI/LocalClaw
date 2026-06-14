@@ -62,7 +62,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Execution | `exec`, `code_session`, `read_file`, `write_file` | Allowlisted shell commands, persistent Python/Node/Bash REPL sessions, safe file I/O |
 | Scheduling | `cron_add`, `cron_list`, `cron_remove`, `cron_edit` | Real cron expressions, timezone-aware, persistent |
 | Task Board | `task_add`, `task_list`, `task_update`, `task_done`, `task_remove` | Persistent kanban-style task system with TASKS.md rendering |
-| Reasoning | `reason` | Hand off to a dedicated thinking model for deep analysis and content synthesis |
+| Reasoning | `reason` | Forced synthesis pass over gathered tool observations (uses the foreground reasoning model) — deep analysis, content formatting |
 | Config | `cron_edit`, `workspace_read`, `workspace_write` | Self-administration — edit cron jobs, read/write workspace files |
 | Messaging | `send_message` | Cross-channel message delivery |
 | Browsing | `browser` | Dual-mode browser: DOM-first with automatic visual escalation (Xvfb + vision model). Click, type, select, fill forms on any site including SPAs |
@@ -90,12 +90,14 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 - [Ollama](https://ollama.ai/) running locally (or on your network)
 - Required models pulled:
   ```bash
-  ollama pull phi4:14b              # router (classification)
-  ollama pull gemma4:26b            # chat (conversational, MoE)
-  ollama pull qwen3-coder:30b       # specialist (tool calling)
-  ollama pull qwen3.6:35b           # briefing (synthesis/reasoning)
+  ollama pull phi4:14b              # router (classification) + extraction
+  ollama pull phi4-mini             # NER (entity typing)
   ollama pull qwen3-embedding:8b    # vector embeddings
-  ollama pull nemotron-3-nano:30b   # optional — reasoning model
+  ollama pull qwen3.6:27b           # vision + briefing/heartbeat reasoning (multimodal)
+  ollama pull qwen2.5:7b            # voice fast-path
+  # Foreground reasoning + chat + specialists: a large model (e.g. MiniMax-M2.7)
+  # served via vLLM (OpenAI-compatible) and wired through `inference.backends` in config,
+  # OR any capable Ollama model (e.g. qwen3-coder:30b / gemma4:26b) for an all-Ollama setup.
   ```
 - Python 3 with data science packages (for research/charting):
   ```bash
@@ -233,7 +235,7 @@ localclaw/
 │   ├── src/pages/            # Dashboard, Chat, Sessions, Tasks, Cron, Memory, Channels, Tools, Config
 │   ├── src/api/              # API client + React Query hooks
 │   └── dist/                 # Built static files (served by web adapter)
-├── test/                     # 347 tests across 23 suites
+├── test/                     # 363 tests across 24 suites
 ├── CLAUDE.md                 # AI code generation guidelines (for Claude Code)
 ├── localclaw.config.json5    # Full configuration
 └── .env                      # API keys and tokens
@@ -719,19 +721,19 @@ Add `"reason"` to any specialist's `tools` array to enable the reasoning pass fo
 
 LocalClaw assigns different models to different roles based on their strengths. No single model handles everything.
 
-| Role | Model | Why |
-|------|-------|-----|
-| Router | phi4:14b | Fast classification (~50ms), few-shot prompted, 200 tokens per decision |
-| Specialists (tool calling) | qwen3-coder:30b | Reliable tool sequencing, native Ollama tool call format |
-| Briefing (synthesis) | qwen3.6:35b | Better reasoning quality, respects pre-labeled data, cleaner output |
-| Chat | gemma4:26b | MoE (3.8B active / 25.2B total) — fast tok/s, clean conversational output, no self-prompting artifacts |
-| Reasoning | nemotron-3-nano:30b | Deep analysis and content synthesis (optional) |
-| Embedding | qwen3-embedding:8b | Vector search for knowledge import |
-| Vision | qwen3-vl:8b | Image analysis via multimodal model |
-| Image Generation | flux2-klein:4b-fp8 | Text-to-image on dedicated hardware |
-| Voice Chat | qwen2.5:7b | Low-latency responses for voice interactions |
+Inference runs across **two backends**: a large reasoning model on **vLLM** (OpenAI-compatible) plus small utility/modality models on an **Ollama-compatible gateway**. A `MultiBackendClient` routes each call by model id.
 
-**Design principle:** Code handles deterministic work (time reasoning, urgency scoring, conflict detection, auto-actions). Models handle what requires judgment (synthesis, connection-finding, natural language). Each model is tested pipeline-by-pipeline before being promoted. Models are phased in one role at a time to isolate regressions (e.g., gemma4:26b promoted to chat after qwen3.5:9b showed self-prompting artifacts).
+| Role | Model | Backend | Why |
+|------|-------|---------|-----|
+| Chat + foreground specialists + `reason` tool | MiniMax-M2.7-AWQ-4bit | vLLM | Strong multi-step reasoning + tool sequencing, 192K context |
+| Router | phi4:14b | gateway | Fast classification (~50ms), few-shot |
+| Briefing + Heartbeat (synthesis) | qwen3.6:27b | gateway | Background reasoning, keeps the big GPU free for foreground |
+| Embedding | qwen3-embedding:8b | gateway | Vector search for memory + knowledge import |
+| Vision | qwen3.6:27b (multimodal) | gateway | Image analysis |
+| Image Generation | flux2-klein:4b-fp8 | dedicated | Text-to-image |
+| Voice Chat | qwen2.5:7b | gateway | Low-latency responses for voice |
+
+**Design principle:** Code handles deterministic work (time reasoning, urgency scoring, conflict detection, auto-actions). Models handle what requires judgment (synthesis, connection-finding, natural language). The harness holds the value, not the weights — the entire foreground reasoning tier was swapped to MiniMax via config + a new backend client, with the memory graph, pipelines, and channels untouched. Each model is tested pipeline-by-pipeline before promotion.
 
 ### Router Training Data
 
@@ -834,8 +836,8 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Language | TypeScript 5.7 (strict) |
 | AI Backend | Ollama |
 | Router Model | phi4:14b |
-| Chat Model | gemma4:26b (MoE, 3.8B active) |
-| Specialist Model | qwen3-coder:30b |
+| Foreground reasoning | MiniMax-M2.7 (vLLM) |
+| Utility models | phi4:14b, qwen3.6:27b, qwen3-embedding (gateway) |
 | Briefing Model | qwen3.6:35b |
 | Embedding Model | qwen3-embedding:8b |
 | Reasoning Model | nemotron-3-nano:30b (optional) |
