@@ -7,7 +7,7 @@ import {
   type Claim, type VerificationResult,
   extractClaimsPrompt, parseClaims, pickRelevantSources, entailmentPrompt, parseVerdict,
   shouldEscalate, tier1Query, tier1JudgePrompt, parseTier1, applyTier1,
-  buildPatchSet, correctionPrompt, verificationSection, needsCorrection,
+  buildPatchSet, correctionPrompt, verificationSection, needsCorrection, stripStrikethrough,
 } from '../verification.js';
 
 /**
@@ -556,7 +556,9 @@ export const researchPipeline: PipelineDefinition = {
       execute: (ctx) => {
         const slug = ctx.params.slug as string;
         const validCharts = new Set(ctx.params._validCharts as string[]);
-        let md = ctx.params._reportMarkdown as string;
+        // Strip any tracked-changes strikethrough the corrector left in (else the PDF shows
+        // lines through the old wrong text alongside the replacement).
+        let md = stripStrikethrough(ctx.params._reportMarkdown as string);
         // Swap chart placeholders for <img> (filesystem path for LibreOffice) only if the file exists
         md = md.replace(/\{\{chart:([a-z0-9_\-]+)\}\}/gi, (_m, name) => {
           return validCharts.has(name)

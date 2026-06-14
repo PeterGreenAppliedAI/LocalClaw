@@ -353,6 +353,21 @@ function instructionFor(v: VerificationResult): string {
   }
 }
 
+/**
+ * Remove tracked-changes artifacts the corrector sometimes emits: GFM strikethrough
+ * (`~~old text~~`) and `<del>` spans. The struck text is the wrong version it meant to
+ * replace, so we drop it entirely, then tidy whitespace. Without this the PDF literally
+ * shows lines through the corrected content.
+ */
+export function stripStrikethrough(md: string): string {
+  return md
+    .replace(/~~([\s\S]*?)~~/g, '')   // remove matched struck spans (the old wrong text)
+    .replace(/<del>[\s\S]*?<\/del>/gi, '')
+    .replace(/~~/g, '')               // drop any stray/unbalanced markers
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/ ([.,;:)])/g, '$1');
+}
+
 export function correctionPrompt(reportMarkdown: string, patch: PatchSet, claimText: Record<string, string>): { system: string; user: string } {
   const items = Object.entries(patch)
     .map(([id, p]) => `- [${p.verdict}] "${claimText[id] ?? id}"\n  → ${p.instruction}`)
@@ -361,6 +376,7 @@ export function correctionPrompt(reportMarkdown: string, patch: PatchSet, claimT
     system: [
       'You are revising a research report to fix overstated or unsupported claims.',
       'Edit ONLY the sentences affected by the instructions below. Preserve all other text, headings, the `## Sources` list, and any `{{chart:...}}` placeholders VERBATIM.',
+      'REPLACE wrong text cleanly — write the corrected sentence as final prose. NEVER use strikethrough (~~ or <del>), and NEVER leave the old/wrong text in. This is a published report, not a tracked-changes draft.',
       'Hedge CONCISELY: use at most ONE hedge per sentence (a single "According to <source>, …" OR one "reportedly"). Never stack qualifiers or repeat "reportedly" within a sentence. Keep the prose clean and readable.',
       'Do not add new factual claims. Do not delete claims. Do not change the structure. Keep markdown formatting and the existing [n] citation numbers.',
       'Return the FULL corrected report in markdown. /no_think',

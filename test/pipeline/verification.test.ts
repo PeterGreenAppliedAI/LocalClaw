@@ -7,6 +7,7 @@ import {
   needsCorrection,
   buildPatchSet,
   pickRelevantSources,
+  stripStrikethrough,
   verificationSection,
   shouldEscalate,
   tier1Query,
@@ -206,6 +207,25 @@ describe('buildPatchSet', () => {
     const claim: Claim = { claim_id: 'x', claim: 'Some unsupported claim', claim_type: 'financial', time_sensitive: true, entities: [], requires_verification: true };
     const v = parseVerdict(JSON.stringify({ verdict: 'UNSUPPORTED', recommended_action: 'remove' }), claim);
     expect(v.recommended_action).toBe('qualify');
+  });
+});
+
+describe('stripStrikethrough', () => {
+  it('removes the struck old text, keeping the replacement', () => {
+    const out = stripStrikethrough('NVIDIA ~~acquired Groq for $20B~~ licensed Groq IP.');
+    expect(out).not.toContain('~~');
+    expect(out).not.toContain('acquired');
+    expect(out).toContain('licensed Groq IP.');
+  });
+
+  it('drops <del> spans and stray unbalanced markers', () => {
+    expect(stripStrikethrough('keep <del>cut this</del> end')).toBe('keep end');
+    expect(stripStrikethrough('a ~~ b')).toBe('a b'); // lone marker removed
+  });
+
+  it('leaves clean prose untouched', () => {
+    const clean = 'A normal sentence with no edits.';
+    expect(stripStrikethrough(clean)).toBe(clean);
   });
 });
 
