@@ -42,9 +42,10 @@ const SOURCE_BUCKETS: Record<string, string[]> = {
   ],
 
   hardware: [
-    'nvidia.com', 'servethehome.com', 'anandtech.com',
-    'tomshardware.com', 'newegg.com', 'amazon.com',
-    'techpowerup.com', 'pcworld.com',
+    'servethehome.com', 'anandtech.com',   // anchors — deep coverage of new AI hardware (DGX Spark, Strix Halo, RTX)
+    'nvidia.com', 'amd.com',
+    'tomshardware.com', 'techpowerup.com',
+    'newegg.com', 'pcworld.com', 'phoronix.com',
   ],
 
   dev: [
@@ -74,10 +75,13 @@ const BUCKET_PATTERNS: Array<{ pattern: RegExp; bucket: string }> = [
   // Stems use leading \b only (no trailing) so plurals/suffixes match: properties, listings, foreclosure.
   { pattern: /\b(propert|parcel|real estate|off.?market|listing|zoning|foreclos|lien|deed|realtor|mls|condo|co-?ops?\b)/i, bucket: 'real_estate' },
   { pattern: /\b(stock|market|earnings|revenue|profit|investor|ipo|nasdaq|nyse|dividend|valuation)\b/i, bucket: 'finance' },
+  // hardware MUST precede ai_tech — "GPU/hardware for inference" else gets stolen by ai_tech's "inference".
+  // Product lines (rtx/radeon/ryzen/dgx/strix...) are unambiguous hardware; bare "nvidia/amd" stay out
+  // (they collide with finance "stock"). "hardware" word + components route here.
+  { pattern: /\b(gpu|hardware|rtx|radeon|geforce|ryzen|threadripper|epyc|strix|dgx|instinct|tensor core|vram|npu|workstation|server|rack|nvme|motherboard)\b/i, bucket: 'hardware' },
   { pattern: /\b(ai|llm|model|ollama|anthropic|openai|transformer|inference|training|neural|deep learning|machine learning|gpt|claude|gemma|qwen|llama)\b/i, bucket: 'ai_tech' },
   { pattern: /\b(health|medical|symptom|disease|treatment|doctor|hospital|diagnosis|medication|clinical)\b/i, bucket: 'health' },
   { pattern: /\b(event|conference|meetup|workshop|hackathon|networking|summit|expo)\b/i, bucket: 'events' },
-  { pattern: /\b(gpu|server|rack|cpu|ram|nvme|hardware|build|workstation|benchmark)\b/i, bucket: 'hardware' },
   { pattern: /\b(npm|pip|python|javascript|typescript|react|node|api|code|programming|rust|golang|framework|library)\b/i, bucket: 'dev' },
   { pattern: /\b(news|latest|breaking|today|announced|launched|released|unveiled)\b/i, bucket: 'news' },
 ];

@@ -19,6 +19,19 @@ describe('search-buckets', () => {
       expect(detectBucket('NVIDIA stock earnings')).toBe('finance');
     });
 
+    it('routes GPU/hardware queries to hardware even when they mention inference', () => {
+      // Regression: "AMD/NVIDIA hardware for local inference" used to hit ai_tech
+      // (ai_tech "inference" matched before hardware), missing the hardware press.
+      expect(detectBucket('AMD hardware and NVIDIA hardware for local inference')).toBe('hardware');
+      expect(detectBucket('DGX Spark vs Strix Halo for local LLMs')).toBe('hardware');
+      expect(detectBucket('RTX 5090 laptop benchmarks')).toBe('hardware');
+    });
+
+    it('does not let hardware steal finance (NVIDIA stock) or pure-AI queries', () => {
+      expect(detectBucket('NVIDIA stock earnings Q2')).toBe('finance');
+      expect(detectBucket('how does transformer inference work')).toBe('ai_tech');
+    });
+
     it('returns null for unclassified queries', () => {
       expect(detectBucket('how do I tie a bowtie')).toBeNull();
     });
