@@ -70,7 +70,7 @@ export const webSearchPipeline: PipelineDefinition = {
         // Prioritize curated sources from the detected bucket
         const bucket = ctx.params._bucket as string | null;
         const prioritized = prioritizeUrls(unique, bucket);
-        ctx.params._urls = prioritized.slice(0, 3);
+        ctx.params._urls = prioritized.slice(0, 5);
         return ctx.params._urls;
       },
     },

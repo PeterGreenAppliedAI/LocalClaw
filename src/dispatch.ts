@@ -620,6 +620,10 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
       /\bI don't have (?:the ability|access|tools|a way|direct)/i,
       // Narrated tool calls — model writes tool syntax as text without actually calling tools
       /\[\w+\s*\(.*\)\]/i,
+      // Promises of action chat can't keep — "let me search", "I'll look that up", "going to find"
+      // Chat has no tools, so a future-action promise is a capability gap → re-route to a specialist.
+      /\b(?:let me|i'?ll|i will|i'?m going to|i'?m gonna|give me a (?:sec|moment) and i'?ll)\s+(?:search|look up|look into|find|check|pull up|dig up|google|research|fetch|browse)/i,
+      /\b(?:on it|let me pull together|let me dig into)\b/i,
     ];
     if (CAPABILITY_GAP_PATTERNS.some(p => p.test(stripThinking(result.answer)))) {
       const handoffMessage = await summarizeForHandoff();
