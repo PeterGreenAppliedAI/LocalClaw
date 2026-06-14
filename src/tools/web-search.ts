@@ -93,6 +93,26 @@ function formatResults(results: SearchResult[], query: string): string {
 
 // --- Provider implementations ---
 
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+// Brave's free tier allows ~1 request/second. The research pipeline fans out
+// several facets at once, so without spacing every concurrent call 429s. Serialize
+// Brave requests through a single promise chain with a minimum interval; concurrent
+// callers queue instead of bursting.
+const BRAVE_MIN_INTERVAL_MS = 1100;
+let braveChain: Promise<void> = Promise.resolve();
+let braveLastAt = 0;
+
+function braveThrottle(): Promise<void> {
+  const run = braveChain.then(async () => {
+    const wait = BRAVE_MIN_INTERVAL_MS - (Date.now() - braveLastAt);
+    if (wait > 0) await sleep(wait);
+    braveLastAt = Date.now();
+  });
+  braveChain = run.catch(() => {});
+  return run;
+}
+
 async function searchBrave(
   query: string,
   count: number,
@@ -101,23 +121,39 @@ async function searchBrave(
 ): Promise<SearchResult[]> {
   const params = new URLSearchParams({ q: query, count: String(count) });
   if (freshness) params.set('freshness', freshness);
+  const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
 
-  const res = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
-    headers: { 'X-Subscription-Token': apiKey, 'Accept': 'application/json' },
-    signal: AbortSignal.timeout(15_000),
-  });
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    await braveThrottle();
+    const res = await fetch(url, {
+      headers: { 'X-Subscription-Token': apiKey, 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(15_000),
+    });
 
-  if (!res.ok) throw new Error(`Brave API: ${res.status} ${res.statusText}`);
+    if (res.status === 429 && attempt < MAX_ATTEMPTS - 1) {
+      const retryAfter = Number(res.headers.get('retry-after'));
+      const backoff = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : 1500 * 2 ** attempt;
+      console.warn(`[WebSearch] Brave 429 — retry ${attempt + 1}/${MAX_ATTEMPTS - 1} in ${backoff}ms`);
+      await sleep(backoff);
+      continue;
+    }
 
-  const data = await res.json() as {
-    web?: { results?: Array<{ title: string; url: string; description: string }> };
-  };
+    if (!res.ok) throw new Error(`Brave API: ${res.status} ${res.statusText}`);
 
-  return (data.web?.results ?? []).map(r => ({
-    title: r.title,
-    url: r.url,
-    snippet: r.description,
-  }));
+    const data = await res.json() as {
+      web?: { results?: Array<{ title: string; url: string; description: string }> };
+    };
+    return (data.web?.results ?? []).map(r => ({
+      title: r.title,
+      url: r.url,
+      snippet: r.description,
+    }));
+  }
+
+  throw new Error('Brave API: 429 (rate limited after retries)');
 }
 
 async function searchPerplexity(
