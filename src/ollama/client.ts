@@ -38,8 +38,9 @@ export class OllamaClient {
       keep_alive: this.keepAlive,
     };
 
+    const MAX_ATTEMPTS = 4;
     let res: Response | undefined;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
         res = await fetch(`${this.baseUrl}/api/chat`, {
           method: 'POST',
@@ -47,18 +48,25 @@ export class OllamaClient {
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(300_000),
         });
-        break;
       } catch (err) {
         if (err instanceof DOMException && err.name === 'TimeoutError') {
           throw ollamaInferenceError('Stream request timed out');
         }
-        if (attempt === 0) {
+        if (attempt < MAX_ATTEMPTS - 1) {
           console.warn('[Ollama] Stream connection failed, retrying in 2s...');
           await new Promise(r => setTimeout(r, 2_000));
           continue;
         }
         throw ollamaUnreachable(this.baseUrl, err);
       }
+      // 429 — transient rate limit. Back off and retry.
+      if (res.status === 429 && attempt < MAX_ATTEMPTS - 1) {
+        const delay = 600 * 2 ** attempt;
+        console.warn(`[Ollama] 429 rate limited on stream, backing off ${delay}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      break;
     }
     if (!res) throw ollamaUnreachable(this.baseUrl, new Error('Connection failed after retry'));
 
@@ -154,10 +162,13 @@ export class OllamaClient {
 
   private async post<T>(path: string, body: unknown, timeoutMs = 300_000): Promise<T> {
     const jsonBody = JSON.stringify(body);
+    const MAX_ATTEMPTS = 4;
     let lastErr: unknown;
 
-    // Retry once on connection failure (handles transient network drops, e.g., Mac sleep/wake)
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // Retry on connection failure (transient network drops) AND on 429 rate limits
+    // (gateway caps req/min; the window resets quickly, so back off and retry rather
+    // than failing the call — a dropped router classification falls back to keywords).
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       let res: Response;
       try {
         res = await fetch(`${this.baseUrl}${path}`, {
@@ -171,12 +182,20 @@ export class OllamaClient {
           throw ollamaInferenceError(`Request to ${path} timed out after ${timeoutMs}ms`);
         }
         lastErr = err;
-        if (attempt === 0) {
+        if (attempt < MAX_ATTEMPTS - 1) {
           console.warn(`[Ollama] Connection failed, retrying in 2s...`);
           await new Promise(r => setTimeout(r, 2_000));
           continue;
         }
         throw ollamaUnreachable(this.baseUrl, err);
+      }
+
+      // 429 — transient rate limit. Exponential backoff (600/1200/2400ms) and retry.
+      if (res.status === 429 && attempt < MAX_ATTEMPTS - 1) {
+        const delay = 600 * 2 ** attempt;
+        console.warn(`[Ollama] 429 rate limited on ${path}, backing off ${delay}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
       }
 
       if (!res.ok) {

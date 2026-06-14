@@ -118,8 +118,9 @@ export class OpenAICompatClient {
   ): Promise<OllamaChatResponse> {
     const body = this.toRequestBody(params, true);
 
+    const MAX_ATTEMPTS = 4;
     let res: Response | undefined;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
         res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
           method: 'POST',
@@ -127,18 +128,24 @@ export class OpenAICompatClient {
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(300_000),
         });
-        break;
       } catch (err) {
         if (err instanceof DOMException && err.name === 'TimeoutError') {
           throw ollamaInferenceError('Stream request timed out');
         }
-        if (attempt === 0) {
+        if (attempt < MAX_ATTEMPTS - 1) {
           console.warn('[OpenAI] Stream connection failed, retrying in 2s...');
           await new Promise(r => setTimeout(r, 2_000));
           continue;
         }
         throw ollamaUnreachable(this.baseUrl, err);
       }
+      if (res.status === 429 && attempt < MAX_ATTEMPTS - 1) {
+        const delay = 600 * 2 ** attempt;
+        console.warn(`[OpenAI] 429 rate limited on stream, backing off ${delay}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      break;
     }
     if (!res) throw ollamaUnreachable(this.baseUrl, new Error('Connection failed after retry'));
     if (!res.ok) {
@@ -236,7 +243,8 @@ export class OpenAICompatClient {
   private async post<T>(path: string, body: unknown, timeoutMs = 300_000): Promise<T> {
     const jsonBody = JSON.stringify(body);
     let lastErr: unknown;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const MAX_ATTEMPTS = 4;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       let res: Response;
       try {
         res = await fetch(`${this.baseUrl}${path}`, {
@@ -250,12 +258,19 @@ export class OpenAICompatClient {
           throw ollamaInferenceError(`Request to ${path} timed out after ${timeoutMs}ms`);
         }
         lastErr = err;
-        if (attempt === 0) {
+        if (attempt < MAX_ATTEMPTS - 1) {
           console.warn('[OpenAI] Connection failed, retrying in 2s...');
           await new Promise(r => setTimeout(r, 2_000));
           continue;
         }
         throw ollamaUnreachable(this.baseUrl, err);
+      }
+      // 429 — transient rate limit. Exponential backoff and retry.
+      if (res.status === 429 && attempt < MAX_ATTEMPTS - 1) {
+        const delay = 600 * 2 ** attempt;
+        console.warn(`[OpenAI] 429 rate limited on ${path}, backing off ${delay}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
       }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
