@@ -362,6 +362,42 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Impact:** Cosmetic — the response content is correct, just duplicated.
 **Status:** Logged for investigation. Not blocking daily use.
 
+### Gateway 429 rate limit under request bursts (June 2026)
+**Problem:** The Ollama gateway (10.0.0.20:8001) caps at 100 requests/minute. Everything except MiniMax (router classify, embedding, NER, vision, pipeline quality_review, post-task review, semantic state extraction) hits the gateway. A single web_search message fires several gateway calls; rapid messages + 5 parallel fetches burst past 100/min → `429 rate_limit_exceeded`.
+**Observed:** "OLLAMA_INFERENCE_ERROR: Classification failed — 429" + "Post-task review failed — 429".
+**Impact:** Degrades gracefully (router falls back to keyword classification, reviews skip) — nothing crashes — but lossy: a 429'd router classification means keyword routing instead of the model, which is exactly when misroutes creep in.
+**Potential fixes (NOT yet done):**
+1. **Infra:** raise the gateway req/min cap (100 → 300-500) — it's tight for a multi-call pipeline on shared small models.
+2. **Client:** add 429 backoff/retry to `OllamaClient.post()` — it currently retries once on *connection* failure but throws immediately on 429. A short exponential backoff (the rate window resets in <60s) would smooth transient limits instead of dropping the call. This is the right resilience fix regardless of the gateway cap.
+3. **Reduce burst:** post-task review + quality review add gateway calls per message; consider gating them or batching.
+**Status:** Documented, deferred. Fix #2 (client backoff) is the cleanest LocalClaw-side improvement.
+
+### Research / deck pipeline fragile (June 2026)
+**Problem:** The research pipeline's deck/PDF rendering path (reveal.js deck + styled PDF branch) is unreliable — "the whole deck thing is kinda broken."
+**History:** This path has been fragile since the deck/report branch was added; an earlier deterministic browser-control pipeline in the same family was reverted for similar reasons (see Failed Approaches).
+**Impact:** Report/deck generation (`research` category, "make me a report/deck") produces broken or incomplete output. Web_search synthesis (the lighter path) works well.
+**Potential fix (NOT yet done):** A focused rebuild of the research pipeline render stages — review the chart-gen → write_file → render_deck flow, the HTML template, and the PDF branch. Worth its own session, not a 1am patch.
+**Status:** Documented, deferred to a dedicated session.
+
+### Chat over-promises tool actions (band-aid in place) (June 2026)
+**Problem:** The toolless chat specialist sometimes promises actions it can't perform ("Let me search for X", "On it, let me pull together…") and then can't follow through — no tools, no ReAct loop, so hallucination detection (which lives in the tool-loop engine) never runs.
+**Current mitigation (band-aid):** The silent re-route (dispatch.ts) now catches future-action promises (search/research verbs) and re-dispatches to a specialist that can actually do it.
+**Cleaner fix (NOT yet done):** Strengthen the chat system prompt so it doesn't promise tool actions in the first place — if it needs to search, it should signal a re-route, not narrate intent. Pairs naturally with the research-pipeline work.
+**Status:** Band-aid active (catches it post-hoc and does the search); prompt-level fix deferred.
+
+### web_search recall depth + freshness effectiveness (June 2026)
+**Problem:** Broad multi-vendor survey queries via web_search (single query, now top-5 fetches) can still miss product-specific pages (e.g. missed the DGX Spark article in an Apple/NVIDIA/AMD survey — it ranked below the comparison pieces).
+**Mitigations done:** fetch 3→5 pages; topic buckets + freshness forcing.
+**Open questions (NOT verified):**
+1. Does the search provider (Brave) actually honor the `freshness=month` param? A "recent" query once returned 2019-2023 content even with freshness forced — though that case was also a bucket misroute. Needs isolated verification.
+2. Broad surveys are really a `research` request (multi-query, 8 fetches, supplementary round), not a `search` one — but "search the web for X" routes to the shallow pipeline. Consider routing multi-entity surveys to research.
+**Status:** Documented. Freshness-param verification is the next concrete check.
+
+### Routing latency on the gateway (June 2026)
+**Problem:** Router classification (phi4 on the gateway) occasionally takes 4-5s (observed `Routing: 4957ms`). Memory runs in parallel, so it's the classifier itself — almost certainly gateway contention (many models resident on the A5000 node, or phi4 cold-reloading).
+**Potential fix (NOT yet done):** `OLLAMA_MAX_LOADED_MODELS` bump or trimming what's resident on the gateway so phi4 stays warm. Infra-side, not code.
+**Status:** Documented, watch. Related to the 429 issue — both point at gateway-node pressure.
+
 ---
 
 ## Future Ideas (Stashed)
