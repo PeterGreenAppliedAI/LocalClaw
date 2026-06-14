@@ -1,6 +1,5 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import type { PipelineDefinition } from '../types.js';
-import { detectBucket, buildSiteFilter, prioritizeUrls } from '../search-buckets.js';
 
 const QUALITY_LOG = 'data/quality/web-search.jsonl';
 
@@ -39,14 +38,7 @@ export const webSearchPipeline: PipelineDefinition = {
       tool: 'web_search',
       resolveParams: (ctx) => {
         const query = ctx.params.query as string;
-        // Detect topic bucket and add site filter for curated sources
-        const bucket = detectBucket(query);
-        ctx.params._bucket = bucket;
-        const siteFilter = bucket ? buildSiteFilter(bucket) : null;
-        const enhancedQuery = siteFilter ? `${query} (${siteFilter})` : query;
-        if (bucket) console.log(`[WebSearch] Bucket: ${bucket} — site filter applied`);
-
-        const p: Record<string, unknown> = { query: enhancedQuery };
+        const p: Record<string, unknown> = { query };
         if (ctx.params.count) p.count = ctx.params.count;
         // Freshness: trust the extractor if set, else force a recency window when the
         // query signals "recent" — prevents evergreen/historical pages answering a "latest" ask.
@@ -66,11 +58,7 @@ export const webSearchPipeline: PipelineDefinition = {
       execute: (ctx) => {
         const searchResult = ctx.stageResults.search as string;
         const urlMatches = searchResult.match(/https?:\/\/[^\s)"\]]+/g) ?? [];
-        const unique = [...new Set(urlMatches)];
-        // Prioritize curated sources from the detected bucket
-        const bucket = ctx.params._bucket as string | null;
-        const prioritized = prioritizeUrls(unique, bucket);
-        ctx.params._urls = prioritized.slice(0, 5);
+        ctx.params._urls = [...new Set(urlMatches)].slice(0, 5);
         return ctx.params._urls;
       },
     },

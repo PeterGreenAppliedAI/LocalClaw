@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PipelineDefinition, PipelineContext } from '../types.js';
 import { markdownToHtml } from '../../utils/markdown-to-html.js';
-import { detectBucket, buildSiteFilter, prioritizeUrls } from '../search-buckets.js';
 
 /**
  * Research pipeline — REAL research, not a search.
@@ -74,26 +73,49 @@ function wantsFreshness(text: string): boolean {
 
 interface AngleResult { angle: string; findings: string; sources: string[]; }
 
-/** Investigate ONE facet: bucket-aware search → deep fetch → focused synthesis. */
+/** Run async fn over items with bounded concurrency (avoid bursting external rate limits). */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/** Investigate ONE facet: search → deep fetch → focused synthesis. */
 async function researchAngle(ctx: PipelineContext, angle: string): Promise<AngleResult> {
+  const label = angle.slice(0, 45);
   try {
-    const bucket = detectBucket(angle);
-    const siteFilter = bucket ? buildSiteFilter(bucket) : null;
-    const query = siteFilter ? `${angle} (${siteFilter})` : angle;
-    const searchParams: Record<string, unknown> = { query, count: '6' };
+    // Plain facet query + recency filter only (no source bucket — it over-constrained queries
+    // and didn't improve results in practice).
+    const searchParams: Record<string, unknown> = { query: angle, count: '6' };
     if (wantsFreshness(angle) || wantsFreshness(ctx.params.topic as string)) searchParams.freshness = 'month';
 
     const searchResult = await ctx.executor('web_search', searchParams, ctx.toolContext);
-    const urls = prioritizeUrls(extractUrls(searchResult), bucket).slice(0, 4);
+    const urls = extractUrls(searchResult).slice(0, 3);
+    if (urls.length === 0) {
+      console.warn(`[Research] Facet "${label}": no search results (${searchResult.slice(0, 80)})`);
+      return { angle, findings: '', sources: [] };
+    }
 
-    const fetched = await Promise.all(urls.map(async (url) => {
+    // Fetch sequentially (small N) to avoid a fetch burst across facets
+    const fetched: Array<{ url: string; content: string }> = [];
+    for (const url of urls) {
       try {
         const content = await ctx.executor('web_fetch', { url, extractMode: 'text', maxChars: '6000' }, ctx.toolContext);
-        return { url, content };
-      } catch { return { url, content: '' }; }
-    }));
+        fetched.push({ url, content });
+      } catch { fetched.push({ url, content: '' }); }
+    }
     const valid = fetched.filter(f => f.content && !f.content.startsWith('Error') && f.content.length > 120);
-    if (valid.length === 0) return { angle, findings: '', sources: [] };
+    if (valid.length === 0) {
+      console.warn(`[Research] Facet "${label}": ${urls.length} urls, 0 fetched usable content`);
+      return { angle, findings: '', sources: [] };
+    }
 
     const sourceBlocks = valid.map((f, i) => `[Source ${i + 1}: ${f.url}]\n${f.content}`).join('\n\n---\n\n');
     const resp = await ctx.client.chat({
@@ -197,8 +219,9 @@ export const researchPipeline: PipelineDefinition = {
       type: 'code',
       execute: async (ctx) => {
         const angles = ctx.params._angles as string[];
-        console.log(`[Research] Investigating ${angles.length} facets in parallel...`);
-        const results = await Promise.all(angles.map(a => researchAngle(ctx, a)));
+        console.log(`[Research] Investigating ${angles.length} facets (max 3 concurrent)...`);
+        // Bounded concurrency: 3 facets at a time avoids bursting Brave / fetch rate limits.
+        const results = await mapLimit(angles, 3, a => researchAngle(ctx, a));
         const withFindings = results.filter(r => r.findings.trim().length > 0);
         ctx.params._angleResults = withFindings;
         const allSources = [...new Set(withFindings.flatMap(r => r.sources))];

@@ -387,9 +387,9 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 
 ### web_search recall depth + freshness effectiveness (June 2026)
 **Problem:** Broad multi-vendor survey queries via web_search (single query, now top-5 fetches) can still miss product-specific pages (e.g. missed the DGX Spark article in an Apple/NVIDIA/AMD survey — it ranked below the comparison pieces).
-**Mitigations done:** fetch 3→5 pages; topic buckets + freshness forcing.
+**Mitigations done:** fetch 3→5 pages; freshness forcing on recency-signalling queries.
 **Open questions (NOT verified):**
-1. Does the search provider (Brave) actually honor the `freshness=month` param? A "recent" query once returned 2019-2023 content even with freshness forced — though that case was also a bucket misroute. Needs isolated verification.
+1. Does the search provider (Brave) actually honor the `freshness=month` param? A "recent" query once returned 2019-2023 content even with freshness forced. Needs isolated verification.
 2. Broad surveys are really a `research` request (multi-query, 8 fetches, supplementary round), not a `search` one — but "search the web for X" routes to the shallow pipeline. Consider routing multi-entity surveys to research.
 **Status:** Documented. Freshness-param verification is the next concrete check.
 
@@ -530,10 +530,11 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 **Review fix:** `normalizeCacheKey` lowercased all keys — fine for search queries, wrong for URLs (`/Foo` vs `/foo` collide). Split into `normalizeCacheKey` (queries, lowercase) vs `normalizeUrlKey` (URLs, trim only); `readCache`/`writeCache` now use keys verbatim and callers normalize.
 **Status:** Active.
 
-### Search source buckets + civic data (June 2026)
-**Problem:** Web searches picked random sources; no domain prioritization. Real-estate/property queries matched no bucket. NYC Open Data (a cross-domain civic catalog, not just housing) never surfaced.
-**Fix:** `src/pipeline/search-buckets.ts` — topic→curated-domain buckets add `site:` filters. New `real_estate` bucket (pattern ordered BEFORE finance so "off-market"/"market" don't get hijacked). **Anchor convention:** first 2 domains of a bucket are always included; the rest sampled — guarantees high-value sources (civic open data for real_estate, huggingface.co for ai_tech) appear reliably instead of ~14% of the time. Civic domains (`data.cityofnewyork.us`, `data.ny.gov`) spread non-anchor into health/finance/events/news per actual Open Data category breadth.
-**Status:** Active.
+### Search source buckets — removed (June 2026)
+**History:** `src/pipeline/search-buckets.ts` mapped query topics to curated-domain buckets and appended `site:` filters (with an anchor convention guaranteeing high-value domains, a `real_estate` bucket, civic open-data spread, etc.).
+**Why removed:** In practice the buckets didn't deliver — `site:` filters over-constrained Brave on longer/question-shaped queries (often returning nothing), and the curated domain lists added maintenance and misroute risk (e.g. "AMD/NVIDIA hardware for local inference" landed in ai_tech, not hardware) without improving result quality. Per the user: "the bucket angle just hasn't produced what I thought it would."
+**Fix:** Deleted `search-buckets.ts` + its test. `web_search` and `research` now run plain queries with **recency/freshness filtering only** — `freshness=month` is forced when the query signals recency (research applies the same `wantsFreshness` check per angle and on the topic). URLs are taken in result order (no bucket re-prioritization).
+**Status:** Buckets gone; recency filter retained.
 
 ### web_search over-trigger (June 2026)
 **Problem:** Conversational text containing bare "search"/"latest"/"news" (e.g. "uses brave for search") classified as web_search and ran the full pipeline.
