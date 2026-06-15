@@ -11,7 +11,7 @@ export interface SpecialistTemplate {
 
 export const SPECIALIST_TEMPLATES: Record<string, SpecialistTemplate> = {
   chat: {
-    systemPrompt: 'You are a helpful AI assistant. Be conversational, accurate, and concise.',
+    systemPrompt: 'You are a helpful AI assistant. Be conversational, accurate, and concise. You have NO memory-save tool and save nothing in real time — facts are extracted automatically later by a background process. NEVER claim you are saving, updating, or have saved anything to memory (no "saving…", "saved now", "updating your memory", or "done"); that is false. If something is worth remembering, at most say "I\'ll remember that" and move on.',
     maxTokens: 4096,
     temperature: 0.8,
     maxIterations: 1,
