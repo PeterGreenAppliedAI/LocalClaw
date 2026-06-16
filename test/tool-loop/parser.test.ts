@@ -111,4 +111,31 @@ describe('parseReActResponse', () => {
       expect(result.params).toEqual({});
     }
   });
+
+  it('parses MiniMax/Anthropic <invoke> XML tool calls emitted as text', () => {
+    const text = `<minimax:tool_call><invoke name="document">
+<parameter name="action">create</parameter>
+<parameter name="content"><html><body>Hi</body></html></parameter>
+<parameter name="format">pdf</parameter>
+<parameter name="filename">report</parameter>
+</invoke></minimax:tool_call>`;
+    const result = parseReActResponse(text);
+    expect(result.type).toBe('action');
+    if (result.type === 'action') {
+      expect(result.tool).toBe('document');
+      expect(result.params.action).toBe('create');
+      expect(result.params.format).toBe('pdf');
+      expect(result.params.content).toContain('<html>');
+    }
+  });
+
+  it('coerces invoke param types (bool/number stay typed, html stays string)', () => {
+    const text = '<invoke name="t"><parameter name="n">42</parameter><parameter name="flag">true</parameter><parameter name="s"><p>x</p></parameter></invoke>';
+    const result = parseReActResponse(text);
+    if (result.type === 'action') {
+      expect(result.params.n).toBe(42);
+      expect(result.params.flag).toBe(true);
+      expect(result.params.s).toBe('<p>x</p>');
+    }
+  });
 });

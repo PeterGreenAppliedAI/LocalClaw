@@ -30,6 +30,24 @@ export function parseReActResponse(text: string): ParsedReActResponse {
 
   const thought = extractThought(cleanText);
 
+  // MiniMax/Anthropic-style XML tool calls emitted as TEXT (vLLM sometimes puts the call in
+  // the content instead of the native tool_calls field), e.g.:
+  //   <minimax:tool_call><invoke name="document">
+  //     <parameter name="action">create</parameter>
+  //     <parameter name="content"><html>…</html></parameter>
+  //   </invoke></minimax:tool_call>
+  const invokeMatch = cleanText.match(/<invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/invoke>/i);
+  if (invokeMatch) {
+    const tool = invokeMatch[1];
+    const params: Record<string, unknown> = {};
+    const paramRe = /<parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/parameter>/gi;
+    let pm: RegExpExecArray | null;
+    while ((pm = paramRe.exec(invokeMatch[2])) !== null) {
+      params[pm[1]] = coerceParamValue(pm[2]);
+    }
+    return { type: 'action', thought, tool, params, raw: cleanText };
+  }
+
   // Check for Action: tool_name[{...}]
   const actionMatch = cleanText.match(/Action:\s*(\w+)\s*\[/);
   if (actionMatch) {
@@ -66,6 +84,18 @@ export function parseReActResponse(text: string): ParsedReActResponse {
 function extractThought(text: string): string {
   const match = text.match(/Thought:\s*(.+?)(?=\n(?:Action:|Final Answer:)|$)/is);
   return match ? match[1].trim() : '';
+}
+
+/** Coerce an XML <parameter> value: bool/number/JSON when it clearly is one, else the string. */
+function coerceParamValue(raw: string): unknown {
+  const t = raw.trim();
+  if (t === 'true') return true;
+  if (t === 'false') return false;
+  if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+  if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+    try { return JSON.parse(t); } catch { /* fall through to string */ }
+  }
+  return t;
 }
 
 /**
