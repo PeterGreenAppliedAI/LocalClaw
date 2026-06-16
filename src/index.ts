@@ -91,9 +91,27 @@ async function runOrchestrator(config: ReturnType<typeof loadConfig>) {
 
   await orchestrator.start();
 
+  let shuttingDown = false;
   const shutdown = async () => {
-    console.log('\n[LocalClaw] Shutting down...');
-    await orchestrator.stop();
+    // Second Ctrl-C while a graceful stop is in flight → exit immediately.
+    if (shuttingDown) {
+      console.log('\n[LocalClaw] Force exit.');
+      process.exit(1);
+    }
+    shuttingDown = true;
+    console.log('\n[LocalClaw] Shutting down... (Ctrl-C again to force)');
+    // Safety net: a stuck channel disconnect (e.g. a hung socket) must never block exit.
+    const forceTimer = setTimeout(() => {
+      console.warn('[LocalClaw] Shutdown timed out after 5s — forcing exit.');
+      process.exit(1);
+    }, 5000);
+    forceTimer.unref();
+    try {
+      await orchestrator.stop();
+    } catch (err) {
+      console.warn('[LocalClaw] Error during shutdown:', err instanceof Error ? err.message : err);
+    }
+    clearTimeout(forceTimer);
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

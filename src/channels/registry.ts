@@ -45,11 +45,17 @@ export class ChannelRegistry {
   }
 
   async disconnectAll(): Promise<void> {
-    for (const adapter of this.adapters.values()) {
-      if (adapter.status() === 'connected') {
-        await adapter.disconnect();
-      }
-    }
+    // Disconnect every channel in PARALLEL, each capped by a timeout, so one hung socket
+    // (e.g. a stuck WhatsApp/Baileys connection) can't block the others or stall shutdown.
+    const connected = [...this.adapters.values()].filter(a => a.status() === 'connected');
+    await Promise.allSettled(
+      connected.map(adapter =>
+        Promise.race([
+          Promise.resolve(adapter.disconnect()),
+          new Promise<void>(resolve => setTimeout(resolve, 3000)),
+        ]).catch(() => { /* a failed disconnect must not block exit */ }),
+      ),
+    );
   }
 
   onMessage(handler: (msg: InboundMessage) => Promise<void>): void {
