@@ -110,6 +110,9 @@ export interface DispatchParams {
   };
   /** Override category — skip router classification (used by cron) */
   overrideCategory?: string;
+  /** Text to classify on (the user's caption) when `message` has injected attachment content
+   *  prepended — keeps a document's text from hijacking keyword/override routing. */
+  classifyText?: string;
   /** Stream callback — called with text deltas for progressive output */
   onStream?: (delta: string) => void;
   /** Override model — used by voice for faster responses */
@@ -330,7 +333,7 @@ export async function dispatchMessage(params: DispatchParams): Promise<DispatchR
   const classifyStart = Date.now();
   const classifyPromise = params.overrideCategory
     ? Promise.resolve({ category: params.overrideCategory, confidence: 'override' as any } as ClassifyResult)
-    : classifyMessage(client, config.router, message, previousCategory);
+    : classifyMessage(client, config.router, message, previousCategory, params.classifyText);
 
   // Start memory priming in background (will be awaited later before specialist runs)
   const senderId = params.sourceContext?.senderId;

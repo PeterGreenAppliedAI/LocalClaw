@@ -68,6 +68,8 @@ const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
   { pattern: /\b(make|create|generate|write|give me|produce)\b.*\b(pdf|docx)\b.*\breport\b/i, category: 'research' },
   { pattern: /\breport\b.*\b(pdf|docx)\b/i, category: 'research' },
   { pattern: /\bpdf report\b/i, category: 'research' },
+  // Plain "put/make/turn this into a PDF/doc" (no "report") → multi, which has the document tool.
+  { pattern: /\b(make|create|generate|produce|build|turn|convert|export|save|put|render|write|format)\b.{0,60}\b(pdf|docx|word doc|document)\b/i, category: 'multi' },
   // Other document format requests (spreadsheets, presentations) → multi
   { pattern: /\b(make|create|generate|build|write|give me|produce)\b.*\b(xlsx|pptx|spreadsheet|slide)\b/i, category: 'multi' },
   { pattern: /\b(pdf|docx)\b.*\b(spreadsheet|presentation)\b/i, category: 'multi' },
@@ -162,13 +164,17 @@ export async function classifyMessage(
   config: RouterConfig,
   message: string,
   previousCategory?: string,
+  classifyText?: string,
 ): Promise<ClassifyResult> {
   const validCategories = getValidCategories(config);
+  // Route on the user's actual instruction, not injected attachment content (a PDF's text
+  // shouldn't drive keyword/override matching). Falls back to the full message when absent.
+  const matchText = classifyText?.trim() ? classifyText : message;
 
   // Pre-model overrides FIRST — high-confidence patterns always win, even over sticky routing
   for (const override of PRE_MODEL_OVERRIDES) {
-    if (override.pattern.test(message) && validCategories.has(override.category)) {
-      console.log(`[Router] Pre-model override: "${message.slice(0, 60)}..." → ${override.category}`);
+    if (override.pattern.test(matchText) && validCategories.has(override.category)) {
+      console.log(`[Router] Pre-model override: "${matchText.slice(0, 60)}..." → ${override.category}`);
       return { category: override.category, confidence: 'keyword' };
     }
   }
@@ -176,9 +182,9 @@ export async function classifyMessage(
   // Sticky category: follow-ups stay on the previous specialist
   // Break out if: strong new-topic signal, long message, OR keywords point to a different category
   if (previousCategory && validCategories.has(previousCategory)) {
-    if (isLikelyFollowUp(message, previousCategory)) {
+    if (isLikelyFollowUp(matchText, previousCategory)) {
       // Check if keywords point to a DIFFERENT category — if so, don't stick
-      const keywordHit = applyKeywordHeuristics(message, validCategories);
+      const keywordHit = applyKeywordHeuristics(matchText, validCategories);
       if (keywordHit && keywordHit !== previousCategory) {
         console.log(`[Router] Sticky override: "${message.slice(0, 60)}..." keyword="${keywordHit}" beats sticky="${previousCategory}"`);
       } else {
@@ -214,7 +220,7 @@ export async function classifyMessage(
   }
 
   // Keyword heuristic fallback (per ChatGPT feedback)
-  const keywordHit = applyKeywordHeuristics(message, validCategories);
+  const keywordHit = applyKeywordHeuristics(matchText, validCategories);
   if (keywordHit) {
     return { category: keywordHit, confidence: 'keyword' };
   }

@@ -250,6 +250,7 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
     // Let the router classify extension messages — it knows chat vs website vs web_search
     const result = await deps.dispatch({
       message,
+      classifyText: trimmed,  // route on the user's instruction, not injected attachment text
       agentId: route.agentId,
       sessionKey: route.sessionKey,
       sessionStore: deps.sessionStore,

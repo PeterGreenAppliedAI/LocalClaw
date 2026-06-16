@@ -67,3 +67,7 @@
 {"message": "do you think local models can match cloud quality", "expected": "chat", "layer": "override", "note": "'do you think' → chat override"}
 {"message": "Can you create a report on the state of local inference in 2026", "expected": "research", "layer": "model", "context": {"previousCategory": "chat"}, "note": "polite report request must break sticky, not be absorbed as chat follow-up"}
 {"message": "could you make a deck on the EV market", "expected": "research", "layer": "model", "context": {"previousCategory": "chat"}, "note": "polite imperative breaks sticky → model classifies"}
+{"message": "Can we take this content and put it in a PDF?", "expected": "multi", "layer": "override", "note": "put X in a PDF → multi (has the document tool), not exec/personal"}
+{"message": "clean it up and generate a better PDF", "expected": "multi", "layer": "override", "note": "generate a PDF (no 'report') → multi"}
+{"message": "turn this into a pdf", "expected": "multi", "layer": "override", "note": "doc generation verb + pdf → multi"}
+{"message": "generate a PDF report on the EV market", "expected": "research", "layer": "override", "note": "pdf REPORT → research wins (ordered before the generic pdf→multi override)"}

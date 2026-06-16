@@ -1056,6 +1056,10 @@ export class Orchestrator {
     const TEXT_EXTENSIONS = new Set(['md', 'txt', 'html', 'htm', 'log', 'xml', 'yaml', 'yml']);
     const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v']);
 
+    // The user's actual instruction, captured before any attachment text is prepended — used
+    // for routing so a document's contents can't hijack keyword/override classification.
+    const userCaption = msg.content;
+
     if (msg.attachments?.length) {
       const prefixes: string[] = [];
       const suffixes: string[] = [];
@@ -1177,6 +1181,7 @@ export class Orchestrator {
         sessionStore: this.sessionStore,
         pipelineRegistry: this.pipelineRegistry,
             executionMetrics: this.executionMetrics,
+        classifyText: userCaption,
         ...(fromExtension ? { overrideCategory: 'chat' as const }
           : hasImageAttachment ? { overrideCategory: 'chat' as const }
           : fileOverrideCategory ? { overrideCategory: fileOverrideCategory }
