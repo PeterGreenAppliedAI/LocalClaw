@@ -363,8 +363,22 @@ class DriftTracker {
   }
 }
 
-/** Max chars for a single tool observation before truncation. */
+/** Max chars for a single tool observation before truncation (default — keeps chat-y loops lean). */
 const MAX_TOOL_RESULT_CHARS = 2000;
+
+/**
+ * Per-tool observation budgets. The default 2K keeps short tool-loops lean, but research/analysis
+ * tools produce long output that the cap was strangling — notably `reason`, whose truncated
+ * analyses made the model re-call it to "continue", trapping it in a re-reasoning loop. Give the
+ * fetch/reason/code tools room so research breathes; chat doesn't use these, so it stays lean.
+ */
+const TOOL_RESULT_LIMITS: Record<string, number> = {
+  browser: 16_000,
+  opencode_build: 16_000,
+  reason: 12_000,
+  web_fetch: 12_000,
+  code_session: 8_000,
+};
 
 /**
  * Run the tool-calling loop using Ollama's native function calling.
@@ -664,9 +678,10 @@ export async function runToolLoop(params: RunReActLoopParams): Promise<ReActResu
           return ''; // Model doesn't see the token
         });
 
-        // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5)
-        // Browser snapshots get a higher limit to preserve element ref numbers
-        const effectiveLimit = (toolName === 'browser' || toolName === 'opencode_build') ? 16_000 : MAX_TOOL_RESULT_CHARS;
+        // Tool result normalization: proactively truncate large outputs (ChatGPT feedback §5).
+        // Per-tool budget — research/analysis tools (reason, web_fetch, code_session) get room so
+        // their long output isn't guillotined; everything else stays lean at the default.
+        const effectiveLimit = TOOL_RESULT_LIMITS[toolName] ?? MAX_TOOL_RESULT_CHARS;
         if (observation.length > effectiveLimit) {
           const original = observation.length;
           observation = observation.slice(0, effectiveLimit) + `\n... [truncated from ${original} chars]`;
