@@ -65,6 +65,7 @@ const config: RouterConfig = {
     image: { description: 'Image generation' },
     code_gen: { description: 'Code generation' },
     analytics: { description: 'Analytics' },
+    document: { description: 'Format provided content into a PDF/DOCX file' },
   },
 };
 

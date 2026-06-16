@@ -40,8 +40,8 @@
 {"message": "look up the weather in NYC", "expected": "web_search", "layer": "keyword", "note": "look up \u2192 web_search"}
 {"message": "find and save the best flight deals", "expected": "multi", "layer": "keyword", "note": "find + save compound \u2192 multi"}
 {"message": "search for events and add them to my tasks", "expected": "multi", "layer": "keyword", "note": "search + add compound \u2192 multi"}
-{"message": "make me a spreadsheet of expenses", "expected": "multi", "layer": "keyword", "note": "spreadsheet format \u2192 multi"}
-{"message": "create a pptx presentation on AI", "expected": "multi", "layer": "keyword", "note": "pptx format \u2192 multi"}
+{"message": "make me a spreadsheet of expenses", "expected": "document", "layer": "keyword", "note": "document-format request \u2192 document pipeline (code-driven render)"}
+{"message": "create a pptx presentation on AI", "expected": "document", "layer": "keyword", "note": "document-format request \u2192 document pipeline (code-driven render)"}
 {"message": "hey how are you", "expected": "chat", "layer": "fallback", "note": "greeting \u2192 fallback to chat"}
 {"message": "that's interesting, tell me more", "expected": "message", "layer": "keyword", "note": "KNOWN ISSUE: 'tell' keyword matches message \u2014 should be chat"}
 {"message": "I think you're right about that", "expected": "chat", "layer": "fallback", "note": "opinion \u2192 fallback to chat"}
@@ -67,7 +67,7 @@
 {"message": "do you think local models can match cloud quality", "expected": "chat", "layer": "override", "note": "'do you think' \u2192 chat override"}
 {"message": "Can you create a report on the state of local inference in 2026", "expected": "research", "layer": "model", "context": {"previousCategory": "chat"}, "note": "polite report request must break sticky, not be absorbed as chat follow-up"}
 {"message": "could you make a deck on the EV market", "expected": "research", "layer": "model", "context": {"previousCategory": "chat"}, "note": "polite imperative breaks sticky \u2192 model classifies"}
-{"message": "Can we take this content and put it in a PDF?", "expected": "multi", "layer": "keyword", "note": "put X in a PDF \u2192 multi (has the document tool), not exec/personal [now via keyword fallback; model routes by capability]"}
-{"message": "clean it up and generate a better PDF", "expected": "multi", "layer": "keyword", "note": "generate a PDF (no 'report') \u2192 multi [now via keyword fallback; model routes by capability]"}
-{"message": "turn this into a pdf", "expected": "multi", "layer": "keyword", "note": "doc generation verb + pdf \u2192 multi [now via keyword fallback; model routes by capability]"}
+{"message": "Can we take this content and put it in a PDF?", "expected": "document", "layer": "keyword", "note": "document-format request \u2192 document pipeline (code-driven render)"}
+{"message": "clean it up and generate a better PDF", "expected": "document", "layer": "keyword", "note": "document-format request \u2192 document pipeline (code-driven render)"}
+{"message": "turn this into a pdf", "expected": "document", "layer": "keyword", "note": "document-format request \u2192 document pipeline (code-driven render)"}
 {"message": "generate a PDF report on the EV market", "expected": "research", "layer": "model", "note": "pdf REPORT \u2192 research wins (ordered before the generic pdf\u2192multi override) [now a capability decision for the model \u2014 overrides removed]"}

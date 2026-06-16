@@ -33,7 +33,8 @@ const DEFAULT_CATEGORIES = `- chat: Talk — conversation, opinions, explanation
 - message: Send a message to another channel or user.
 - website: Fetch and summarize a specific web page or teaching material.
 - task: Create, list, update, or complete to-do tasks.
-- multi: Full-toolset worker — PRODUCE documents (PDF/DOCX/spreadsheets), run code, browse, read/write files, chain multiple tools. Route here to turn content into a PDF/doc or any task that makes an artifact.
+- document: Turn PROVIDED content into a formatted PDF/DOCX/spreadsheet file (the user gives you the text, you format and render it). Route "make this a PDF", "turn this into a doc", "format this".
+- multi: Full-toolset worker for COMPLEX multi-step tasks needing several different tools chained (search + save + send, browse + extract + file). Not for a single artifact.
 - config: Edit settings, cron jobs, workspace files, agent configuration.
 - research: Deep multi-source research that PRODUCES a polished PDF report with citations and charts.
 - personal: READ-ONLY access to Peter's Gmail + Google Calendar (search/read email, list/search events). CANNOT create files, PDFs, or run commands.
