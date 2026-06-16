@@ -1,5 +1,6 @@
 import type { PipelineDefinition } from '../types.js';
 import { markdownToHtml } from '../../utils/markdown-to-html.js';
+import { loadDocSource, saveDocSource, detectAppendIntent } from './document-source.js';
 
 /**
  * Document pipeline — CODE-DRIVEN document generation from PROVIDED content.
@@ -9,6 +10,14 @@ import { markdownToHtml } from '../../utils/markdown-to-html.js';
  * CODE renders the markdown to HTML and CODE invokes the document tool to produce the PDF. The
  * model never decides whether to use a tool, so it can't flake on it — which is the failure mode
  * that plagued the model-driven plan/exec tool-loop for "turn this into a PDF".
+ *
+ * Two modes, chosen deterministically by code (never the model):
+ *   - create: format the user's PROVIDED content into a fresh document.
+ *   - append: the user asked to add to an existing document. We can't edit a PDF in place, so we
+ *     load the markdown that built it (persisted on the prior run), merge the requested addition,
+ *     and re-render the whole thing. This is what makes "is there anything we can add to it?" a
+ *     real action with somewhere for the result to land — instead of the model claiming a file
+ *     it never produced.
  */
 
 const DOC_CSS = `
@@ -45,11 +54,28 @@ function stripThinking(text: string): string {
 export const documentPipeline: PipelineDefinition = {
   name: 'document',
   stages: [
-    // 1. ONE model call: clean the user's PROVIDED content into well-structured markdown.
-    //    This is the only thing the model touches — it does not choose tools or render anything.
+    // 0. CODE decides the mode (create vs append) — the model never makes this call. For append,
+    //    load the markdown that built the session's last document so the merge stage can re-render it.
+    {
+      name: 'detect_mode',
+      type: 'code',
+      execute: (ctx) => {
+        const prior = loadDocSource(ctx.toolContext.sessionKey);
+        const append = detectAppendIntent(ctx.userMessage, !!prior);
+        ctx.params._mode = append ? 'append' : 'create';
+        if (append && prior) {
+          ctx.params._priorMarkdown = prior.markdown;
+          ctx.params._priorTitle = prior.title;
+        }
+      },
+    },
+
+    // 1a. CREATE: ONE model call to clean the user's PROVIDED content into well-structured markdown.
+    //     This is the only thing the model touches — it does not choose tools or render anything.
     {
       name: 'structure',
       type: 'llm',
+      when: (ctx) => ctx.params._mode !== 'append',
       temperature: 0.3,
       maxTokens: 8192,
       buildPrompt: (ctx) => ({
@@ -66,12 +92,35 @@ export const documentPipeline: PipelineDefinition = {
       }),
     },
 
-    // 2. CODE renders the markdown → styled HTML (deterministic; no model, no tool choice).
+    // 1b. APPEND: merge the requested addition into the existing document's markdown and emit the
+    //     COMPLETE updated document. Preserve existing content verbatim — this is a revision, not a rewrite.
+    {
+      name: 'merge',
+      type: 'llm',
+      when: (ctx) => ctx.params._mode === 'append',
+      temperature: 0.3,
+      maxTokens: 8192,
+      buildPrompt: (ctx) => ({
+        system: [
+          'You are REVISING an existing document. You are given the current document (markdown) and a requested addition or change.',
+          'Integrate the request into the document and output the COMPLETE updated document as markdown:',
+          '- PRESERVE all existing content verbatim. Do not summarize, drop, or reword it unless the request explicitly says to change it.',
+          '- Weave new material into the most relevant existing section, or add a new `##` section where it fits best.',
+          '- Keep the same `# Title` unless the request asks to change it.',
+          'Output ONLY the full updated markdown. No preamble, no code fences, no commentary about what you changed. /no_think',
+        ].join('\n'),
+        user: `EXISTING DOCUMENT (markdown):\n\n${ctx.params._priorMarkdown as string}\n\n---\n\nREQUESTED ADDITION / CHANGE:\n\n${ctx.userMessage}`,
+      }),
+    },
+
+    // 2. CODE renders the markdown → styled HTML (deterministic; no model, no tool choice), and
+    //    persists the source markdown so a future "add to it" can regenerate from this version.
     {
       name: 'render',
       type: 'code',
       execute: (ctx) => {
-        const md = stripThinking(ctx.stageResults.structure as string)
+        const raw = (ctx.stageResults.merge ?? ctx.stageResults.structure) as string ?? '';
+        const md = stripThinking(raw)
           .replace(/^```(?:markdown)?\n?/m, '').replace(/\n?```$/m, '').trim();
         // Fail loud rather than emit a blank/near-empty PDF.
         if (md.replace(/[#*\->\s]/g, '').length < 40) {
@@ -80,12 +129,15 @@ export const documentPipeline: PipelineDefinition = {
           return;
         }
         const titleMatch = md.match(/^#\s+(.+)$/m);
-        const title = (titleMatch?.[1] ?? 'Document').trim();
+        const title = (titleMatch?.[1] ?? (ctx.params._priorTitle as string) ?? 'Document').trim();
+        const slug = slugify(title);
         ctx.params._title = title;
-        ctx.params._slug = slugify(title);
+        ctx.params._slug = slug;
         let body = markdownToHtml(md);
         body = body.replace(/<h1>/, '<h1 class="doc-title">');
         ctx.params._html = TEMPLATE(title, body);
+        // Persist this version's markdown so the next append/regenerate builds on it.
+        saveDocSource(ctx.toolContext.sessionKey, { slug, title, markdown: md });
       },
     },
 
@@ -112,8 +164,11 @@ export const documentPipeline: PipelineDefinition = {
         const toolResult = (ctx.stageResults.convert_pdf as string) ?? '';
         const fileMatch = toolResult.match(/\[FILE:([^\]]+)\]/);
         const title = (ctx.params._title as string) ?? 'document';
+        const updated = ctx.params._mode === 'append';
         if (fileMatch) {
-          ctx.answer = `Here's your PDF — **${title}**. [FILE:${fileMatch[1]}]`;
+          ctx.answer = updated
+            ? `Here's the updated PDF — **${title}**. [FILE:${fileMatch[1]}]`
+            : `Here's your PDF — **${title}**. [FILE:${fileMatch[1]}]`;
         } else {
           ctx.answer = `I formatted the content but the PDF conversion didn't return a file. Tool said: ${toolResult.slice(0, 200)}`;
         }
