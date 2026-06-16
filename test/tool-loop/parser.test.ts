@@ -138,4 +138,14 @@ describe('parseReActResponse', () => {
       expect(result.params.s).toBe('<p>x</p>');
     }
   });
+
+  it('parses DeepSeek DSML tool calls (｜DSML｜ markers + extra param attrs)', () => {
+    const text = '<｜DSML｜tool_calls><｜DSML｜invoke name="browse_snapshot"><｜DSML｜parameter name="url" string="true">https://www.facebook.com/</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>';
+    const result = parseReActResponse(text);
+    expect(result.type).toBe('action');
+    if (result.type === 'action') {
+      expect(result.tool).toBe('browse_snapshot');
+      expect(result.params.url).toBe('https://www.facebook.com/');
+    }
+  });
 });

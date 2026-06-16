@@ -24,23 +24,27 @@ export function parseReActResponse(text: string): ParsedReActResponse {
     .replace(/<\|channel>thought\n[\s\S]*?<channel\|>/g, '')
     .replace(/<think>[\s\S]*?<\/think>/g, '')
     .replace(/^[\s\S]{0,500}?<\/think>/g, '')
+    // DeepSeek narrates tool calls in its own DSML dialect when no native tools were passed:
+    //   <｜DSML｜invoke name="t"><｜DSML｜parameter name="x" string="true">v</｜DSML｜parameter></｜DSML｜invoke>
+    // Strip the `｜DSML｜` (U+FF5C) markers so it normalizes to the <invoke>/<parameter> form handled below.
+    .replace(/｜DSML｜/g, '')
     .trim();
   // If stripping left nothing, the model only produced thinking — treat as empty
   if (!cleanText) return { type: 'fallback', content: '' };
 
   const thought = extractThought(cleanText);
 
-  // MiniMax/Anthropic-style XML tool calls emitted as TEXT (vLLM sometimes puts the call in
-  // the content instead of the native tool_calls field), e.g.:
-  //   <minimax:tool_call><invoke name="document">
-  //     <parameter name="action">create</parameter>
-  //     <parameter name="content"><html>…</html></parameter>
-  //   </invoke></minimax:tool_call>
+  // XML tool calls emitted as TEXT instead of the native tool_calls field. Different models use
+  // different dialects, all normalized to <invoke>/<parameter> here:
+  //   MiniMax/Anthropic: <minimax:tool_call><invoke name="document"><parameter name="action">create</parameter></invoke>
+  //   DeepSeek:          <｜DSML｜invoke name="t"><｜DSML｜parameter name="x" string="true">v</｜DSML｜parameter></｜DSML｜invoke>
+  //                      (the ｜DSML｜ markers are stripped above)
   const invokeMatch = cleanText.match(/<invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/invoke>/i);
   if (invokeMatch) {
     const tool = invokeMatch[1];
     const params: Record<string, unknown> = {};
-    const paramRe = /<parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/parameter>/gi;
+    // `[^>]*` tolerates extra attributes like DeepSeek's string="true".
+    const paramRe = /<parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/parameter>/gi;
     let pm: RegExpExecArray | null;
     while ((pm = paramRe.exec(invokeMatch[2])) !== null) {
       params[pm[1]] = coerceParamValue(pm[2]);
