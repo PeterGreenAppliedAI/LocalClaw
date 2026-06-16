@@ -42,6 +42,7 @@ import { extractTrainingPairs } from './learnings/training-collector.js';
 import { isCommand, getCommandName } from './commands/router.js';
 import { RateLimiter } from './services/rate-limiter.js';
 import { MediaDebouncer } from './services/media-debouncer.js';
+import { MessageDebouncer } from './services/message-debouncer.js';
 import { runHeartbeat } from './services/heartbeat-service.js';
 import { runBriefing } from './services/briefing-service.js';
 
@@ -59,6 +60,7 @@ export class Orchestrator {
   private config: LocalClawConfig;
   private rateLimiter = new RateLimiter();
   private mediaDebouncer = new MediaDebouncer();
+  private messageDebouncer = new MessageDebouncer();
   private heartbeatCron?: Cron;
   private embeddingStore?: EmbeddingStore;
   private factStore?: FactStore;
@@ -607,6 +609,12 @@ export class Orchestrator {
     // Media debounce: batch rapid media-only messages from the same sender
     if (this.mediaDebouncer.tryBatch(msg, (batchedMsg) => this.handleMessage(batchedMsg))) {
       return; // Message collected, waiting for batch timer
+    }
+
+    // Text debounce: reassemble a long paste that the channel split into multiple messages,
+    // so it routes as ONE job instead of scattering across categories.
+    if (this.messageDebouncer.tryBatch(msg, (batchedMsg) => this.handleMessage(batchedMsg))) {
+      return;
     }
 
     if (this.rateLimiter.isLimited(msg.senderId)) {

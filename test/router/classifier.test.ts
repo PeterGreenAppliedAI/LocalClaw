@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { classifyMessage } from '../../src/router/classifier.js';
+import { classifyMessage, capForClassification } from '../../src/router/classifier.js';
 import type { OllamaClient } from '../../src/ollama/client.js';
 import type { RouterConfig } from '../../src/config/types.js';
 
@@ -99,5 +99,19 @@ describe('classifyMessage', () => {
     const result = await classifyMessage(client, defaultConfig, 'what homework is due');
     expect(result.category).toBe('website');
     expect(result.confidence).toBe('keyword');
+  });
+});
+
+describe('capForClassification', () => {
+  it('returns short text unchanged', () => {
+    expect(capForClassification('turn this into a PDF')).toBe('turn this into a PDF');
+  });
+
+  it('caps a huge paste but keeps head AND tail', () => {
+    const big = 'HEAD instruction ' + 'x'.repeat(5000) + ' TAIL turn this into a PDF';
+    const capped = capForClassification(big, 600);
+    expect(capped.length).toBeLessThan(700);
+    expect(capped).toContain('HEAD instruction');
+    expect(capped).toContain('turn this into a PDF');
   });
 });

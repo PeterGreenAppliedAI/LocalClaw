@@ -46,6 +46,17 @@ export interface ClassifyResult {
 }
 
 /**
+ * Cap text fed to the router so a huge paste can't time out the classifier model.
+ * Keeps the head AND tail — a routing instruction almost always sits at the start
+ * (a caption) or the end ("…now turn this into a PDF") of a long message.
+ */
+export function capForClassification(text: string, max = 600): string {
+  if (text.length <= max) return text;
+  const head = Math.floor(max * 0.65);
+  return `${text.slice(0, head)}\n…\n${text.slice(-(max - head))}`;
+}
+
+/**
  * High-confidence keyword overrides that fire BEFORE model classification.
  * Used for categories the router model doesn't know well (e.g., newly added ones).
  * These patterns must be very specific to avoid false positives.
@@ -159,7 +170,10 @@ export async function classifyMessage(
   const validCategories = getValidCategories(config);
   // Route on the user's actual instruction, not injected attachment content (a PDF's text
   // shouldn't drive keyword/override matching). Falls back to the full message when absent.
-  const matchText = classifyText?.trim() ? classifyText : message;
+  // Cap the size so the router model never times out on a big paste (the instruction almost
+  // always leads or trails the content) — an 8s router timeout was dropping us to the brittle
+  // keyword fallback and bypassing capability routing entirely.
+  const matchText = capForClassification(classifyText?.trim() ? classifyText : message);
 
   // Pre-model overrides FIRST — high-confidence patterns always win, even over sticky routing
   for (const override of PRE_MODEL_OVERRIDES) {
@@ -184,9 +198,9 @@ export async function classifyMessage(
     }
   }
 
-  // Try model classification
+  // Try model classification (on the capped text — never the full blob)
   try {
-    const prompt = buildRouterPrompt(message, config);
+    const prompt = buildRouterPrompt(matchText, config);
 
     const response = await client.generate({
       model: config.model,
