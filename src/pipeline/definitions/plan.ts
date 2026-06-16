@@ -348,11 +348,14 @@ export const planPipeline: PipelineDefinition = {
       type: 'code',
       execute: (ctx) => {
         const raw = ctx.stageResults.generate_plan as string;
-        const steps = parsePlan(raw);
+        let steps = parsePlan(raw);
         if (steps.length === 0) {
-          ctx.answer = 'I couldn\'t break that down into actionable steps. Could you be more specific about what you want me to do?';
-          ctx.abort = true;
-          return;
+          // The planner couldn't decompose it — usually because it's NOT a multi-step goal but
+          // a single direct operation (e.g. "turn this content into a PDF"). Don't give up:
+          // run the whole request as one step on the full-toolset exec specialist (which has the
+          // document tool) instead of aborting with "be more specific".
+          console.log('[Plan] No steps parsed — falling back to a single direct exec step');
+          steps = [{ specialist: 'exec', message: ctx.userMessage, purpose: 'Carry out the request directly with the available tools' }];
         }
         ctx.params._plan = steps;
         ctx.params._stepIndex = 0;
