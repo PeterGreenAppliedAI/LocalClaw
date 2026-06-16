@@ -56,6 +56,28 @@ export default function Chat() {
   const senderIdRef = useRef(senderId);
   useEffect(() => { senderIdRef.current = senderId; }, [senderId]);
 
+  // Load the persisted server-side transcript once on mount (after senderId resolves) so the
+  // conversation survives navigating away/back and full reloads. The model already keeps the
+  // session server-side; this just rehydrates the display.
+  const historyLoadedRef = useRef(false);
+  useEffect(() => {
+    if (historyLoadedRef.current || !sysStatus) return;
+    historyLoadedRef.current = true;
+    fetchApi<{ messages: { role: 'user' | 'assistant'; content: string; timestamp: string }[] }>(
+      `/chat/history?senderId=${encodeURIComponent(senderId)}`,
+    )
+      .then(data => {
+        const prior = data?.messages ?? [];
+        if (prior.length === 0) return;
+        // Don't clobber a conversation already started before history arrived.
+        setMessages(curr => curr.length > 0 ? curr : prior.map((m, i) => ({
+          ...m,
+          id: `hist-${i}-${m.timestamp}`,
+        })));
+      })
+      .catch(() => { /* empty chat is fine */ });
+  }, [sysStatus, senderId]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);

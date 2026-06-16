@@ -8,7 +8,7 @@ import { handleListTasks, handleCreateTask, handleUpdateTask, handleDeleteTask }
 import { handleListCron, handleCreateCron, handleUpdateCron, handleDeleteCron, handleRunCron } from './handlers/cron.js';
 import { handleSearchFacts, handleAllFacts, handleWriteFact, handleConsolidateFacts, handleMemorySenders } from './handlers/facts.js';
 import { handleTools } from './handlers/tools.js';
-import { handleChat, handleChatReset } from './handlers/chat.js';
+import { handleChat, handleChatReset, handleChatHistory } from './handlers/chat.js';
 import { handleServeFile } from './handlers/files.js';
 import { handleListResearch, handleDeleteResearch } from './handlers/research.js';
 import { remoteBridge } from '../browser/remote-bridge.js';
@@ -179,6 +179,10 @@ export async function handleConsoleRequest(
     }
     if (path === 'chat/reset' && method === 'POST') {
       await handleChatReset(req, res, deps);
+      return true;
+    }
+    if (path === 'chat/history' && method === 'GET') {
+      handleChatHistory(req, res, deps);
       return true;
     }
 

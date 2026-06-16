@@ -6,6 +6,7 @@ import { parseBody } from '../helpers/parse-body.js';
 import { resolveRoute } from '../../agents/resolve-route.js';
 import { resolveWorkspacePath } from '../../agents/scope.js';
 import { saveAttachment, isImageMime } from '../../services/attachments.js';
+import { stripThinkingTags } from '../../utils/text.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -294,5 +295,28 @@ export async function handleChatReset(req: IncomingMessage, res: ServerResponse,
     sendJson(res, { ok: true, agentId: route.agentId, sessionKey: route.sessionKey });
   } catch (err) {
     sendError(res, err instanceof Error ? err.message : 'Failed to reset session');
+  }
+}
+
+/** Return the persisted console chat transcript so the UI survives navigation/reload. */
+export function handleChatHistory(req: IncomingMessage, res: ServerResponse, deps: ConsoleApiDeps): void {
+  // Mirror handleChat's senderId resolution so we load the SAME session the chat POST writes to.
+  const senderId = new URL(req.url ?? '', 'http://localhost').searchParams.get('senderId')
+    ?? deps.config.heartbeat?.delivery?.target
+    ?? 'console-user';
+  const route = resolveRoute({ channel: 'console', senderId, channelId: 'console' }, deps.config);
+
+  try {
+    const turns = deps.sessionStore.loadTranscript(route.agentId, route.sessionKey);
+    const messages = turns
+      .filter(t => t.role === 'user' || t.role === 'assistant')
+      .map(t => ({
+        role: t.role,
+        content: t.role === 'assistant' ? stripThinkingTags(t.content) : t.content,
+        timestamp: t.timestamp,
+      }));
+    sendJson(res, { messages });
+  } catch (err) {
+    sendError(res, err instanceof Error ? err.message : 'Failed to load chat history');
   }
 }
