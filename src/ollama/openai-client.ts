@@ -19,6 +19,16 @@ import type {
  * - tool result messages: OpenAI requires tool_call_id → stitched from the preceding assistant call
  * - usage.{prompt_tokens,completion_tokens} → prompt_eval_count/eval_count
  */
+/**
+ * Reasoning models served here count their thinking tokens against `max_tokens`. Callers pass
+ * `num_predict` as the desired *answer* length (verification stages pass 400-700), so a small value
+ * lets reasoning consume the entire budget and the response gets truncated before any answer is
+ * emitted — `content` comes back empty. Reserve headroom so the answer budget survives on top of the
+ * reasoning needed to reach it. Harmless for non-reasoning models: max_tokens is a ceiling, not a
+ * target, so a larger cap costs nothing when the model finishes early.
+ */
+const REASONING_HEADROOM_TOKENS = 4096;
+
 export class OpenAICompatClient {
   constructor(
     private readonly baseUrl: string,
@@ -72,7 +82,7 @@ export class OpenAICompatClient {
     };
     if (o.temperature !== undefined) body.temperature = o.temperature;
     if (o.top_p !== undefined) body.top_p = o.top_p;
-    if (o.num_predict !== undefined) body.max_tokens = o.num_predict;
+    if (o.num_predict !== undefined) body.max_tokens = o.num_predict + REASONING_HEADROOM_TOKENS;
     if (o.stop !== undefined) body.stop = o.stop;
     // vLLM OpenAI server accepts these as extensions
     if (o.top_k !== undefined) body.top_k = o.top_k;
@@ -99,6 +109,11 @@ export class OpenAICompatClient {
     const data = await this.post<any>('/v1/chat/completions', this.toRequestBody(params, false));
     const choice = data.choices?.[0] ?? {};
     const msg = choice.message ?? {};
+    // Empty content with finish_reason "length" means reasoning blew the token budget — surface it
+    // rather than letting an empty string silently propagate (it would gut a verification stage).
+    if (!msg.content && !msg.tool_calls?.length && choice.finish_reason === 'length') {
+      console.warn(`[OpenAI] Empty completion from ${data.model ?? params.model} — hit max_tokens before emitting an answer (reasoning likely overran the budget).`);
+    }
     return {
       model: data.model ?? params.model,
       message: {
