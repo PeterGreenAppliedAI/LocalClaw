@@ -58,21 +58,11 @@ const PRE_MODEL_OVERRIDES: Array<{ pattern: RegExp; category: string }> = [
   // Matches: bare URL, URL with short intro, "check this URL", etc.
   { pattern: /^\s*https?:\/\/\S+\s*$/i, category: 'website' },
   { pattern: /https?:\/\/\S+/i, category: 'website' },
-  // Email/Calendar queries → personal (direct tool-loop, no plan decomposition)
-  { pattern: /\b(email|gmail|inbox|unread)\b/i, category: 'personal' },
-  { pattern: /\b(calendar|schedule|meeting|appointment)\b.*\b(today|tomorrow|this week|next week|upcoming)\b/i, category: 'personal' },
-  { pattern: /\b(what'?s on|check) my (calendar|schedule)\b/i, category: 'personal' },
-  { pattern: /\bwhat do i have\b.*\b(today|tomorrow|this week|next week|rest of|the week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i, category: 'personal' },
-  { pattern: /\b(am i free|am i busy|do i have anything)\b.*\b(today|tomorrow|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i, category: 'personal' },
-  // PDF/DOCX report requests → research pipeline (deep content + formatting + quality review)
-  { pattern: /\b(make|create|generate|write|give me|produce)\b.*\b(pdf|docx)\b.*\breport\b/i, category: 'research' },
-  { pattern: /\breport\b.*\b(pdf|docx)\b/i, category: 'research' },
-  { pattern: /\bpdf report\b/i, category: 'research' },
-  // Plain "put/make/turn this into a PDF/doc" (no "report") → multi, which has the document tool.
-  { pattern: /\b(make|create|generate|produce|build|turn|convert|export|save|put|render|write|format)\b.{0,60}\b(pdf|docx|word doc|document)\b/i, category: 'multi' },
-  // Other document format requests (spreadsheets, presentations) → multi
-  { pattern: /\b(make|create|generate|build|write|give me|produce)\b.*\b(xlsx|pptx|spreadsheet|slide)\b/i, category: 'multi' },
-  { pattern: /\b(pdf|docx)\b.*\b(spreadsheet|presentation)\b/i, category: 'multi' },
+  // NOTE: email/calendar and document-format (pdf/docx/report) overrides were REMOVED.
+  // They matched bare keywords anywhere in the text, so a word inside pasted/attached content
+  // (e.g. "email" in a security guide, "pdf" in a doc) hijacked routing — sending document
+  // tasks to the Gmail specialist. Routing for those now relies on the capability-aware router
+  // prompt (the model knows what each specialist can produce) + the keyword fallback below.
   // Browser interaction — compound: action + site/domain reference
   { pattern: /\b(screenshot|browse|go to|navigate to|visit)\b.*(\.\w{2,}|site|website|page)\b/i, category: 'multi' },
   // Research — only compound intent patterns, not bare keywords
