@@ -41,6 +41,21 @@ interface PipelineRun {
   user_message: string;
 }
 
+interface MetricsOverview {
+  totalDispatches: number;
+  avgDispatchMs: number;
+  p95DispatchMs: number;
+  abortCount: number;
+  maxIterCount: number;
+  routerAvgMs: number;
+  toolCalls: number;
+  toolSuccessRate: number;
+  narrationRepairs: number;
+  byCategory: Array<{ category: string; count: number; avgMs: number; p95Ms: number; abortRate: number }>;
+  topFailedTools: Array<{ tool: string; failCount: number }>;
+  dailyDispatches: Array<{ date: string; count: number }>;
+}
+
 interface StepRecord {
   step_index: number;
   tool: string;
@@ -95,6 +110,7 @@ function PlanSourceBadge({ source }: { source: string }) {
 }
 
 export default function Metrics() {
+  const [overview, setOverview] = useState<MetricsOverview | null>(null);
   const [stats, setStats] = useState<MetricsStats | null>(null);
   const [runs, setRuns] = useState<PipelineRun[]>([]);
   const [selectedRun, setSelectedRun] = useState<number | null>(null);
@@ -105,12 +121,14 @@ export default function Metrics() {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      fetchApi<MetricsStats>(`/metrics/stats?days=${days}`),
-      fetchApi<PipelineRun[]>(`/metrics/runs?limit=50`),
-    ]).then(([s, r]) => {
+      fetchApi<MetricsOverview>(`/metrics/overview?days=${days}`).catch(() => null),
+      fetchApi<MetricsStats>(`/metrics/stats?days=${days}`).catch(() => null),
+      fetchApi<PipelineRun[]>(`/metrics/runs?limit=50`).catch(() => [] as PipelineRun[]),
+    ]).then(([o, s, r]) => {
+      setOverview(o);
       setStats(s);
-      setRuns(r);
-    }).catch(() => {}).finally(() => setLoading(false));
+      setRuns(r ?? []);
+    }).finally(() => setLoading(false));
   }, [days]);
 
   useEffect(() => {
@@ -119,7 +137,6 @@ export default function Metrics() {
   }, [selectedRun]);
 
   if (loading) return <p className="text-zinc-400">Loading metrics...</p>;
-  if (!stats) return <p className="text-zinc-400">No execution metrics available. Metrics are recorded when pipeline runs complete.</p>;
 
   const pct = (n: number) => `${Math.round(n * 100)}%`;
   const fmt = (ms: number) => ms > 60000 ? `${(ms / 60000).toFixed(1)}m` : `${(ms / 1000).toFixed(1)}s`;
@@ -127,7 +144,7 @@ export default function Metrics() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold">Execution Metrics</h2>
+        <h2 className="text-2xl font-bold">Metrics</h2>
         <select
           value={days}
           onChange={e => setDays(Number(e.target.value))}
@@ -140,6 +157,71 @@ export default function Metrics() {
         </select>
       </div>
 
+      {/* === Overview across ALL categories (from metrics.jsonl) === */}
+      {overview && overview.totalDispatches > 0 ? (
+        <div className="mb-8">
+          <h3 className="text-lg font-semibold mb-3">Overview — all categories</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
+            <Stat label="Dispatches" value={overview.totalDispatches} />
+            <Stat label="Avg Latency" value={fmt(overview.avgDispatchMs)} />
+            <Stat label="p95 Latency" value={fmt(overview.p95DispatchMs)} color={overview.p95DispatchMs > 30000 ? 'text-yellow-400' : 'text-white'} />
+            <Stat label="Router Avg" value={fmt(overview.routerAvgMs)} />
+            <Stat label="Tool Success" value={pct(overview.toolSuccessRate)} subtitle={`${overview.toolCalls} calls`} color={overview.toolSuccessRate > 0.8 ? 'text-green-400' : overview.toolSuccessRate > 0.5 ? 'text-yellow-400' : 'text-red-400'} />
+            <Stat label="Aborts" value={overview.abortCount} subtitle={overview.maxIterCount > 0 ? `${overview.maxIterCount} hit max iters` : undefined} color={overview.abortCount > 0 ? 'text-red-400' : 'text-white'} />
+          </div>
+
+          {/* Per-category breakdown */}
+          <div className="bg-zinc-800 rounded-lg overflow-hidden mb-3">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-zinc-500 text-xs uppercase">
+                  <th className="text-left px-3 py-2">Category</th>
+                  <th className="text-right px-3 py-2">Dispatches</th>
+                  <th className="text-right px-3 py-2">Avg</th>
+                  <th className="text-right px-3 py-2">p95</th>
+                  <th className="text-right px-3 py-2">Abort</th>
+                </tr>
+              </thead>
+              <tbody>
+                {overview.byCategory.map(c => (
+                  <tr key={c.category} className="border-t border-zinc-700/50">
+                    <td className="px-3 py-1.5 text-cyan-400">{c.category}</td>
+                    <td className="px-3 py-1.5 text-right text-zinc-300">{c.count}</td>
+                    <td className="px-3 py-1.5 text-right text-zinc-400">{fmt(c.avgMs)}</td>
+                    <td className="px-3 py-1.5 text-right text-zinc-400">{fmt(c.p95Ms)}</td>
+                    <td className={`px-3 py-1.5 text-right ${c.abortRate > 0 ? 'text-red-400' : 'text-zinc-600'}`}>{pct(c.abortRate)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {overview.topFailedTools.length > 0 && (
+            <div className="mb-2">
+              <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">Top Failing Tools</p>
+              <div className="flex flex-wrap gap-2">
+                {overview.topFailedTools.map(t => (
+                  <span key={t.tool} className="bg-zinc-800 rounded px-2 py-1 text-xs">
+                    <span className="text-red-400 font-mono">{t.tool}</span> <span className="text-zinc-500">{t.failCount}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {overview.narrationRepairs > 0 && (
+            <p className="text-xs text-zinc-500">Narration repairs: {overview.narrationRepairs}</p>
+          )}
+        </div>
+      ) : (
+        <p className="text-zinc-500 mb-8">No dispatch metrics recorded in this window yet.</p>
+      )}
+
+      {/* === Plan-pipeline detail (step-level, multi/plan only) === */}
+      <h3 className="text-lg font-semibold mb-3 border-t border-zinc-800 pt-6">Plan Pipeline Runs <span className="text-xs font-normal text-zinc-500">(step-level detail — multi/plan only)</span></h3>
+      {!stats || stats.totalRuns === 0 ? (
+        <p className="text-zinc-500 mb-6">No plan-pipeline runs in this window. Only <span className="text-zinc-300">multi</span>/plan tasks record step-level metrics; everything else is in the overview above.</p>
+      ) : (
+        <>
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
         <Stat label="Total Runs" value={stats.totalRuns} />
@@ -245,8 +327,7 @@ export default function Metrics() {
         ))}
       </div>
 
-      {runs.length === 0 && (
-        <p className="text-zinc-500 text-center py-8">No pipeline runs recorded yet. Execute a plan pipeline task to see metrics here.</p>
+        </>
       )}
     </div>
   );

@@ -213,7 +213,15 @@ export async function handleConsoleRequest(
       return true;
     }
 
-    // Execution metrics
+    // General overview across ALL categories (from data/metrics.jsonl)
+    if (path === 'metrics/overview' && method === 'GET') {
+      const days = parseInt(new URL(url, 'http://localhost').searchParams.get('days') ?? '7', 10);
+      const { computeMetricsOverview } = await import('../metrics/overview.js');
+      sendJson(res, computeMetricsOverview('data/metrics.jsonl', days));
+      return true;
+    }
+
+    // Execution metrics (plan-pipeline runs)
     if (path === 'metrics/stats' && method === 'GET') {
       const qs = new URL(url, 'http://localhost').searchParams;
       const days = parseInt(qs.get('days') ?? '7', 10);
