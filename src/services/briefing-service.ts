@@ -38,9 +38,11 @@ export async function runBriefing(deps: BriefingDeps): Promise<void> {
     const executor = toolRegistry.createExecutor();
     const toolCtx = { agentId: config.agents.default, sessionKey: 'briefing', workspacePath, senderId: hb.delivery.target };
 
-    // Gather calendar
+    // Gather calendar. Look 2 days ahead (3 in the evening, when you're planning further out) so
+    // the near horizon is reliably covered — a 1-day window from a midday briefing clipped events
+    // later the next day. calendar_list now extends through end-of-day, so this is full-day coverage.
     let calendar = '';
-    try { calendar = await executor('calendar_list', { days: timeOfDay === 'evening' ? 2 : 1 }, toolCtx); } catch { calendar = '(calendar not available)'; }
+    try { calendar = await executor('calendar_list', { days: timeOfDay === 'evening' ? 3 : 2 }, toolCtx); } catch { calendar = '(calendar not available)'; }
     calendar = enrichCalendarOutput(calendar, now);
 
     // Code-level conflict detection

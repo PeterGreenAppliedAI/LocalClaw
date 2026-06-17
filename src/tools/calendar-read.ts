@@ -38,8 +38,13 @@ export function createCalendarListTool(): LocalClawTool {
       const dateStr = params.date as string | undefined;
 
       const now = dateStr ? new Date(`${dateStr}T00:00:00`) : new Date();
+      // Look through the END of the final day, not a rolling now+24h window. A midday call with
+      // days=1 used to reach only tomorrow at the same clock time, clipping anything later that
+      // day (e.g. an afternoon meeting after a noon one). Align timeMax to end-of-day so a day
+      // window includes the whole day.
       const until = new Date(now);
       until.setDate(until.getDate() + days);
+      until.setHours(23, 59, 59, 999);
 
       try {
         const calendar = google.calendar({ version: 'v3', auth });
