@@ -16,7 +16,9 @@ export async function handleStatus(_req: IncomingMessage, res: ServerResponse, d
   let totalFacts = 0;
   if (deps.factStore) {
     try {
-      totalFacts = deps.factStore.loadFactsJson().length;
+      // Facts are stored per-sender; loadFactsJson() with no sender only sees the empty shared
+      // bucket (that's the "0 facts" bug). Count across all sender buckets.
+      totalFacts = deps.factStore.countAllFacts();
     } catch { /* ignore */ }
   }
 

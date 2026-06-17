@@ -491,6 +491,25 @@ export class FactStore {
     }
   }
 
+  /**
+   * Total facts across every sender bucket. Facts live per-sender under
+   * `memory/<senderId>/facts/facts.json`, so a no-senderId load only sees the (usually empty)
+   * shared bucket — which is why the dashboard read "0 facts". Sum all buckets for the real count.
+   */
+  countAllFacts(): number {
+    let total = this.loadFactsJson().length; // shared bucket
+    try {
+      for (const entry of readdirSync(this.basePath, { withFileTypes: true })) {
+        // basePath's direct children are the shared 'facts'/'raw' dirs (skip) and one dir per
+        // senderId — treat any other directory as a sender bucket.
+        if (entry.isDirectory() && entry.name !== 'facts' && entry.name !== 'raw') {
+          total += this.loadFactsJson(entry.name).length;
+        }
+      }
+    } catch { /* basePath may not exist yet */ }
+    return total;
+  }
+
   // --- Private helpers ---
 
   private memDir(senderId?: string): string {
