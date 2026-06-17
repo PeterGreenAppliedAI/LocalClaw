@@ -4,20 +4,16 @@ A log of significant decisions, failed experiments, and why things are the way t
 
 ---
 
-## Silent Fetch Failure → Misattribution → Verification False Negative (June 17 2026)
+## Verification False Negative from a Stale Truncation Cap (June 17 2026)
 
-### A research report cited BLS for numbers it never read from BLS (investigated, fix deferred)
-**Symptom:** A labor-market research report (DeepSeek) presented `172K payrolls / 4.3% unemployment / leisure +70K` as fact citing `[2]` BLS, while its own Verification appendix marked those same spine-of-the-report numbers **UNSUPPORTED**. Looked like either a hallucination or an over-aggressive entailment judge.
-**Root cause (found by checking the actual source links, NOT the code):**
-1. **The numbers are correct** — CNBC + UPI confirm every headline figure as the real May 2026 BLS data. DeepSeek did not fabricate.
-2. **The model lied about where it got them.** `bls.gov` returns **403 Forbidden** to the fetcher (reproduced live — BLS hard-blocks automated/datacenter fetchers). So `web_fetch` of BLS failed (that's the report's `[1]` "truncated, no usable data"). The model actually got the numbers from secondary relays (CNBC/UPI/US Bank/blogs) and SearXNG snippets, then **cited `[2]` BLS as if it had read the primary.** A failed/blocked fetch slips through silently and becomes a confident primary-source citation.
-3. **That poisoned verification.** It checked the claims against the cited-but-dead BLS page, found nothing, and stamped UNSUPPORTED — a false negative. Tier-1 cross-check didn't fire on the headline numbers (one search would have flipped them to VERIFIED).
-**Lesson:** Ground-truth the *sources* before theorizing from the *code*. Checking the code first would have sent us tuning the entailment judge; the real bug is fetch-access + silent failure + misattribution.
-**Fix (deferred to next session):**
-- Detect blocked/empty fetches (403, near-empty body, "truncated") and mark the source as **NOT READ** — the model must not cite a source it didn't actually retrieve.
-- **Attribution integrity:** attribute claims to the source actually read (the secondary relay / snippet), not the primary the model intended to read.
-- **Verification anchoring:** for high-impact numeric claims whose primary fetch failed, route to Tier-1 independent search instead of judging against the dead page.
-**Status:** Open — root cause confirmed, fix not yet implemented.
+### A research report's real, correctly-cited BLS numbers were stamped UNSUPPORTED (fixed)
+**Symptom:** A labor-market report (DeepSeek) presented `172K payrolls / 4.3% / leisure +70K` citing `[2]` BLS, while its own Verification appendix marked the sector figures **UNSUPPORTED**.
+**False starts (both disproven by actually reproducing the fetch):** First guess was an over-aggressive entailment judge; a worse second guess (logged here yesterday, now deleted) was that `bls.gov` **403-blocks** the fetcher so the model misattributed secondary numbers to BLS. BOTH WRONG. The 403 came from *Claude's own WebFetch tool* — a different client. Running the pipeline's actual `web_fetch` (User-Agent `LocalClaw/1.0`) returns BLS **200, 6K-char extract**, and it **contains every figure**. The numbers are real, genuinely in BLS, and **correctly cited** — no block, no misattribution, no hallucination.
+**Actual root cause (proven from the run's `verification.json` + char offsets):** `entailmentPrompt`/`tier1JudgePrompt` sliced each source to `text.slice(0, 3500)`. The BLS sector table sits at offset ~3976–4327 in the 6K extract. So **every figure before char 3500 verified; every figure after 3500 came back UNSUPPORTED** ("None of the provided sources state…") — the judge literally never saw them. A second small-context artifact compounded it: the research pipeline forced `web_fetch maxChars: '6000'`, overriding the tool's 30K default, so the cache only held 6K of each page.
+**Fix (general, no site-specific anything):** Both caps are small-context-era relics — DeepSeek serves 256K, a fetched page is ~1.5K tokens. (1) Pass the FULL cached source to the judge (removed the `slice(0, 3500)` in both prompt builders). (2) Drop the forced `maxChars: '6000'` so research uses the tool's config default (30K) — full pages get cached. No relevance-window cleverness, no block-detection markers — both were rejected as solving a non-problem / hardcoding for one case.
+**Lesson (reinforced, hard):** Reproduce the program's *exact* behavior before theorizing — a tool's 403 ≠ the pipeline's fetch. Two wrong theories died the moment the real `web_fetch` was run. Also: when a model gets *bigger context*, audit for old rationing caps (`slice`, `maxChars`, `MAX_*`) that silently throw away data the model could now hold.
+**Known separate issue (flagged, not fixed):** the BLS *PDF* `[1]` fetches as raw `%PDF` binary (PDFs aren't parsed) and passes the weak `valid` filter (`!startsWith('Error') && len>120`) → a junk source. Didn't cause this failure, but raising `maxChars` caches more of the garbage. Candidate: a general "is this text" guard (binary/empty), NOT a block-marker list.
+**Status:** Fixed (truncation caps removed). Live re-run on restart should flip the sector claims to VERIFIED.
 
 ## Foreground Model Swap: MiniMax-M2.7 → DeepSeek-V4-Flash (June 2026)
 

@@ -118,7 +118,7 @@ async function researchAngle(ctx: PipelineContext, angle: string): Promise<Angle
     const fetched: Array<{ url: string; content: string }> = [];
     for (const url of urls) {
       try {
-        const content = await ctx.executor('web_fetch', { url, extractMode: 'text', maxChars: '6000' }, ctx.toolContext);
+        const content = await ctx.executor('web_fetch', { url, extractMode: 'text' }, ctx.toolContext);
         fetched.push({ url, content });
       } catch { fetched.push({ url, content: '' }); }
     }
@@ -390,7 +390,7 @@ export const researchPipeline: PipelineDefinition = {
           // Fallback: nothing cached matched — fetch the cited page on demand.
           if (candidates.length === 0 && citedUrl) {
             try {
-              const c = await ctx.executor('web_fetch', { url: citedUrl, extractMode: 'text', maxChars: '6000' }, ctx.toolContext);
+              const c = await ctx.executor('web_fetch', { url: citedUrl, extractMode: 'text' }, ctx.toolContext);
               if (c && !c.startsWith('Error') && c.length > 120) candidates = [{ url: citedUrl, text: c }];
             } catch { /* leave empty */ }
           }
@@ -451,7 +451,7 @@ export const researchPipeline: PipelineDefinition = {
             const fetched: Array<{ url: string; text: string }> = [];
             for (const url of extractUrls(searchResult).slice(0, 2)) {
               try {
-                const c = await ctx.executor('web_fetch', { url, extractMode: 'text', maxChars: '6000' }, ctx.toolContext);
+                const c = await ctx.executor('web_fetch', { url, extractMode: 'text' }, ctx.toolContext);
                 if (c && !c.startsWith('Error') && c.length > 120) fetched.push({ url, text: c });
               } catch { /* skip */ }
             }

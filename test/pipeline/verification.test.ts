@@ -13,6 +13,7 @@ import {
   tier1Query,
   parseTier1,
   applyTier1,
+  entailmentPrompt,
   type Claim,
   type VerificationResult,
   type Tier1Result,
@@ -154,6 +155,20 @@ describe('pickRelevantSources', () => {
 
   it('returns [] when no source shares tokens with the claim', () => {
     expect(pickRelevantSources(claim, { 'https://x/y': 'completely unrelated content about gardening' }, 3)).toEqual([]);
+  });
+});
+
+describe('entailmentPrompt does not truncate the source', () => {
+  // Regression: the judge used to see only the first 3500 chars of each source, so a figure deep
+  // in a page (e.g. a sector table ~4000 chars into a jobs release) was invisible and the real,
+  // cited claim got stamped UNSUPPORTED. The whole cached source must reach the judge.
+  it('includes a figure that sits past the old 3500-char cutoff', () => {
+    const filler = 'x'.repeat(4000);
+    const sourceText = `Summary at the top.\n${filler}\nLeisure and hospitality added 70,000 jobs in May 2026.`;
+    const claim: Claim = { claim_id: 'c1', claim: 'Leisure and hospitality added 70,000 jobs in May 2026.', claim_type: 'financial', time_sensitive: true, entities: ['leisure and hospitality'], requires_verification: true, citation: 2 };
+    const { user } = entailmentPrompt(claim, [{ url: 'https://bls.gov/x', text: sourceText }]);
+    // The supporting sentence is at offset ~4020 — it must be in the prompt the judge sees.
+    expect(user).toContain('Leisure and hospitality added 70,000 jobs');
   });
 });
 

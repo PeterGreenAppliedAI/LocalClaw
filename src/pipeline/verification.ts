@@ -175,7 +175,11 @@ export function pickRelevantSources(claim: Claim, sourceText: Record<string, str
 // --- Entailment judging ---
 
 export function entailmentPrompt(claim: Claim, sources: Array<{ url: string; text: string }>): { system: string; user: string } {
-  const blocks = sources.map((s, i) => `[Source ${i + 1}: ${s.url}]\n${s.text.slice(0, 3500)}`).join('\n\n---\n\n');
+  // Pass the FULL cached source (already bounded by the fetch cap). A previous 3500-char slice
+  // here silently hid figures that sit deep in a page — e.g. a sector table ~4000 chars into a
+  // jobs release — and the judge declared the (real, cited) claim UNSUPPORTED. The foreground
+  // model's context is far larger than any single fetched page, so there's nothing to ration.
+  const blocks = sources.map((s, i) => `[Source ${i + 1}: ${s.url}]\n${s.text}`).join('\n\n---\n\n');
   return {
     system: [
       'You are a strict fact-checker. Decide whether ANY of the SOURCES below supports the CLAIM.',
@@ -277,7 +281,7 @@ export function tier1Query(claim: Claim): string {
 }
 
 export function tier1JudgePrompt(claim: Claim, sources: Array<{ url: string; text: string }>): { system: string; user: string } {
-  const blocks = sources.map((s, i) => `[Source ${i + 1}: ${s.url}]\n${s.text.slice(0, 3500)}`).join('\n\n---\n\n');
+  const blocks = sources.map((s, i) => `[Source ${i + 1}: ${s.url}]\n${s.text}`).join('\n\n---\n\n');
   return {
     system: [
       'You are independently fact-checking ONE claim against freshly-retrieved sources.',
