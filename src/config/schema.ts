@@ -174,8 +174,10 @@ export const VerificationConfigSchema = z.object({
   extractorModel: z.string().optional(),
   /** Model for the entailment judge (claim vs. cited source). Defaults to the research specialist. */
   judgeModel: z.string().optional(),
-  /** Max claims verified per report (highest-impact first). */
-  maxClaims: z.number().int().positive().default(12),
+  /** Max claims verified per report (highest-impact first). Higher cap lets thinly-sourced
+   *  figures (e.g. a single weak-domain manufacturing stat) also get checked instead of riding
+   *  through unverified; each adds one bounded entailment call (concurrency 3). */
+  maxClaims: z.number().int().positive().default(18),
   /** Tier-1 independent cross-check: one fresh search per high-impact claim to catch
    *  faithfully-cited wrong facts (dates, deals, figures). Bounded by maxCrossChecks. */
   crossCheck: z.boolean().default(true),
