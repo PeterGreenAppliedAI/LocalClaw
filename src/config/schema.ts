@@ -162,6 +162,10 @@ export const MemoryConfigSchema = z.object({
   extractionModel: z.string().optional(),
   /** Small fast model for graph NER (entity typing) + contradiction checks. Defaults to phi4-mini:latest. */
   nerModel: z.string().default('phi4-mini:latest'),
+  /** Minimum hours between heartbeat memory-review prompts ("still accurate? !heartbeat yes/no").
+   *  The heartbeat runs every ~2h, but nagging the user that often is review fatigue — gate the
+   *  prompt to at most once per this interval. Default once a day. */
+  reviewIntervalHours: z.number().nonnegative().default(24),
 });
 
 export const VerificationConfigSchema = z.object({

@@ -3,7 +3,7 @@
  * Extracted from orchestrator.ts for single-responsibility and testability.
  */
 import { writeFileSync, readFileSync, existsSync, readdirSync, statSync, unlinkSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import type { LocalClawConfig, FactInput, FactEntry } from '../config/types.js';
 import type { OllamaClient } from '../ollama/client.js';
 import type { ToolRegistry } from '../tools/registry.js';
@@ -152,20 +152,33 @@ export async function runHeartbeat(deps: HeartbeatDeps): Promise<void> {
       }
     }
 
-    // Select facts for user review (waking hours only)
+    // Select facts for user review — waking hours only, AND throttled. The heartbeat runs every
+    // ~2h, but surfacing "still accurate? !heartbeat yes/no" that often is review fatigue (the user
+    // was answering it 6-7×/day). Gate the prompt to at most once per memory.reviewIntervalHours
+    // (default 24h) via a persisted marker, and never stack a new batch on one not yet answered.
     const localHour = parseInt(new Date().toLocaleString('en-US', { timeZone: config.timezone, hour: 'numeric', hour12: false }));
     const isWakingHours = localHour >= 8 && localHour <= 22;
     let reviewCandidates: FactEntry[] = [];
     if (factStore && senderId && isWakingHours) {
-      reviewCandidates = factStore.selectReviewCandidates(senderId, 3);
-      if (reviewCandidates.length > 0) {
-        const pendingReview = {
-          type: 'heartbeat_review',
-          createdAt: new Date().toISOString(),
-          senderId,
-          facts: reviewCandidates.map(f => ({ id: f.id, text: f.text, category: f.category })),
-        };
-        writeFileSync(deps.heartbeatPendingPath(workspacePath, senderId), JSON.stringify(pendingReview, null, 2));
+      const pendingPath = deps.heartbeatPendingPath(workspacePath, senderId);
+      const markerPath = join(dirname(pendingPath), 'heartbeat-review-marker.json');
+      const intervalMs = (config.memory?.reviewIntervalHours ?? 24) * 3_600_000;
+      let lastSurfacedAt = 0;
+      try { lastSurfacedAt = new Date((JSON.parse(readFileSync(markerPath, 'utf-8')) as { surfacedAt: string }).surfacedAt).getTime() || 0; } catch { /* no prior review */ }
+      const due = Date.now() - lastSurfacedAt >= intervalMs;
+      const unanswered = existsSync(pendingPath);
+      if (due && !unanswered) {
+        reviewCandidates = factStore.selectReviewCandidates(senderId, 3);
+        if (reviewCandidates.length > 0) {
+          const pendingReview = {
+            type: 'heartbeat_review',
+            createdAt: new Date().toISOString(),
+            senderId,
+            facts: reviewCandidates.map(f => ({ id: f.id, text: f.text, category: f.category })),
+          };
+          writeFileSync(pendingPath, JSON.stringify(pendingReview, null, 2));
+          writeFileSync(markerPath, JSON.stringify({ surfacedAt: new Date().toISOString() }));
+        }
       }
     }
 
