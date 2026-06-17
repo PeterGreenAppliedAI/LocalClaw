@@ -2,7 +2,7 @@
 
 ## Overview
 
-LocalClaw is a local-model-first AI agent framework running entirely on personal hardware. Foreground reasoning runs on a large model (MiniMax-M2.7) served by **vLLM**; small utility/modality models run behind an **Ollama-compatible gateway**. It uses a **Router + Specialist** architecture with **deterministic pipelines** — code controls the workflow, models only extract parameters and synthesize text.
+LocalClaw is a local-model-first AI agent framework running entirely on personal hardware. Foreground reasoning runs on a large model (currently DeepSeek-V4-Flash) served by **vLLM**; small utility/modality models run behind an **Ollama-compatible gateway**. It uses a **Router + Specialist** architecture with **deterministic pipelines** — code controls the workflow, models only extract parameters and synthesize text.
 
 9+ models across two inference backends (vLLM + Ollama gateway), 39 tools, 12 pipelines, 15 categories, 8 channel adapters (including Chrome extension with browser control), FalkorDB graph memory with 1,000+ nodes, 389 tests across 26 suites. Web search runs on a self-hosted **SearXNG** metasearch instance (no API key, no rate limit); Brave/Perplexity/Grok/Tavily remain config-selectable fallbacks.
 
@@ -45,26 +45,27 @@ Response → channel (thinking stripped) → transcript (thinking preserved)
 
 ## Multi-Model Strategy (two backends)
 
-Foreground reasoning runs on **MiniMax-M2.7** via **vLLM** (192K context) on the DGX Spark.
-Small utility + modality models run on the **A5000 node behind an OpenAI-compatible gateway**
-(Ollama wire protocol). A `MultiBackendClient` routes each call by model id — purely additive,
-so the Ollama path is unchanged. See "Inference Routing" below.
+Foreground reasoning runs on **DeepSeek-V4-Flash** via **vLLM** (256K context) on the DGX Spark.
+This is the swappable *foreground slot*, not a hard dependency — it was MiniMax-M2.7 before, and the
+whole tier moves by config (no model literals in logic). Small utility + modality models run on the
+**A5000 node behind an OpenAI-compatible gateway** (Ollama wire protocol). A `MultiBackendClient` routes
+each call by model id — purely additive, so the Ollama path is unchanged. See "Inference Routing" below.
 
 | Role | Model | Backend | Why |
 |------|-------|---------|-----|
-| Chat + all foreground specialists (web_search, exec, memory, multi, research, analytics, image, code_gen, etc.) | MiniMax-M2.7-AWQ-4bit | vLLM / Spark | Strong multi-step reasoning + tool sequencing; 192K context |
-| Reasoning (`reason` tool) | MiniMax-M2.7 | vLLM / Spark | One model for foreground reasoning — no separate reasoning model |
+| Chat + all foreground specialists (web_search, exec, memory, multi, research, analytics, image, code_gen, etc.) | DeepSeek-V4-Flash | vLLM / Spark | Strong multi-step reasoning + tool sequencing; 256K context |
+| Reasoning (`reason` tool) | DeepSeek-V4-Flash | vLLM / Spark | One model for foreground reasoning — no separate reasoning model |
 | Router | phi4:14b | gateway / A5000 | Fast classification (~50ms), few-shot |
 | Fact Extraction | phi4:14b | gateway / A5000 | Dense, reliable JSON |
 | NER | phi4-mini | gateway / A5000 | Entity typing with bootstrapped graph context |
 | Embedding | qwen3-embedding:8b | gateway / A5000 | 4096-dim vectors for memory search |
-| Vision | qwen3.6:27b (multimodal) | gateway / A5000 | Image analysis |
-| Briefing + Heartbeat reasoning | qwen3.6:27b | gateway / A5000 | Background reasoning, keeps the Spark free for foreground |
+| Vision | qwen3.6:27b (multimodal) | gateway / A5000 | Image analysis (DeepSeek is text-only) |
+| Briefing + Heartbeat reasoning | DeepSeek-V4-Flash | vLLM / Spark | Background reasoning on the foreground model |
 | Voice fast-path | qwen2.5:7b | gateway / A5000 | Small + fast for voice-originated messages |
 
 **Context:** `session.contextSize` raised to 128K (was 32K). Per-specialist `contextSize` override
-in the schema lets small-context models stay low. MiniMax ignores `num_ctx` (vLLM serves 192K at launch),
-so the value mainly drives the compaction budget.
+in the schema lets small-context models stay low. DeepSeek-V4-Flash ignores `num_ctx` (vLLM serves
+256K at launch), so the value mainly drives the compaction budget.
 
 ## Inference Routing
 
@@ -113,7 +114,7 @@ After the research pipeline drafts its markdown report, an evidence-verification
 1. **Extract** atomic, checkable claims (fast model), prioritizing corporate events / market-share over routine specs.
 2. **Cited-source check** — each claim is judged against the *cached* pages that actually mention it (research persists fetched page text, so zero new searches). Overstated/single-sourced claims are **hedged or attributed** ("according to X") — never deleted.
 3. **Tier-1 cross-check** — a bounded set of high-impact, falsifiable claims (corporate events, market-share; capped at `maxCrossChecks`) get ONE independent search each; an authoritative contradiction (e.g. "license" vs "acquisition") flips the claim to `CONTRADICTED → correct`.
-4. **Correction pass** (MiniMax) edits only the affected sentences; strikethrough/tracked-changes artifacts are stripped at render. Publishes with a `## Verification` appendix + auditable `verification.json`.
+4. **Correction pass** (foreground model) edits only the affected sentences; strikethrough/tracked-changes artifacts are stripped at render. Publishes with a `## Verification` appendix + auditable `verification.json`.
 
 Config-gated via the `verification` block (`enabled`, `crossCheck` — both default on). Known ceiling: cited-source checking can't disprove a faithfully-cited wrong fact without the Tier-1 pass; Tier-1 itself trusts a single independent source, so disputed claims are better attributed than silently rewritten.
 

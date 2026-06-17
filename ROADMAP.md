@@ -1,6 +1,6 @@
 # LocalClaw Roadmap
 
-LocalClaw is a local-model-first AI agent framework running on personal infrastructure (DGX Spark, A5000, gateway). It handles Discord, Telegram, WhatsApp, and Web with a Router + Specialist architecture. Foreground reasoning runs on MiniMax-M2.7 via **vLLM**; small/modality models run on an Ollama-compatible gateway, routed by a `MultiBackendClient`. 39 tools, 12 pipelines, FalkorDB graph memory, autonomous heartbeats and briefings. 363 tests.
+LocalClaw is a local-model-first AI agent framework running on personal infrastructure (DGX Spark, A5000, gateway). It handles Discord, Telegram, WhatsApp, and Web with a Router + Specialist architecture. Foreground reasoning runs on DeepSeek-V4-Flash via **vLLM** (a swappable foreground slot — was MiniMax-M2.7 before); small/modality models run on an Ollama-compatible gateway, routed by a `MultiBackendClient`. 39 tools, 12 pipelines, FalkorDB graph memory, autonomous heartbeats and briefings. 416 tests.
 
 ---
 
@@ -26,7 +26,7 @@ LocalClaw is a local-model-first AI agent framework running on personal infrastr
 - **Latency Optimization** — Parallel memory + router (800-1500ms saved), turn-count-gated async compaction with prewarm, tool-loop streaming with status events, web-fetch page caching, expanded pre-model overrides
 - **Routing Test Corpus** — 363 tests covering pre-model overrides, keyword fallback, sticky routing, speculative language, security, search buckets
 - **Media Burst Handling** — Vision queue (sequential, not parallel), 3-second media debounce, video file path, rate limiter adjustment
-- **Multi-Backend Inference (vLLM)** — MultiBackendClient routes by model id; MiniMax-M2.7 on vLLM (OpenAI-compatible) for foreground reasoning, Ollama gateway for small/modality models. OpenAICompatClient handles the format translation. Per-specialist contextSize; 128K context. OpenCode also routes to MiniMax via vLLM provider.
+- **Multi-Backend Inference (vLLM)** — MultiBackendClient routes by model id; DeepSeek-V4-Flash on vLLM (OpenAI-compatible) for foreground reasoning, Ollama gateway for small/modality models. OpenAICompatClient handles the format translation (incl. reserving reasoning headroom on max_tokens so short stages don't return empty). Per-specialist contextSize; 256K context. Foreground model is a swappable config slot — was MiniMax-M2.7 before.
 - **Memory Integrity** — Importance-aware FactStore char bound (never evicts imp 4-5), graph provenance edges (EXTRACTED_FROM + SUPERSEDES) wired.
 - **Search Source Buckets** — Topic→curated-domain buckets with anchors; real_estate + civic (NYC/NY Open Data); web_search freshness forcing + recency-aware quality judge; over-trigger fix.
 

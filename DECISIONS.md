@@ -4,7 +4,16 @@ A log of significant decisions, failed experiments, and why things are the way t
 
 ---
 
-## Multi-Backend Inference & MiniMax Swap (June 2026)
+## Foreground Model Swap: MiniMax-M2.7 → DeepSeek-V4-Flash (June 2026)
+
+### Swapped the foreground reasoning tier to DeepSeek-V4-Flash (June 2026)
+**Decision:** Foreground reasoning (chat + all foreground specialists + `reason` tool + briefing/heartbeat synthesis) now runs on **DeepSeek-V4-Flash** (vLLM on the Spark, served id `deepseek-v4-flash`, 256K context), replacing MiniMax-M2.7. Vision stays on qwen3.6:27b — DeepSeek is text-only, same as MiniMax.
+**Why:** Markedly better output than the prior local-model era. The swap was config + two small code changes — the pipelines, memory graph, and channels were untouched. This is the second foreground swap (qwen → MiniMax → DeepSeek) done purely through the `MultiBackendClient`, and it's the working proof that the foreground model is a *slot*, not a dependency: each model's per-call job stays small enough that a big model raises the ceiling without becoming the floor.
+**Gotcha 1 — DSML tool-call dialect:** DeepSeek narrates tool calls as text in its own `<｜DSML｜invoke name="…"><｜DSML｜parameter …>` dialect when no native `tools` are passed. The parser (`src/tool-loop/parser.ts`) strips the `｜DSML｜` (U+FF5C) markers so it normalizes to the existing `<invoke>`/`<parameter>` handling, and tolerates extra param attributes (`string="true"`).
+**Gotcha 2 — empty completions on small `max_tokens`:** reasoning tokens count against `max_tokens` on the vLLM path. Verification stages pass `num_predict` 400-700 as the *answer* budget, which DeepSeek's reasoning consumed entirely → truncated before any answer → empty `content`, silently gutting the stage. Fixed by reserving reasoning headroom (`+4096`) on `max_tokens` in `OpenAICompatClient`, plus a warn when a completion returns empty with `finish_reason: length`.
+**Status:** Active. The MiniMax entries below are retained as history (superseded by this swap).
+
+## Multi-Backend Inference & MiniMax Swap (June 2026) — superseded by DeepSeek-V4-Flash swap above
 
 ### vLLM backend, additive (June 2026)
 **Decision:** Add OpenAI-compatible inference (vLLM serving MiniMax-M2.7) alongside Ollama, not replace it.

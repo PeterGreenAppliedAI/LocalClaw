@@ -95,7 +95,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
   ollama pull qwen3-embedding:8b    # vector embeddings
   ollama pull qwen3.6:27b           # vision + briefing/heartbeat reasoning (multimodal)
   ollama pull qwen2.5:7b            # voice fast-path
-  # Foreground reasoning + chat + specialists: a large model (e.g. MiniMax-M2.7)
+  # Foreground reasoning + chat + specialists: a large model (e.g. DeepSeek-V4-Flash)
   # served via vLLM (OpenAI-compatible) and wired through `inference.backends` in config,
   # OR any capable Ollama model (e.g. qwen3-coder:30b / gemma4:26b) for an all-Ollama setup.
   ```
@@ -725,15 +725,15 @@ Inference runs across **two backends**: a large reasoning model on **vLLM** (Ope
 
 | Role | Model | Backend | Why |
 |------|-------|---------|-----|
-| Chat + foreground specialists + `reason` tool | MiniMax-M2.7-AWQ-4bit | vLLM | Strong multi-step reasoning + tool sequencing, 192K context |
+| Chat + foreground specialists + `reason` tool | DeepSeek-V4-Flash | vLLM | Strong multi-step reasoning + tool sequencing, 256K context |
 | Router | phi4:14b | gateway | Fast classification (~50ms), few-shot |
-| Briefing + Heartbeat (synthesis) | qwen3.6:27b | gateway | Background reasoning, keeps the big GPU free for foreground |
+| Briefing + Heartbeat (synthesis) | DeepSeek-V4-Flash | vLLM | Background reasoning on the foreground model |
 | Embedding | qwen3-embedding:8b | gateway | Vector search for memory + knowledge import |
 | Vision | qwen3.6:27b (multimodal) | gateway | Image analysis |
 | Image Generation | flux2-klein:4b-fp8 | dedicated | Text-to-image |
 | Voice Chat | qwen2.5:7b | gateway | Low-latency responses for voice |
 
-**Design principle:** Code handles deterministic work (time reasoning, urgency scoring, conflict detection, auto-actions). Models handle what requires judgment (synthesis, connection-finding, natural language). The harness holds the value, not the weights — the entire foreground reasoning tier was swapped to MiniMax via config + a new backend client, with the memory graph, pipelines, and channels untouched. Each model is tested pipeline-by-pipeline before promotion.
+**Design principle:** Code handles deterministic work (time reasoning, urgency scoring, conflict detection, auto-actions). Models handle what requires judgment (synthesis, connection-finding, natural language). The harness holds the value, not the weights — the entire foreground reasoning tier has been swapped twice (qwen → MiniMax-M2.7 → DeepSeek-V4-Flash) purely via config + the backend client, with the memory graph, pipelines, and channels untouched. Because the architecture keeps each model's per-call job small and bounded, a big model is never load-bearing: it raises the output ceiling without becoming the floor, so the system still runs on smaller models (just blander). Each model is tested pipeline-by-pipeline before promotion.
 
 ### Router Training Data
 
@@ -836,9 +836,9 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Language | TypeScript 5.7 (strict) |
 | AI Backend | Ollama |
 | Router Model | phi4:14b |
-| Foreground reasoning | MiniMax-M2.7 (vLLM) |
+| Foreground reasoning | DeepSeek-V4-Flash (vLLM) |
 | Utility models | phi4:14b, qwen3.6:27b, qwen3-embedding (gateway) |
-| Briefing Model | qwen3.6:35b |
+| Briefing Model | DeepSeek-V4-Flash (vLLM) |
 | Embedding Model | qwen3-embedding:8b |
 | Reasoning Model | nemotron-3-nano:30b (optional) |
 | Image Generation | flux2-klein:4b-fp8 (dedicated Mac Mini) |
