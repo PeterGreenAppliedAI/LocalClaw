@@ -30,6 +30,7 @@ export const analyticsPipeline: PipelineDefinition = {
     // Stage 1: Load data + compute complete report in Python (deterministic)
     {
       name: 'report',
+      progressLabel: '› Crunching the numbers…',
       type: 'code',
       execute: async (ctx) => {
         const filePath = ctx.params.filePath as string ?? '';
@@ -169,6 +170,7 @@ export const analyticsPipeline: PipelineDefinition = {
     // Stage 2: Generate charts from the data (deterministic Python)
     {
       name: 'generate_charts',
+      progressLabel: '› Building charts…',
       type: 'code',
       execute: async (ctx) => {
         const filePath = ctx.params.filePath as string ?? '';
@@ -308,6 +310,7 @@ export const analyticsPipeline: PipelineDefinition = {
     // Stage 3: LLM interprets — ONLY adds "so what", never formats or computes
     {
       name: 'interpret',
+      progressLabel: '› Writing the analysis…',
       type: 'llm',
       stream: true,
       temperature: 0.5,

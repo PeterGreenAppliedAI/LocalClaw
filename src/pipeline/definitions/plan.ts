@@ -324,6 +324,7 @@ export const planPipeline: PipelineDefinition = {
     // Stage 1: Generate the plan (uses skill template if matched)
     {
       name: 'generate_plan',
+      progressLabel: '› Breaking this into steps…',
       type: 'llm',
       temperature: 0.3,
       maxTokens: 2048,
@@ -435,6 +436,7 @@ export const planPipeline: PipelineDefinition = {
     // Stage 4: Execute steps in a loop
     {
       name: 'execute_steps',
+      progressLabel: '› Working through the steps…',
       type: 'loop',
       maxIterations: 15,
       continueIf: (ctx) => {

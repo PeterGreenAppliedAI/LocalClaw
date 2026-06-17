@@ -1268,7 +1268,15 @@ export class Orchestrator {
 
         msg.onProgress?.('thinking');
 
-        const result = await dispatchMessage({ ...dispatchBase, onStream });
+        // Step-wise progress: long pipelines emit milestone notes; surface each as its own message
+        // so the channel doesn't look dead during multi-minute runs. Fire-and-forget, never blocks.
+        const onProgress = (note: string) => {
+          this.channelRegistry
+            .send({ channel: msg.channel, channelId: msg.channelId! }, { text: note })
+            .catch(err => console.warn('[Orchestrator] Progress send failed:', err instanceof Error ? err.message : err));
+        };
+
+        const result = await dispatchMessage({ ...dispatchBase, onStream, onProgress });
 
         console.log(`[Orchestrator] → ${result.category} (${result.iterations} steps)`);
 

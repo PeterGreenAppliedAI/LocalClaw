@@ -45,6 +45,8 @@ export interface PipelineContext {
   answer?: string;
   /** Stream callback — stages with stream: true will use this for progressive output */
   onStream?: (delta: string) => void;
+  /** Progress callback — fired at labeled stage boundaries so channels can surface step-wise updates. */
+  onProgress?: (note: string) => void;
   /** Execution metrics collector — plan pipeline records step-level data here */
   metricsCollector?: import('../metrics/collector.js').MetricsCollector;
   /** Sub-dispatch function — sends a message to a specialist and returns the result.
@@ -73,6 +75,9 @@ interface BaseStage {
   name: string;
   /** Skip this stage if condition returns false */
   when?: (ctx: PipelineContext) => boolean;
+  /** User-facing progress note emitted via ctx.onProgress before this stage runs (e.g. "Searching the
+   *  web…"). Only set on a curated few milestone stages — leave undefined to stay silent. */
+  progressLabel?: string;
 }
 
 /** Call a specific tool with computed params */

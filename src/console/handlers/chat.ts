@@ -261,6 +261,10 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse, deps
       },
       ...(hasImage ? { overrideCategory: 'chat' } : {}),
       factStore: deps.factStore,
+      // Step-wise progress: surface milestone notes from long pipelines as SSE status events.
+      onProgress: (note: string) => {
+        res.write(`data: ${JSON.stringify({ type: 'status', message: note })}\n\n`);
+      },
     });
 
     const images = extractImagePaths(result);

@@ -115,6 +115,8 @@ export interface DispatchParams {
   classifyText?: string;
   /** Stream callback — called with text deltas for progressive output */
   onStream?: (delta: string) => void;
+  /** Progress callback — called with a user-facing note at labeled pipeline stage boundaries */
+  onProgress?: (note: string) => void;
   /** Override model — used by voice for faster responses */
   modelOverride?: string;
   /** Cron mode — strips write_file from tool set so automated tasks can't create files */
@@ -1081,6 +1083,7 @@ async function runPipelineDispatch(
     routerModel: config.router?.model,
     sourceContext: params.sourceContext,
     onStream: params.onStream,
+    onProgress: params.onProgress,
     conversational: !params.cronMode && (() => {
       const state = params.sessionStore?.loadState(agentId, sessionKey ?? 'default');
       return !!state && state.turnCount > 0;

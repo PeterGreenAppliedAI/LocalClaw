@@ -195,6 +195,7 @@ export const researchPipeline: PipelineDefinition = {
     // 2. Decompose the topic into 4-6 distinct facets
     {
       name: 'decompose',
+      progressLabel: '› Planning the research…',
       type: 'llm',
       temperature: 0.3,
       maxTokens: 700,
@@ -232,6 +233,7 @@ export const researchPipeline: PipelineDefinition = {
     // 4. Investigate each facet in parallel (search → fetch → synthesize)
     {
       name: 'research_angles',
+      progressLabel: '› Searching the web and reading sources…',
       type: 'code',
       execute: async (ctx) => {
         const angles = ctx.params._angles as string[];
@@ -284,6 +286,7 @@ export const researchPipeline: PipelineDefinition = {
     // 6. Final analytical synthesis → markdown report (+ optional charts spec)
     {
       name: 'final_synthesis',
+      progressLabel: '› Writing the report…',
       type: 'llm',
       temperature: 0.4,
       maxTokens: 8192,
@@ -370,6 +373,7 @@ export const researchPipeline: PipelineDefinition = {
     //     not the single — often mis-numbered — cited URL). No independent search.
     {
       name: 'verify_claims',
+      progressLabel: '› Verifying claims against sources…',
       type: 'code',
       when: (ctx) => ((ctx.params._claims as Claim[] | undefined)?.length ?? 0) > 0,
       execute: async (ctx) => {
@@ -577,6 +581,7 @@ export const researchPipeline: PipelineDefinition = {
     // 10. HTML → PDF via LibreOffice (document tool)
     {
       name: 'convert_pdf',
+      progressLabel: '› Rendering the PDF…',
       type: 'tool',
       tool: 'document',
       resolveParams: (ctx) => ({

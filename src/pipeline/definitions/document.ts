@@ -74,6 +74,7 @@ export const documentPipeline: PipelineDefinition = {
     //     This is the only thing the model touches — it does not choose tools or render anything.
     {
       name: 'structure',
+      progressLabel: '› Formatting the document…',
       type: 'llm',
       when: (ctx) => ctx.params._mode !== 'append',
       temperature: 0.3,
@@ -96,6 +97,7 @@ export const documentPipeline: PipelineDefinition = {
     //     COMPLETE updated document. Preserve existing content verbatim — this is a revision, not a rewrite.
     {
       name: 'merge',
+      progressLabel: '› Merging in your changes…',
       type: 'llm',
       when: (ctx) => ctx.params._mode === 'append',
       temperature: 0.3,
@@ -144,6 +146,7 @@ export const documentPipeline: PipelineDefinition = {
     // 3. CODE invokes the document tool to make the PDF. The model is not in this loop.
     {
       name: 'convert_pdf',
+      progressLabel: '› Rendering the PDF…',
       type: 'tool',
       tool: 'document',
       when: (ctx) => !ctx.abort,

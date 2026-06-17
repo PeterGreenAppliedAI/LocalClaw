@@ -18,6 +18,12 @@ async function executeStage(stage: PipelineStage, ctx: PipelineContext): Promise
     return undefined;
   }
 
+  // Surface a user-facing progress note for curated milestone stages (skipped stages stay silent).
+  if (stage.progressLabel && ctx.onProgress) {
+    try { ctx.onProgress(stage.progressLabel); }
+    catch (err) { console.warn('[Pipeline] onProgress failed:', err instanceof Error ? err.message : err); }
+  }
+
   console.log(`[Pipeline] Running stage "${stage.name}" (${stage.type})`);
 
   switch (stage.type) {
