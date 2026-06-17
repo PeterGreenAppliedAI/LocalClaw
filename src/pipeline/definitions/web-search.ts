@@ -34,6 +34,7 @@ export const webSearchPipeline: PipelineDefinition = {
     },
     {
       name: 'search',
+      progressLabel: '› Searching the web…',
       type: 'tool',
       tool: 'web_search',
       resolveParams: (ctx) => {
@@ -68,6 +69,7 @@ export const webSearchPipeline: PipelineDefinition = {
     },
     {
       name: 'fetch_pages',
+      progressLabel: '› Reading the top results…',
       type: 'parallel_tool',
       tool: 'web_fetch',
       resolveParamsList: (ctx) => {
@@ -88,6 +90,7 @@ export const webSearchPipeline: PipelineDefinition = {
     },
     {
       name: 'synthesize',
+      progressLabel: '› Writing the answer…',
       type: 'llm',
       stream: true,
       temperature: 0.4,
