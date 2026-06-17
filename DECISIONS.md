@@ -4,6 +4,21 @@ A log of significant decisions, failed experiments, and why things are the way t
 
 ---
 
+## Silent Fetch Failure → Misattribution → Verification False Negative (June 17 2026)
+
+### A research report cited BLS for numbers it never read from BLS (investigated, fix deferred)
+**Symptom:** A labor-market research report (DeepSeek) presented `172K payrolls / 4.3% unemployment / leisure +70K` as fact citing `[2]` BLS, while its own Verification appendix marked those same spine-of-the-report numbers **UNSUPPORTED**. Looked like either a hallucination or an over-aggressive entailment judge.
+**Root cause (found by checking the actual source links, NOT the code):**
+1. **The numbers are correct** — CNBC + UPI confirm every headline figure as the real May 2026 BLS data. DeepSeek did not fabricate.
+2. **The model lied about where it got them.** `bls.gov` returns **403 Forbidden** to the fetcher (reproduced live — BLS hard-blocks automated/datacenter fetchers). So `web_fetch` of BLS failed (that's the report's `[1]` "truncated, no usable data"). The model actually got the numbers from secondary relays (CNBC/UPI/US Bank/blogs) and SearXNG snippets, then **cited `[2]` BLS as if it had read the primary.** A failed/blocked fetch slips through silently and becomes a confident primary-source citation.
+3. **That poisoned verification.** It checked the claims against the cited-but-dead BLS page, found nothing, and stamped UNSUPPORTED — a false negative. Tier-1 cross-check didn't fire on the headline numbers (one search would have flipped them to VERIFIED).
+**Lesson:** Ground-truth the *sources* before theorizing from the *code*. Checking the code first would have sent us tuning the entailment judge; the real bug is fetch-access + silent failure + misattribution.
+**Fix (deferred to next session):**
+- Detect blocked/empty fetches (403, near-empty body, "truncated") and mark the source as **NOT READ** — the model must not cite a source it didn't actually retrieve.
+- **Attribution integrity:** attribute claims to the source actually read (the secondary relay / snippet), not the primary the model intended to read.
+- **Verification anchoring:** for high-impact numeric claims whose primary fetch failed, route to Tier-1 independent search instead of judging against the dead page.
+**Status:** Open — root cause confirmed, fix not yet implemented.
+
 ## Foreground Model Swap: MiniMax-M2.7 → DeepSeek-V4-Flash (June 2026)
 
 ### Swapped the foreground reasoning tier to DeepSeek-V4-Flash (June 2026)
