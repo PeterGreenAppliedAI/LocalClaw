@@ -121,6 +121,7 @@ ${memory}
 ${staleFacts ? `\n## Stale Context (may be outdated — mention if relevant)\n${staleFacts}` : ''}
 
 RULES:
+- Write the ENTIRE update in English. Source data may contain non-English names or terms, but your output must be English regardless.
 - The Calendar section above is the ONLY source of truth for events. NEVER invent, fabricate, or recall events from memory.
 - Day labels like [TODAY], [TOMORROW], [in 3 days] are AUTHORITATIVE. Never contradict them.
 - Urgency tiers (critical/high/medium/low) are AUTHORITATIVE. Never say something is urgent if labeled low or dormant.
@@ -137,7 +138,7 @@ Write a useful ${timeOfDay} update:
 - If nothing notable beyond the calendar, say so briefly.
 - NEVER ask questions. This is a one-way notification.
 - Do NOT repeat yourself or add a "Final update:" section.
-- After your reasoning, write your final update OUTSIDE of any think tags. /no_think`,
+- After your reasoning, write your final update OUTSIDE of any think tags. Write it in English. /no_think`,
       }],
       options: { temperature: 0.6, num_predict: 8192 },
     });
