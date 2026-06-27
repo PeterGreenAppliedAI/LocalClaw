@@ -117,6 +117,9 @@ export interface DispatchParams {
   onStream?: (delta: string) => void;
   /** Progress callback — called with a user-facing note at labeled pipeline stage boundaries */
   onProgress?: (note: string) => void;
+  /** Force the code_gen pipeline to MODIFY this existing build slug (deterministic — bypasses the
+   *  enrich stage guessing which project a request refers to). Used by the console "Continue" flow. */
+  codeTargetSlug?: string;
   /** Override model — used by voice for faster responses */
   modelOverride?: string;
   /** Cron mode — strips write_file from tool set so automated tasks can't create files */
@@ -1069,7 +1072,7 @@ async function runPipelineDispatch(
 
   const ctx: PipelineContext = {
     userMessage: pipelineMessage,
-    params: { _verification: config.verification, _pi: config.pi },
+    params: { _verification: config.verification, _pi: config.pi, _codeTargetSlug: params.codeTargetSlug },
     stageResults: {},
     steps: [],
     client,

@@ -24,6 +24,91 @@ function StatusBadge({ status }: { status: BuildStatus }) {
   );
 }
 
+/** Shared SSE build runner — used by both the Drive box (new build) and the per-build Continue input. */
+function useBuildRunner() {
+  const qc = useQueryClient();
+  const [running, setRunning] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
+  const [result, setResult] = useState<string | null>(null);
+
+  const run = async (message: string, targetSlug?: string) => {
+    if (!message.trim() || running) return;
+    setRunning(true);
+    setResult(null);
+    setLog([targetSlug ? `› Continuing ${targetSlug}…` : '› Sending build request…']);
+    try {
+      const token = getToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch('/console/api/code/build', { method: 'POST', headers, body: JSON.stringify({ message, targetSlug }) });
+      const reader = res.body?.getReader();
+      if (!reader) { setLog(l => [...l, 'Error: no response stream']); return; }
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.type === 'status') setLog(l => [...l, ev.message]);
+            else if (ev.type === 'done') { setResult(ev.answer); setLog(l => [...l, '✓ done']); }
+            else if (ev.type === 'error') setLog(l => [...l, `✗ ${ev.error}`]);
+          } catch { /* skip */ }
+        }
+      }
+    } catch (err) {
+      setLog(l => [...l, `✗ ${err instanceof Error ? err.message : 'network error'}`]);
+    } finally {
+      setRunning(false);
+      qc.invalidateQueries({ queryKey: ['builds'] });
+    }
+  };
+
+  return { running, log, result, run };
+}
+
+/** Build input + live run log. `targetSlug` set → "Continue" mode (deterministic MODIFY). */
+function BuildRunner({ targetSlug, placeholder }: { targetSlug?: string; placeholder: string }) {
+  const { running, log, result, run } = useBuildRunner();
+  const [prompt, setPrompt] = useState('');
+  const submit = () => { run(prompt, targetSlug); setPrompt(''); };
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+      <textarea
+        value={prompt}
+        onChange={e => setPrompt(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(); }}
+        placeholder={placeholder}
+        rows={2}
+        disabled={running}
+        className="w-full bg-zinc-950 border border-zinc-800 rounded p-3 text-sm text-zinc-200 resize-none focus:outline-none focus:border-zinc-600 disabled:opacity-60"
+      />
+      <div className="flex items-center justify-between mt-2">
+        <span className="text-xs text-zinc-600">⌘/Ctrl+Enter to run · build → test → fix → commit</span>
+        <button
+          onClick={submit}
+          disabled={running || !prompt.trim()}
+          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-1.5 rounded text-sm font-medium flex items-center gap-2"
+        >
+          {running ? <><Loader2 size={14} className="animate-spin" /> {targetSlug ? 'Updating…' : 'Building…'}</> : <><Play size={14} /> {targetSlug ? 'Continue build' : 'Build'}</>}
+        </button>
+      </div>
+      {(log.length > 0 || result) && (
+        <div className="mt-3 bg-zinc-950 border border-zinc-800 rounded p-3 font-mono text-xs max-h-72 overflow-y-auto">
+          {log.map((line, i) => <div key={i} className="text-zinc-400">{line}</div>)}
+          {result && <div className="mt-2 pt-2 border-t border-zinc-800 text-zinc-300 whitespace-pre-wrap font-sans">{result}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BuildDetailView({ slug, onBack }: { slug: string; onBack: () => void }) {
   const { data: build, isLoading } = useBuild(slug);
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -40,6 +125,9 @@ function BuildDetailView({ slug, onBack }: { slug: string; onBack: () => void })
       {build?.lastCommit && (
         <p className="text-xs text-zinc-500 mb-4">{build.lastCommit} &middot; {formatDate(build.lastCommitAt)}</p>
       )}
+      <div className="mb-4">
+        <BuildRunner targetSlug={slug} placeholder={`Continue working on ${slug} — e.g. "add a subtract() function and tests"`} />
+      </div>
       {isLoading && <p className="text-zinc-500 text-sm">Loading...</p>}
       {!isLoading && files.length === 0 && <p className="text-zinc-500 text-sm">No source files.</p>}
       {files.length > 0 && (
@@ -65,60 +153,15 @@ function BuildDetailView({ slug, onBack }: { slug: string; onBack: () => void })
 }
 
 export default function Code() {
-  const qc = useQueryClient();
   const { data: builds = [], isLoading } = useBuilds();
   const deleteBuild = useDeleteBuild();
   const [selected, setSelected] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState('');
-  const [running, setRunning] = useState(false);
-  const [log, setLog] = useState<string[]>([]);
-  const [result, setResult] = useState<string | null>(null);
 
   const handleDelete = (e: React.MouseEvent, slug: string) => {
     e.stopPropagation();
     if (confirm(`Delete build "${slug}"? This removes the project directory.`)) {
       deleteBuild.mutate(slug);
       if (selected === slug) setSelected(null);
-    }
-  };
-
-  const runBuild = async () => {
-    const message = prompt.trim();
-    if (!message || running) return;
-    setRunning(true);
-    setResult(null);
-    setLog([`› Sending build request…`]);
-    try {
-      const token = getToken();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch('/console/api/code/build', { method: 'POST', headers, body: JSON.stringify({ message }) });
-      const reader = res.body?.getReader();
-      if (!reader) { setLog(l => [...l, 'Error: no response stream']); setRunning(false); return; }
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const ev = JSON.parse(line.slice(6));
-            if (ev.type === 'status') setLog(l => [...l, ev.message]);
-            else if (ev.type === 'done') { setResult(ev.answer); setLog(l => [...l, '✓ done']); }
-            else if (ev.type === 'error') setLog(l => [...l, `✗ ${ev.error}`]);
-          } catch { /* skip */ }
-        }
-      }
-    } catch (err) {
-      setLog(l => [...l, `✗ ${err instanceof Error ? err.message : 'network error'}`]);
-    } finally {
-      setRunning(false);
-      setPrompt('');
-      qc.invalidateQueries({ queryKey: ['builds'] });
     }
   };
 
@@ -133,33 +176,9 @@ export default function Code() {
         <p className="text-sm text-zinc-500 mt-1">Projects built by the Pi coding agent.</p>
       </div>
 
-      {/* Drive: kick off a build and watch it stream */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 mb-6">
-        <textarea
-          value={prompt}
-          onChange={e => setPrompt(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runBuild(); }}
-          placeholder="Describe what to build — e.g. a Python CLI that converts CSV to JSON, with pytest tests"
-          rows={2}
-          disabled={running}
-          className="w-full bg-zinc-950 border border-zinc-800 rounded p-3 text-sm text-zinc-200 resize-none focus:outline-none focus:border-zinc-600 disabled:opacity-60"
-        />
-        <div className="flex items-center justify-between mt-2">
-          <span className="text-xs text-zinc-600">⌘/Ctrl+Enter to run · runs the full pipeline (build → test → fix → commit)</span>
-          <button
-            onClick={runBuild}
-            disabled={running || !prompt.trim()}
-            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-1.5 rounded text-sm font-medium flex items-center gap-2"
-          >
-            {running ? <><Loader2 size={14} className="animate-spin" /> Building…</> : <><Play size={14} /> Build</>}
-          </button>
-        </div>
-        {(log.length > 0 || result) && (
-          <div className="mt-3 bg-zinc-950 border border-zinc-800 rounded p-3 font-mono text-xs max-h-72 overflow-y-auto">
-            {log.map((line, i) => <div key={i} className="text-zinc-400">{line}</div>)}
-            {result && <div className="mt-2 pt-2 border-t border-zinc-800 text-zinc-300 whitespace-pre-wrap font-sans">{result}</div>}
-          </div>
-        )}
+      {/* Drive: kick off a new build and watch it stream */}
+      <div className="mb-6">
+        <BuildRunner placeholder="Describe what to build — e.g. a Python CLI that converts CSV to JSON, with pytest tests" />
       </div>
 
       {isLoading && <p className="text-zinc-500 text-sm">Loading...</p>}

@@ -123,9 +123,10 @@ export function handleGetBuild(_req: IncomingMessage, res: ServerResponse, deps:
  * Spawns Pi with bash — but cwd-scoped to builds/<slug>/.
  */
 export async function handleCodeBuild(req: IncomingMessage, res: ServerResponse, deps: ConsoleApiDeps): Promise<void> {
-  const body = await parseBody<{ message?: string; senderId?: string }>(req);
+  const body = await parseBody<{ message?: string; senderId?: string; targetSlug?: string }>(req);
   const message = (body.message ?? '').trim();
   if (!message) { sendError(res, 'Missing "message"'); return; }
+  const targetSlug = body.targetSlug?.trim() || undefined;
 
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
   const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -138,6 +139,7 @@ export async function handleCodeBuild(req: IncomingMessage, res: ServerResponse,
     const result = await deps.dispatch({
       message,
       overrideCategory: 'code_gen',
+      codeTargetSlug: targetSlug,
       agentId: route.agentId,
       sessionKey: route.sessionKey,
       sessionStore: deps.sessionStore,

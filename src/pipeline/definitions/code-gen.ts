@@ -186,7 +186,12 @@ export const codeGenPipeline: PipelineDefinition = {
       maxTokens: 1024,
       buildPrompt: (ctx) => {
         const projects = (ctx.params._existingProjects as string[]) || [];
-        const projectList = projects.length > 0
+        const targetSlug = ctx.params._codeTargetSlug as string | undefined;
+        // Deterministic continue: the user explicitly chose a project to keep working on, so write a
+        // modification spec for it — no project-guessing.
+        const projectList = targetSlug
+          ? `\n\nYou are MODIFYING the existing project "${targetSlug}". Write a precise spec for ONLY the requested change to it. Do NOT restate or recreate the whole project. First line: "[MODIFY] ${targetSlug}".`
+          : projects.length > 0
           ? `\n\nEXISTING PROJECTS (can be modified instead of creating new):\n${projects.map(p => `- ${p}`).join('\n')}\n\nIf the user's request references an existing project, write "[MODIFY] <slug>" on the first line (e.g., "[MODIFY] websocket-chat-server"). Otherwise write a new project name.`
           : '';
 
@@ -222,6 +227,15 @@ export const codeGenPipeline: PipelineDefinition = {
         const lines = enrichedPrompt.split('\n');
         const firstLine = lines[0].trim();
         const spec = lines.slice(1).join('\n').trim();
+
+        // Deterministic continue: an explicit target slug forces MODIFY on that project, regardless
+        // of what enrich guessed. The user picked the project by choosing to continue it.
+        const targetSlug = ctx.params._codeTargetSlug as string | undefined;
+        if (targetSlug) {
+          const buildsDir = ctx.params._buildsDir as string;
+          console.log(`[CodeGen] Continue (explicit target): ${targetSlug}`);
+          return { prompt: spec || enrichedPrompt, projectDir: `${buildsDir}/${targetSlug}` };
+        }
 
         // Check for [MODIFY] prefix — re-run Pi in the existing project dir (it reads the files
         // already there). Passing projectDir puts pi_build in fix/modify mode.
