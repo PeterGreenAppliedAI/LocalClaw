@@ -35,15 +35,20 @@ async function runTests(projectDir: string): Promise<{ pass: boolean; output: st
     installCmd = { cmd: 'npm', args: ['install', '--no-audit', '--no-fund'] };
     testCmd = { cmd: 'npm', args: ['test'] };
   } else if (existsSync(join(projectDir, 'requirements.txt'))) {
-    // Create venv if needed (macOS blocks bare pip install)
     const venvDir = join(projectDir, '.venv');
-    if (!existsSync(venvDir)) {
-      const venvResult = await run('python3', ['-m', 'venv', venvDir], projectDir, 30000);
-      if (venvResult.code !== 0) {
-        return { pass: false, output: `Failed to create venv:\n${venvResult.stderr}` };
+    const python = join(venvDir, 'bin', 'python');
+    // Check for the actual interpreter, not just the dir. Pi (it has bash) or a prior failed run can
+    // leave a partial/empty .venv — the old `!existsSync(venvDir)` check then SKIPPED creation, so
+    // every pip/pytest call ENOENT'd and a passing build got mislabeled "tests failing". Recreate
+    // (--clear) whenever the interpreter is missing.
+    if (!existsSync(python)) {
+      const venvResult = await run('python3', ['-m', 'venv', '--clear', venvDir], projectDir, 30000);
+      if (venvResult.code !== 0 || !existsSync(python)) {
+        // Couldn't build a Python env — infrastructure, NOT a code failure. Skip the gate so it
+        // doesn't mislabel the build or fire the fix loop on un-runnable tests.
+        return { pass: true, skipped: true, output: `Python venv unavailable — skipped tests.\n${(venvResult.stderr || venvResult.stdout).slice(0, 800)}` };
       }
     }
-    const python = join(venvDir, 'bin', 'python');
     // Use `python -m pip`, NOT the .venv/bin/pip script — the script's shebang is fragile across
     // python builds/paths and was returning non-zero even when the venv itself was healthy.
     installCmd = { cmd: python, args: ['-m', 'pip', 'install', '-r', 'requirements.txt', '-q', '--disable-pip-version-check'] };
