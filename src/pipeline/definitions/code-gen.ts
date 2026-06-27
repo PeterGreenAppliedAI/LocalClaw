@@ -180,6 +180,7 @@ export const codeGenPipeline: PipelineDefinition = {
     },
     {
       name: 'enrich',
+      progressLabel: '› Planning the build…',
       type: 'llm',
       temperature: 0.3,
       maxTokens: 1024,
@@ -212,6 +213,7 @@ export const codeGenPipeline: PipelineDefinition = {
     },
     {
       name: 'build',
+      progressLabel: '› Writing the code…',
       type: 'tool',
       tool: 'pi_build',
       resolveParams: (ctx) => {
@@ -238,6 +240,7 @@ export const codeGenPipeline: PipelineDefinition = {
     },
     {
       name: 'verify',
+      progressLabel: '› Running the tests…',
       type: 'code',
       execute: async (ctx: PipelineContext) => {
         const buildResult = ctx.stageResults.build as string;
@@ -253,6 +256,7 @@ export const codeGenPipeline: PipelineDefinition = {
     },
     {
       name: 'fix',
+      progressLabel: '› Tests failed — fixing…',
       type: 'code',
       when: (ctx) => {
         const result = ctx.params._verifyResult as any;
@@ -297,6 +301,7 @@ export const codeGenPipeline: PipelineDefinition = {
     },
     {
       name: 'commit',
+      progressLabel: '› Committing…',
       type: 'code',
       when: (ctx) => !!ctx.params._projectDir && (ctx.params._pi as { git?: { commitLocal?: boolean } } | undefined)?.git?.commitLocal !== false,
       execute: async (ctx: PipelineContext) => {

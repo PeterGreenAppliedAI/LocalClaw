@@ -3,7 +3,9 @@ import { readdirSync, statSync, readFileSync, existsSync, rmSync } from 'node:fs
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { ConsoleApiDeps } from '../types.js';
-import { sendJson } from '../helpers/send-json.js';
+import { sendJson, sendError } from '../helpers/send-json.js';
+import { parseBody } from '../helpers/parse-body.js';
+import { resolveRoute } from '../../agents/resolve-route.js';
 import { resolveWorkspacePath } from '../../agents/scope.js';
 
 export type BuildStatus = 'passing' | 'failing' | 'unknown';
@@ -113,6 +115,44 @@ export function handleGetBuild(_req: IncomingMessage, res: ServerResponse, deps:
     lastCommitAt: git?.date,
     files,
   });
+}
+
+/**
+ * Drive a build: dispatch a prompt through the code_gen pipeline and SSE-stream stage progress +
+ * the final report. Owner access is the console's Bearer-token gate (enforced before this runs).
+ * Spawns Pi with bash — but cwd-scoped to builds/<slug>/.
+ */
+export async function handleCodeBuild(req: IncomingMessage, res: ServerResponse, deps: ConsoleApiDeps): Promise<void> {
+  const body = await parseBody<{ message?: string; senderId?: string }>(req);
+  const message = (body.message ?? '').trim();
+  if (!message) { sendError(res, 'Missing "message"'); return; }
+
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+  const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  const keepalive = setInterval(() => res.write(': keepalive\n\n'), 15_000);
+
+  try {
+    const senderId = body.senderId ?? deps.config.heartbeat?.delivery?.target ?? 'console-user';
+    const route = resolveRoute({ channel: 'console', senderId, channelId: 'console' }, deps.config);
+
+    const result = await deps.dispatch({
+      message,
+      overrideCategory: 'code_gen',
+      agentId: route.agentId,
+      sessionKey: route.sessionKey,
+      sessionStore: deps.sessionStore,
+      sourceContext: { channel: 'console', channelId: 'console', senderId },
+      factStore: deps.factStore,
+      onProgress: (note: string) => send({ type: 'status', message: note }),
+    });
+
+    send({ type: 'done', answer: result.answer, category: result.category, iterations: result.iterations });
+  } catch (err) {
+    send({ type: 'error', error: err instanceof Error ? err.message : 'Build failed' });
+  } finally {
+    clearInterval(keepalive);
+    res.end();
+  }
 }
 
 export function handleDeleteBuild(_req: IncomingMessage, res: ServerResponse, deps: ConsoleApiDeps, slug: string): void {

@@ -11,7 +11,7 @@ import { handleTools } from './handlers/tools.js';
 import { handleChat, handleChatReset, handleChatHistory } from './handlers/chat.js';
 import { handleServeFile } from './handlers/files.js';
 import { handleListResearch, handleDeleteResearch } from './handlers/research.js';
-import { handleListBuilds, handleGetBuild, handleDeleteBuild } from './handlers/code.js';
+import { handleListBuilds, handleGetBuild, handleDeleteBuild, handleCodeBuild } from './handlers/code.js';
 import { remoteBridge } from '../browser/remote-bridge.js';
 
 const API_PREFIX = '/console/api/';
@@ -268,6 +268,10 @@ export async function handleConsoleRequest(
     // Code builds (Pi coding agent)
     if (path === 'code/builds' && method === 'GET') {
       handleListBuilds(req, res, deps);
+      return true;
+    }
+    if (path === 'code/build' && method === 'POST') {
+      await handleCodeBuild(req, res, deps);
       return true;
     }
     const buildMatch = path.match(/^code\/builds\/([^/]+)$/);
