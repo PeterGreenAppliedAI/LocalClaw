@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, MessageSquare, ScrollText, ListTodo,
-  Clock, Brain, Radio, Wrench, Settings, BookOpen, Activity,
+  Clock, Brain, Radio, Wrench, Settings, BookOpen, Activity, Terminal,
 } from 'lucide-react';
 
 const links = [
@@ -14,6 +14,7 @@ const links = [
   { to: '/metrics', icon: Activity, label: 'Metrics' },
   { to: '/channels', icon: Radio, label: 'Channels' },
   { to: '/research', icon: BookOpen, label: 'Research' },
+  { to: '/code', icon: Terminal, label: 'Code' },
   { to: '/tools', icon: Wrench, label: 'Tools' },
   { to: '/config', icon: Settings, label: 'Config' },
 ];

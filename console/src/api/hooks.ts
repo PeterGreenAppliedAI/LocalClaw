@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchApi } from './client';
-import type { SystemStatus, OllamaModel, ChannelInfo, SessionMeta, ConversationTurn, Task, CronJob, FactEntry, ToolInfo, ResearchDeck } from '../types';
+import type { SystemStatus, OllamaModel, ChannelInfo, SessionMeta, ConversationTurn, Task, CronJob, FactEntry, ToolInfo, ResearchDeck, BuildMeta, BuildDetail } from '../types';
 
 // --- System ---
 export function useStatus() {
@@ -142,6 +142,21 @@ export function useDeleteResearchDeck() {
   return useMutation({
     mutationFn: (slug: string) => fetchApi(`/research/${slug}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['research'] }),
+  });
+}
+
+// --- Code builds (Pi coding agent) ---
+export function useBuilds() {
+  return useQuery<BuildMeta[]>({ queryKey: ['builds'], queryFn: () => fetchApi('/code/builds'), refetchInterval: 15_000 });
+}
+export function useBuild(slug: string | null) {
+  return useQuery<BuildDetail>({ queryKey: ['builds', slug], queryFn: () => fetchApi(`/code/builds/${slug}`), enabled: !!slug });
+}
+export function useDeleteBuild() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => fetchApi(`/code/builds/${slug}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['builds'] }),
   });
 }
 

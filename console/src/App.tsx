@@ -14,6 +14,7 @@ import Tools from './pages/Tools';
 import Config from './pages/Config';
 import Research from './pages/Research';
 import Metrics from './pages/Metrics';
+import Code from './pages/Code';
 
 export default function App() {
   const [authed, setAuthed] = useState(() => !!getToken());
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="tools" element={<Tools />} />
         <Route path="config" element={<Config />} />
         <Route path="research" element={<Research />} />
+        <Route path="code" element={<Code />} />
         <Route path="metrics" element={<Metrics />} />
       </Route>
     </Routes>

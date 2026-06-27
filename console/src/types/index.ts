@@ -89,6 +89,32 @@ export interface ResearchDeck {
   url: string;
 }
 
+export type BuildStatus = 'passing' | 'failing' | 'unknown';
+
+export interface BuildMeta {
+  slug: string;
+  status: BuildStatus;
+  committed: boolean;
+  lastCommit?: string;
+  lastCommitAt?: string;
+  fileCount: number;
+}
+
+export interface BuildFile {
+  path: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface BuildDetail {
+  slug: string;
+  status: BuildStatus;
+  committed: boolean;
+  lastCommit?: string;
+  lastCommitAt?: string;
+  files: BuildFile[];
+}
+
 export interface ToolInfo {
   name: string;
   description: string;
