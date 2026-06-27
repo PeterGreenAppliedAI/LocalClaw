@@ -47,20 +47,6 @@ export function installFalkorDB(): boolean {
   return runInstall('docker run -d --name falkordb -p 6379:6379 -v falkordb_data:/var/lib/falkordb/data falkordb/falkordb:latest');
 }
 
-/** Install OpenCode based on detected platform. */
-export function installOpenCode(): boolean {
-  const p = detectPlatform();
-  if (p === 'mac') {
-    if (commandExists('brew')) return runInstall('brew install opencode');
-    return runInstall('curl -fsSL https://opencode.ai/install | bash');
-  }
-  if (p === 'linux') {
-    if (commandExists('brew')) return runInstall('brew install opencode');
-    return runInstall('curl -fsSL https://opencode.ai/install | bash');
-  }
-  // Windows — try npm as most reliable cross-platform fallback
-  return runInstall('npm i -g opencode-ai@latest');
-}
 
 export interface OllamaTestResult {
   available: boolean;

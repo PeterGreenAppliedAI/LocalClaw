@@ -105,7 +105,7 @@ function getEnabledCategories(state: WizardState): Set<string> {
     enabled.add('image');
   }
 
-  if (state.services.openCode.enabled) {
+  if (state.services.pi.enabled) {
     enabled.add('code_gen');
   }
 
@@ -308,14 +308,13 @@ ${state.models.inferenceBackends.map(b => `      { url: "${b.url}", models: [${b
   },`;
   }
 
-  // OpenCode block
-  let openCodeBlock = '';
-  if (state.services.openCode.enabled) {
-    openCodeBlock = `
-  openCode: {
+  // Pi coding agent block
+  let piBlock = '';
+  if (state.services.pi.enabled) {
+    piBlock = `
+  pi: {
     enabled: true,
-    port: ${state.services.openCode.port ?? 3500},
-    defaultModel: "ollama/${defaultModel}",
+    model: "${state.services.pi.model ?? 'vllm/deepseek-v4-flash'}",
   },`;
   }
 
@@ -405,7 +404,7 @@ ${execBlock}
 
   ${sttBlock}
 
-  ${visionBlock}${reasoningBlock}${imageGenBlock}${openCodeBlock}${voiceBlock}
+  ${visionBlock}${reasoningBlock}${imageGenBlock}${piBlock}${voiceBlock}
 }
 `;
 }

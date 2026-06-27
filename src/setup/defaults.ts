@@ -110,11 +110,11 @@ export const SPECIALIST_TEMPLATES: Record<string, SpecialistTemplate> = {
     tools: ['image_generate', 'diagram_generate', 'read_file'],
   },
   code_gen: {
-    systemPrompt: 'You are a code generation specialist. Use opencode_build to delegate coding tasks to the OpenCode agent. Use opencode_status to check build progress.',
+    systemPrompt: 'You are a code generation specialist. Use pi_build to implement coding tasks with the Pi coding agent.',
     maxTokens: 2048,
     temperature: 0.3,
     maxIterations: 3,
-    tools: ['opencode_build', 'opencode_status'],
+    tools: ['pi_build'],
     pipeline: 'code_gen',
   },
   analytics: {

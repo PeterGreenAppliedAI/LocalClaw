@@ -103,7 +103,7 @@ Post-classification layers: sticky routing (keeps follow-ups on chat), conversat
 | cron | Branched (4) | llm_branch → extract → tool → confirm |
 | message | Linear | extract → tool → confirm |
 | plan (multi) | Meta | LLM plan → self-reflect → execute loop (sub-dispatches) → summarize |
-| code_gen | Linear | list projects → enrich → build → verify → [fix] → report |
+| code_gen | Linear | list projects → enrich → Pi build (cwd-scoped) → verify (tests) → [fix] → commit → report |
 | heartbeat | Deterministic | fact diff (code) → LLM reasoning → task board (code) → LLM summary |
 | website | ReAct | web_fetch → browser fallback → summarize |
 

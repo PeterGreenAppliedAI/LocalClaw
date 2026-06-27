@@ -77,7 +77,7 @@ The console uses React + Vite + TailwindCSS, served as static files from the sam
 | Context Compaction | *(automatic)* | Structured compression (Goal/Progress/Next Steps), proactive at 50% budget, tool-pair sanitization |
 | Document Gen | `document` | Create and convert documents via LibreOffice headless — HTML/CSV → PDF/DOCX/XLSX/PPTX |
 | Image Gen | `image_generate` | Text-to-image and img2img via Flux model on dedicated hardware (Ollama) |
-| Code Generation | `opencode_build`, `opencode_status` | Delegate coding tasks to [OpenCode](https://opencode.ai) agent — scaffold projects, write tests, iterate. Isolated workspace. |
+| Code Generation | `pi_build` | Build code with the [Pi](https://pi.dev) agent — scaffold projects, write tests, auto-commit. Cwd-scoped to an isolated build dir. |
 | Browser Companion | Chrome Extension | Side panel rides shotgun while you browse — summarize pages, ask about selected text, right-click context menus. Page content injected directly, no fetching needed |
 | Self-Improvement | *(automatic)* | Error learning store, tool-specific recovery guidance, drift detection, observation summarization, learning promotion via heartbeat |
 | CLI | `npm run cli` | Terminal interface with streaming, slash commands, markdown rendering, session persistence |
@@ -128,7 +128,7 @@ npm run setup
 - Owner ID + per-channel trusted users for security gating
 - Web search, TTS/STT, Vision, Browser configuration
 - FalkorDB graph memory (auto-install via Docker if not running)
-- OpenCode AI coding agent (auto-install via brew/npm/curl)
+- Pi coding agent (bundled npm dependency — no separate install)
 - Heartbeat scheduling with delivery channel selection
 - Reasoning model, image generation, and advanced features
 - Workspace bootstrap (SOUL.md, USER.md, IDENTITY.md, etc.)
@@ -753,31 +753,24 @@ Synthetic and system messages are filtered out. Over time this builds a dataset 
 
 **Temporal intelligence:** Task urgency and calendar event labeling are computed in code (`src/temporal/urgency.ts`), not by the model. Tasks get urgency tiers (critical/high/medium/low/dormant) and calendar events get relative day labels ([TODAY], [TOMORROW], [in N days]). Models receive pre-labeled data with instructions that labels are authoritative. This prevents models from hallucinating urgency or placing events on wrong days.
 
-### Code Generation (OpenCode)
+### Code Generation (Pi / picoder)
 
-LocalClaw delegates coding tasks to [OpenCode](https://opencode.ai), an open-source AI coding agent. Rather than building a coding agent from scratch, LocalClaw integrates with OpenCode the same way it integrates with Ollama for inference and FalkorDB for memory — each tool does what it's best at.
+LocalClaw delegates coding tasks to [Pi](https://pi.dev) (`@earendil-works/pi-coding-agent`), an open-source local-first coding agent. Code owns the workflow; Pi fills the bounded "write the files" slot, and the **test result** — not the model — is the gate.
 
 **How it works:**
-1. User: "Build a REST API with tests" → routes to `code_gen` specialist
-2. Specialist calls `opencode_build` tool → connects to OpenCode headless server via SDK
-3. OpenCode generates code, writes files, runs tests, iterates — using the same Ollama models
-4. Results: files in `data/workspaces/main/builds/`, summary delivered to Discord
+1. User: "Build a REST API with tests" → routes to the `code_gen` specialist
+2. The pipeline enriches the request into a spec, then calls `pi_build` — which runs Pi **headless, scoped to `builds/<slug>/`** (every write is confined to that dir; it cannot touch LocalClaw's own source)
+3. The pipeline runs the project's tests. If they fail, it re-runs Pi in the dir with the errors (bounded fix loop); the gate's verdict is the actual test outcome
+4. On settle, it makes an **autonomous local git commit** (remote GitHub push is opt-in, off by default), then delivers a summary
 
-**Workspace isolation:** OpenCode's headless server runs from a dedicated builds directory, not the LocalClaw project root. This prevents the coding agent from modifying LocalClaw's own source code, package.json, or configuration files.
+No server, no global session DB — Pi is invoked per-build via its CLI (`-p` / RPC / SDK), so there's nothing to start or babysit (a step up from the prior OpenCode integration, which needed a manually-run `opencode serve`).
 
-**Setup:**
-```bash
-brew install opencode
-mkdir -p data/workspaces/main/builds
-cd data/workspaces/main/builds && opencode serve --port 3500
-```
-
-Configure in `localclaw.config.json5`:
+**Setup:** Pi ships as an npm dependency — no separate install. Point it at your inference endpoint in `~/.pi/agent/models.json` (any OpenAI-compatible server — Ollama, vLLM):
 ```json5
-openCode: {
+// localclaw.config.json5
+pi: {
   enabled: true,
-  port: 3500,
-  defaultModel: "ollama/qwen3-coder:30b",
+  model: "vllm/deepseek-v4-flash",  // provider/id from ~/.pi/agent/models.json
 }
 ```
 
@@ -842,7 +835,7 @@ See `CLAUDE.md` for the full set of patterns, anti-patterns, and review checklis
 | Embedding Model | qwen3-embedding:8b |
 | Reasoning Model | nemotron-3-nano:30b (optional) |
 | Image Generation | flux2-klein:4b-fp8 (dedicated Mac Mini) |
-| Code Generation | [OpenCode](https://opencode.ai) (headless server, @opencode-ai/sdk) |
+| Code Generation | [Pi](https://pi.dev) (`@earendil-works/pi-coding-agent`, headless cwd-scoped) |
 | Voice Chat Model | qwen2.5:7b (for low-latency voice responses) |
 | Console Frontend | React 19 + Vite + TailwindCSS 4 |
 | Console Markdown | react-markdown + remark-gfm |
@@ -882,7 +875,7 @@ These frameworks solve similar problems but assume frontier models (GPT-4, Claud
 | Priority | Feature | Description |
 |----------|---------|-------------|
 | Next | **Weekly research newsletter** | Cron-scheduled research run → delivered digest (inline summary + attached PDF) over a channel, riding on the verified research pipeline. |
-| Planned | **qwen3-coder-next:80b** | Test larger coding model against qwen3-coder:30b for OpenCode builds. Better quality, slower throughput. |
+| Planned | **qwen3-coder-next:80b** | Test larger coding model against the current Pi build model. Better quality, slower throughput. |
 | Planned | **nemotron3:33b video pipeline** | Multimodal video/meeting summarization. New pipeline for watch → transcribe → summarize → extract actions. |
 | Backlog | **MCP client support** | Consume external MCP servers as tools (Jira, Notion, GitHub, etc.) without building custom tool factories. |
 

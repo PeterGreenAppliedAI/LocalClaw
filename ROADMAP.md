@@ -6,7 +6,7 @@ LocalClaw is a local-model-first AI agent framework running on personal infrastr
 
 ## Completed
 
-- **Setup Wizard** — Interactive `npm run setup` with prerequisites check, auto-install (FalkorDB, OpenCode), model detection, channel security, heartbeat config, and complete production-ready config generation
+- **Setup Wizard** — Interactive `npm run setup` with prerequisites check, auto-install (FalkorDB), model detection, channel security, heartbeat config, and complete production-ready config generation
 - **FalkorDB Graph Memory** — Replaced flat JSONL with graph database. HNSW vector search, entity linking, SUPERSEDES chains, multi-hop traversal, bootstrapped NER, canonical entity normalization, importance-scored auto-injection
 - **Analytics Pipeline** — Upload CSV/Excel/JSON → pandas computes all numbers → matplotlib charts → LLM executive interpretation. Code handles "what", model handles "so what"
 - **Thinking Preservation** — Raw model output stored in transcripts for continuity across turns. Stripped only at display boundaries. Handles Qwen and Gemma 4 formats

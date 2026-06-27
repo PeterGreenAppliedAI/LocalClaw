@@ -274,12 +274,25 @@ export const STTConfigSchema = z.object({
   language: z.string().default('en'),
 });
 
-export const OpenCodeConfigSchema = z.object({
+// Pi (picoder) coding agent — replaces OpenCode. Headless, cwd-scoped, no server/global-DB.
+// Model id is `provider/id` from ~/.pi/agent/models.json (e.g. vllm/deepseek-v4-flash).
+export const PiConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  port: z.number().default(3200),
-  hostname: z.string().default('127.0.0.1'),
-  defaultModel: z.string().default('ollama/qwen3-coder:30b'),
-  timeout: z.number().default(600000), // 10 min default
+  model: z.string().default('vllm/deepseek-v4-flash'),
+  apiKey: z.string().default('vllm'),           // dummy — vLLM ignores it, Pi requires a value
+  // Tools Pi may use during a build. Excludes nothing dangerous beyond what cwd-scoping bounds;
+  // `bash` is needed to run/scaffold but is the main escape vector — kept because builds need it.
+  tools: z.array(z.string()).default(['read', 'write', 'edit', 'ls', 'grep', 'find', 'bash']),
+  timeout: z.number().default(600000),          // 10 min per build invocation
+  maxFixIterations: z.number().default(3),      // outer loop: build → test → fix, bounded
+  git: z.object({
+    // Local commit is autonomous (reversible, internal). Remote push is OPT-IN (visible to
+    // others, harder to reverse) — off by default so an experimental loop can't publish under
+    // your name without you turning it on. Requires `gh` CLI authed when enabled.
+    commitLocal: z.boolean().default(true),
+    pushRemote: z.boolean().default(false),
+    visibility: z.enum(['private', 'public']).default('private'),
+  }).default({}),
 });
 
 export const ImageGenConfigSchema = z.object({
@@ -396,7 +409,7 @@ export const LocalClawConfigSchema = z.object({
   stt: STTConfigSchema.default({}),
   vision: VisionConfigSchema.default({}),
   imageGen: ImageGenConfigSchema.default({}),
-  openCode: OpenCodeConfigSchema.default({}),
+  pi: PiConfigSchema.default({}),
   voice: VoiceConfigSchema.default({}),
   heartbeat: HeartbeatConfigSchema.optional(),
 });

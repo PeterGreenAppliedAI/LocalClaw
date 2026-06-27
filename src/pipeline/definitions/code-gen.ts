@@ -1,15 +1,17 @@
 import type { PipelineDefinition, PipelineContext } from '../types.js';
 
 /**
- * Code generation pipeline: enrich → build → verify → [fix] → [re-verify] → report
+ * Code generation pipeline: enrich → build → verify → [fix] → [re-verify] → commit → report
  *
- * Deterministic — no ReAct loop.
+ * Deterministic — no ReAct loop. Code owns the workflow; the Pi coding agent fills the bounded
+ * "make the files" slot, and the test result (not the model) is the gate.
  * 1. LLM enriches the user's request into a detailed build specification
- * 2. opencode_build executes with the enriched prompt
- * 3. Verify: detect project type, install deps, run tests
- * 4. Fix (conditional): if tests fail, send errors to same OpenCode session
+ * 2. pi_build executes (cwd-scoped) with the enriched spec
+ * 3. Verify: detect project type, install deps, run tests — the verdict is the test result
+ * 4. Fix (conditional): if tests fail, re-run Pi in the project dir with the errors
  * 5. Re-verify (conditional): run tests again after fix
- * 6. LLM summarizes what was built + test status
+ * 6. Commit: local git commit (autonomous); remote push only when opted in
+ * 7. LLM summarizes what was built + test + git status
  */
 
 /** Detect project type and run tests in the given directory */
@@ -41,9 +43,10 @@ async function runTests(projectDir: string): Promise<{ pass: boolean; output: st
         return { pass: false, output: `Failed to create venv:\n${venvResult.stderr}` };
       }
     }
-    const pip = join(venvDir, 'bin', 'pip');
     const python = join(venvDir, 'bin', 'python');
-    installCmd = { cmd: pip, args: ['install', '-r', 'requirements.txt', '-q'] };
+    // Use `python -m pip`, NOT the .venv/bin/pip script — the script's shebang is fragile across
+    // python builds/paths and was returning non-zero even when the venv itself was healthy.
+    installCmd = { cmd: python, args: ['-m', 'pip', 'install', '-r', 'requirements.txt', '-q', '--disable-pip-version-check'] };
     testCmd = { cmd: python, args: ['-m', 'pytest', '-v'] };
   } else if (existsSync(join(projectDir, 'go.mod'))) {
     testCmd = { cmd: 'go', args: ['test', './...'] };
@@ -53,19 +56,24 @@ async function runTests(projectDir: string): Promise<{ pass: boolean; output: st
     return { pass: true, output: 'No recognized project type — skipped tests', skipped: true };
   }
 
-  // Install dependencies
+  // Install dependencies. Do NOT hard-fail the gate on a non-zero install exit — pip/npm can exit
+  // non-zero for transient or cosmetic reasons, or deps may already be present from a prior run,
+  // yet the tests still run fine. Defer the verdict to the actual test result (the source of truth).
+  // A real missing-deps situation surfaces as a test failure (import error), which the gate catches.
+  let installNote = '';
   if (installCmd) {
     console.log(`[CodeGen] Installing dependencies in ${projectDir}...`);
     const install = await run(installCmd.cmd, installCmd.args, projectDir, 120000);
     if (install.code !== 0) {
-      return { pass: false, output: `Dependency install failed:\n${(install.stderr || install.stdout).slice(0, 3000)}` };
+      installNote = `(dependency install exited ${install.code} — ran tests anyway)\n${(install.stderr || install.stdout).slice(0, 800)}\n`;
+      console.warn(`[CodeGen] Install exited ${install.code} — running tests anyway`);
     }
   }
 
-  // Run tests
+  // Run tests — this is what the gate actually judges on.
   console.log(`[CodeGen] Running tests: ${testCmd.cmd} ${testCmd.args.join(' ')}`);
   const result = await run(testCmd.cmd, testCmd.args, projectDir);
-  const output = `${result.stdout}\n${result.stderr}`.trim().slice(0, 3000);
+  const output = `${installNote}${result.stdout}\n${result.stderr}`.trim().slice(0, 3000);
 
   if (result.code === 0) {
     console.log(`[CodeGen] Verify: PASS`);
@@ -73,6 +81,59 @@ async function runTests(projectDir: string): Promise<{ pass: boolean; output: st
   } else {
     console.log(`[CodeGen] Verify: FAIL — ${output.slice(0, 200)}`);
     return { pass: false, output };
+  }
+}
+
+/** Run a shell command, resolving with code+output (never rejects). */
+function sh(cmd: string, args: string[], cwd: string, timeout = 60000): Promise<{ code: number; out: string }> {
+  return new Promise(async resolve => {
+    const { execFile } = await import('node:child_process');
+    execFile(cmd, args, { cwd, timeout, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      resolve({ code: err ? ((err as NodeJS.ErrnoException).code as unknown as number) ?? 1 : 0, out: `${stdout ?? ''}${stderr ?? ''}`.trim() });
+    });
+  });
+}
+
+const GITIGNORE = [
+  'node_modules/', '.venv/', 'venv/', '__pycache__/', '*.pyc', '.pytest_cache/',
+  'dist/', 'build/', 'target/', '.DS_Store',
+].join('\n') + '\n';
+
+/**
+ * Commit the build locally (autonomous — reversible, internal), and push to GitHub only when
+ * explicitly opted in (visible/irreversible → gated). Never throws; records the outcome.
+ */
+async function commitBuild(
+  projectDir: string,
+  slug: string,
+  status: string,
+  git: { commitLocal: boolean; pushRemote: boolean; visibility: 'private' | 'public' },
+): Promise<{ committed: boolean; pushed: boolean; url?: string; note: string }> {
+  const { writeFileSync, existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  if (!git.commitLocal) return { committed: false, pushed: false, note: 'local commit disabled' };
+
+  try {
+    if (!existsSync(join(projectDir, '.git'))) {
+      const init = await sh('git', ['init', '-q'], projectDir);
+      if (init.code !== 0) return { committed: false, pushed: false, note: `git init failed: ${init.out.slice(0, 200)}` };
+    }
+    writeFileSync(join(projectDir, '.gitignore'), GITIGNORE);
+    await sh('git', ['add', '-A'], projectDir);
+    const commit = await sh('git', ['commit', '-q', '-m', `Build ${slug}: ${status}`], projectDir);
+    // commit exits non-zero if nothing to commit — treat as benign
+    const committed = commit.code === 0 || /nothing to commit/.test(commit.out);
+    if (!committed) return { committed: false, pushed: false, note: `commit failed: ${commit.out.slice(0, 200)}` };
+
+    if (!git.pushRemote) return { committed: true, pushed: false, note: 'committed locally (remote push not enabled)' };
+
+    // Opt-in GitHub push. Requires gh CLI authed. Create the repo from this dir and push.
+    const gh = await sh('gh', ['repo', 'create', slug, `--${git.visibility}`, '--source=.', '--remote=origin', '--push'], projectDir, 120000);
+    if (gh.code !== 0) return { committed: true, pushed: false, note: `committed locally; gh push failed: ${gh.out.slice(0, 200)}` };
+    const url = (gh.out.match(/https?:\/\/\S+/) ?? [])[0];
+    return { committed: true, pushed: true, url, note: `pushed to ${url ?? 'GitHub'}` };
+  } catch (err) {
+    return { committed: false, pushed: false, note: `git error: ${err instanceof Error ? err.message : err}` };
   }
 }
 
@@ -95,29 +156,22 @@ export const codeGenPipeline: PipelineDefinition = {
       name: 'list_projects',
       type: 'code',
       execute: async (ctx: PipelineContext) => {
-        const { readdirSync, statSync, existsSync, readFileSync } = await import('node:fs');
+        const { readdirSync, statSync } = await import('node:fs');
         const { join } = await import('node:path');
         const workspace = ctx.toolContext.workspacePath ?? 'data/workspaces/main';
         const buildsDir = join(workspace, 'builds');
 
+        // A project is any build directory. Pi re-runs in the project's cwd to modify it (no
+        // session file needed — that was OpenCode's mechanism).
         const projects: string[] = [];
-        const sessions: Record<string, { sessionId: string; model: string }> = {};
         try {
           for (const f of readdirSync(buildsDir)) {
             if (f.startsWith('.') || f === 'data') continue;
-            const full = join(buildsDir, f);
-            const sessionFile = join(full, '.opencode-session.json');
-            if (statSync(full).isDirectory() && existsSync(sessionFile)) {
-              projects.push(f);
-              try {
-                sessions[f] = JSON.parse(readFileSync(sessionFile, 'utf-8'));
-              } catch { /* corrupt session file */ }
-            }
+            if (statSync(join(buildsDir, f)).isDirectory()) projects.push(f);
           }
         } catch { /* no builds dir yet */ }
 
         ctx.params._existingProjects = projects;
-        ctx.params._projectSessions = sessions;
         ctx.params._buildsDir = buildsDir;
         if (projects.length > 0) {
           console.log(`[CodeGen] Existing projects: ${projects.join(', ')}`);
@@ -159,7 +213,7 @@ export const codeGenPipeline: PipelineDefinition = {
     {
       name: 'build',
       type: 'tool',
-      tool: 'opencode_build',
+      tool: 'pi_build',
       resolveParams: (ctx) => {
         const enrichedPrompt = ctx.stageResults.enrich as string;
         console.log(`[CodeGen] Enriched prompt: ${enrichedPrompt.slice(0, 200)}...`);
@@ -167,21 +221,15 @@ export const codeGenPipeline: PipelineDefinition = {
         const firstLine = lines[0].trim();
         const spec = lines.slice(1).join('\n').trim();
 
-        // Check for [MODIFY] prefix — reuse existing project + session
+        // Check for [MODIFY] prefix — re-run Pi in the existing project dir (it reads the files
+        // already there). Passing projectDir puts pi_build in fix/modify mode.
         const modifyMatch = firstLine.match(/^\[MODIFY\]\s*(.+)/i);
         if (modifyMatch) {
           const existingSlug = modifyMatch[1].trim();
           const buildsDir = ctx.params._buildsDir as string;
           const projectDir = `${buildsDir}/${existingSlug}`;
-          const sessions = (ctx.params._projectSessions ?? {}) as Record<string, { sessionId: string }>;
-          const savedSession = sessions[existingSlug];
-
-          if (savedSession?.sessionId) {
-            console.log(`[CodeGen] MODIFY existing project: ${existingSlug}, session: ${savedSession.sessionId}`);
-            return { prompt: spec || enrichedPrompt, sessionId: savedSession.sessionId, projectDir };
-          }
-          console.log(`[CodeGen] MODIFY: no saved session for ${existingSlug}, creating new`);
-          return { prompt: spec || enrichedPrompt, projectName: existingSlug };
+          console.log(`[CodeGen] MODIFY existing project: ${existingSlug}`);
+          return { prompt: spec || enrichedPrompt, projectDir };
         }
 
         console.log(`[CodeGen] New project: ${firstLine}`);
@@ -225,8 +273,8 @@ export const codeGenPipeline: PipelineDefinition = {
           verifyResult.output,
         ].join('\n');
 
-        // Call opencode_build with existing session
-        const fixResult = await ctx.executor('opencode_build', {
+        // Call pi_build on the existing project dir (Pi reads the files already there).
+        const fixResult = await ctx.executor('pi_build', {
           prompt: fixPrompt,
           sessionId,
           projectDir,
@@ -248,6 +296,21 @@ export const codeGenPipeline: PipelineDefinition = {
       },
     },
     {
+      name: 'commit',
+      type: 'code',
+      when: (ctx) => !!ctx.params._projectDir && (ctx.params._pi as { git?: { commitLocal?: boolean } } | undefined)?.git?.commitLocal !== false,
+      execute: async (ctx: PipelineContext) => {
+        const projectDir = ctx.params._projectDir as string;
+        const verify = ctx.params._verifyResult as { pass: boolean; skipped?: boolean } | undefined;
+        const pi = ctx.params._pi as { git?: { commitLocal: boolean; pushRemote: boolean; visibility: 'private' | 'public' } } | undefined;
+        const git = pi?.git ?? { commitLocal: true, pushRemote: false, visibility: 'private' as const };
+        const slug = projectDir.split('/').pop() || 'build';
+        const status = verify?.skipped ? 'no recognized tests' : verify?.pass ? 'tests passing' : 'WIP — tests failing';
+        ctx.params._gitResult = await commitBuild(projectDir, slug, status, git);
+        console.log(`[CodeGen] Git: ${(ctx.params._gitResult as { note: string }).note}`);
+      },
+    },
+    {
       name: 'report',
       type: 'llm',
       temperature: 0.3,
@@ -256,6 +319,7 @@ export const codeGenPipeline: PipelineDefinition = {
         const buildResult = ctx.stageResults.build as string;
         const verifyResult = ctx.params._verifyResult as { pass: boolean; output: string; skipped?: boolean } | undefined;
         const fixApplied = !!ctx.params._fixApplied;
+        const gitResult = ctx.params._gitResult as { committed: boolean; pushed: boolean; url?: string; note: string } | undefined;
 
         let testStatus = 'Tests: not run';
         if (verifyResult?.skipped) {
@@ -268,9 +332,13 @@ export const codeGenPipeline: PipelineDefinition = {
             : `Tests: FAILING\nErrors:\n${verifyResult.output.slice(0, 500)}`;
         }
 
+        const gitStatus = gitResult
+          ? `Git: ${gitResult.pushed ? `committed + pushed (${gitResult.url ?? 'GitHub'})` : gitResult.committed ? 'committed locally' : `not committed (${gitResult.note})`}`
+          : 'Git: not attempted';
+
         return {
-          system: 'You are summarizing the results of a code generation task. List the files created with a brief description of each. Include the test status. Be concise.',
-          user: `The build tool returned:\n\n${buildResult}\n\n${testStatus}\n\nSummarize what was built and the test results.`,
+          system: 'You are summarizing the results of a code generation task. List the files created with a brief description of each. Include the test status and the git status. Be concise.',
+          user: `The build tool returned:\n\n${buildResult}\n\n${testStatus}\n${gitStatus}\n\nSummarize what was built, the test results, and whether it was committed.`,
         };
       },
     },

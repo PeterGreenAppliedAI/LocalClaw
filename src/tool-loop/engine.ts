@@ -374,7 +374,7 @@ const MAX_TOOL_RESULT_CHARS = 2000;
  */
 const TOOL_RESULT_LIMITS: Record<string, number> = {
   browser: 16_000,
-  opencode_build: 16_000,
+  pi_build: 16_000,
   reason: 12_000,
   web_fetch: 12_000,
   code_session: 8_000,

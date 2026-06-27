@@ -1,5 +1,5 @@
 import { askText, askYesNo, askChoice, printStep, printSuccess, printWarning, printInfo, printError } from '../prompts.js';
-import { testHttpEndpoint, testDocker, isContainerRunning, installFalkorDB, installOpenCode, commandExists } from '../connectivity.js';
+import { testHttpEndpoint, testDocker, isContainerRunning, installFalkorDB, commandExists } from '../connectivity.js';
 import { findVisionModels, findReasoningModels } from '../defaults.js';
 import type { OllamaModel } from '../../ollama/types.js';
 
@@ -54,9 +54,9 @@ export interface ImageGenResult {
   model?: string;
 }
 
-export interface OpenCodeResult {
+export interface PiResult {
   enabled: boolean;
-  port?: number;
+  model?: string;
 }
 
 export interface ServicesStepResult {
@@ -70,7 +70,7 @@ export interface ServicesStepResult {
   heartbeat: HeartbeatResult;
   reasoning: ReasoningResult;
   imageGen: ImageGenResult;
-  openCode: OpenCodeResult;
+  pi: PiResult;
 }
 
 export async function runServicesStep(models: OllamaModel[], enabledChannels: string[]): Promise<ServicesStepResult> {
@@ -87,7 +87,7 @@ export async function runServicesStep(models: OllamaModel[], enabledChannels: st
     heartbeat: { enabled: false },
     reasoning: { enabled: false },
     imageGen: { enabled: false },
-    openCode: { enabled: false },
+    pi: { enabled: false },
   };
 
   // Web Search
@@ -237,27 +237,12 @@ export async function runServicesStep(models: OllamaModel[], enabledChannels: st
     printSuccess(`Image gen: ${result.imageGen.model} at ${result.imageGen.url}`);
   }
 
-  // OpenCode
-  if (await askYesNo('Enable OpenCode (AI coding agent)?', false)) {
-    if (commandExists('opencode')) {
-      printSuccess('OpenCode is already installed');
-    } else {
-      printInfo('OpenCode is not installed.');
-      if (await askYesNo('Install OpenCode now?', true)) {
-        printInfo('Installing OpenCode...');
-        if (installOpenCode()) {
-          printSuccess('OpenCode installed');
-        } else {
-          printError('OpenCode install failed. Install manually:');
-          printInfo('  macOS/Linux: brew install opencode');
-          printInfo('  Windows: npm i -g opencode-ai@latest');
-          printInfo('  Or: curl -fsSL https://opencode.ai/install | bash');
-        }
-      }
-    }
-    result.openCode.enabled = true;
-    result.openCode.port = parseInt(await askText('OpenCode server port', '3500'), 10);
-    printSuccess(`OpenCode: port ${result.openCode.port}`);
+  // Pi coding agent (picoder) — headless, bundled as an npm dependency (no separate install).
+  if (await askYesNo('Enable the Pi coding agent (code generation)?', false)) {
+    result.pi.enabled = true;
+    result.pi.model = await askText('Pi model (provider/id from ~/.pi/agent/models.json)', 'vllm/deepseek-v4-flash');
+    printSuccess(`Pi enabled: ${result.pi.model}`);
+    printInfo('Configure the model provider in ~/.pi/agent/models.json (Ollama/vLLM OpenAI-compatible endpoint).');
   }
 
   return result;

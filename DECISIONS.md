@@ -4,6 +4,17 @@ A log of significant decisions, failed experiments, and why things are the way t
 
 ---
 
+## Coding Agent Swap: OpenCode → Pi/picoder (June 26 2026)
+
+### Replaced OpenCode with the Pi coding agent for `code_gen`
+**Decision:** The `code_gen` pipeline now drives **Pi** (`@earendil-works/pi-coding-agent`, "picoder") via its headless CLI instead of OpenCode. New `pi_build` tool (`src/tools/pi-build.ts`); `opencode-build.ts`, `@opencode-ai/sdk`, and the `openCode` config block are removed.
+**Why:** Pi fits the local-first/model-agnostic thesis better and kills OpenCode's operational pain. OpenCode required a **manually-started server** (`opencode serve`), kept a **global session DB** that carried stale context across restarts, and had a **snapshot/move hack** (old project dirs got swallowed). Pi runs **cwd-scoped** (every write lands in `builds/<slug>/`, which also structurally prevents the package.json-overwrite class of bug — no prompt-based directory constraint needed) and is invoked headless per-build (SDK / `-p` / RPC), so there's **no daemon and no global state**. Model is `provider/id` from `~/.pi/agent/models.json` (currently `vllm/deepseek-v4-flash`).
+**Gotcha 1 — stdin hang:** Pi's `-p` print mode reads stdin to merge piped input. Spawned with an inherited/open stdin pipe it blocks forever waiting for EOF. Fix: `spawn(..., { stdio: ['ignore', ...] })` so it gets immediate EOF. (An interactive-shell run worked because stdin was a TTY — the bug only showed when spawned.)
+**Gotcha 2 — scoped-executor authorization:** the `code_gen` *specialist's* allowed-tools list still named `opencode_build`, so the scoped executor blocked `pi_build` as unauthorized — invisible to tsc/unit tests, only caught by a live dispatch run. Lesson: a tool swap must update the specialist `tools` allowlist in config, not just the pipeline + registration.
+**Gotcha 3 — test-gate false-negative:** `runTests` hard-failed on a non-zero `pip install` exit (the `.venv/bin/pip` script flaked while the venv was actually healthy), so a correct build (102 passing tests) got labeled "tests failing." Fix: use `python -m pip` (not the pip script), and **run the tests even if install exits non-zero — judge the gate on the actual test result, not the install exit code.** The test outcome is the source of truth; a real missing-dep surfaces as a test/import failure anyway.
+**Loop shape:** enrich → `pi_build` (cwd-scoped) → verify (tests = the gate) → [fix: re-run Pi in the dir with errors] → re-verify → **commit** (local git autonomous; remote GitHub push opt-in, off by default — the autonomy-ladder split: reversible/internal acts silently, visible/irreversible is gated) → report.
+**Status:** Active. Verified end-to-end through live dispatch (built a Roman-numeral package, self-repaired, committed). The "OpenCode integration" entries below are retained as history (superseded).
+
 ## Verification False Negative from a Stale Truncation Cap (June 17 2026)
 
 ### A research report's real, correctly-cited BLS numbers were stamped UNSUPPORTED (fixed)
@@ -216,7 +227,7 @@ Replaced the flat JSONL fact store with FalkorDB — a Redis-compatible graph da
 - FalkorDB discussion: multi-turn technical conversation where bot correctly pulled user's ML engineer role and infrastructure context
 - `!forget register agent` working with flexible word matching after exact CONTAINS failed on "registered agent" vs "register agent change"
 
-### OpenCode integration — workspace isolation (May 2026)
+### OpenCode integration — workspace isolation (May 2026) — SUPERSEDED by the Pi swap (June 26 2026, top of file)
 **Problem:** OpenCode's headless server treats its startup directory as the project root. When started from the LocalClaw directory, it overwrote `package.json` (replaced all dependencies with Express) and `README.md` (replaced with Express API docs). Prompt instructions to "only write to builds/" were ignored by the model.
 **Root cause:** OpenCode is a model-driven agent with full filesystem access within its project directory. Prompt-based directory constraints are not enforceable — the model writes wherever it decides.
 **Fix:** Start `opencode serve` from a separate `data/workspaces/main/builds/` directory. OpenCode can only see and modify files within that directory. LocalClaw connects to the existing server via SDK — it doesn't manage the server lifecycle.
