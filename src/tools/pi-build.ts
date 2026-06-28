@@ -127,9 +127,13 @@ Returns the project directory and a list of files created.`,
 
       const cliPath = piCliPath();
       // -p print mode, -a trust this run (non-interactive), tools allowlisted, cwd = projectDir so
-      // every write is scoped to the build dir.
+      // every write is scoped to the build dir. --no-context-files is important: Pi otherwise walks
+      // UP from the build dir and loads AGENTS.md/CLAUDE.md — which would pull LocalClaw's OWN
+      // CLAUDE.md (the build dir lives inside this repo) into every unrelated build. The pipeline's
+      // enriched spec + quality standards are the single source of build instructions.
       const args = [
         '-p',
+        '--no-context-files',
         '--model', model,
         '--api-key', config.apiKey,
         '--tools', config.tools.join(','),
