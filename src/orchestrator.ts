@@ -146,9 +146,16 @@ export class Orchestrator {
           });
 
           if (job.delivery.target) {
+            // Extract [FILE:]/[IMAGE:] tokens into real attachments (same as the normal message
+            // path) — otherwise a cron that produces a PDF leaks the raw token into the chat text
+            // and never delivers the file.
+            const media = extractMediaAttachments(result.answer);
             await this.channelRegistry.send(
               { channel: job.delivery.channel, channelId: job.delivery.target },
-              { text: `[Cron: ${job.name}]\n${result.answer}` },
+              {
+                text: `[Cron: ${job.name}]\n${media.cleanText || result.answer}`,
+                attachments: media.attachments.length > 0 ? media.attachments : undefined,
+              },
             );
           }
         },
